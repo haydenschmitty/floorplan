@@ -133,7 +133,7 @@ fs.writeFileSync(path.join(outDir, '.cache', 'changes.json'), JSON.stringify({
 // ---------- 5. rebuild (no tokens) ----------
 let buildOut = '';
 let buildOk = true;
-try { buildOut = execFileSync(node, [path.join(HERE, 'build.mjs'), root], { encoding: 'utf8' }); }
+try { buildOut = execFileSync(node, [path.join(HERE, 'build.mjs'), root, ...(args.agent ? ['--agent', String(args.agent)] : [])], { encoding: 'utf8' }); }
 catch (e) { buildOut = (e.stdout || '') + (e.stderr || ''); buildOk = false; }
 
 // ---------- 6. report ----------

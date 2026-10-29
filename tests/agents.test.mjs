@@ -15,6 +15,27 @@ test('Codex is recognised by the variables it sets for every command', () => {
   assert.equal(detectAgent({}, { CLAUDECODE: '1' }), 'claude');
 });
 
+test('OpenCode is recognised by its variable, and Copilot only by name', () => {
+  assert.equal(detectAgent({}, { OPENCODE_CLIENT: 'cli' }), 'opencode');
+  assert.equal(detectAgent({}, { OPENCODE_CLIENT: 'cli', CODEX_THREAD_ID: 'abc' }), 'codex');
+  assert.equal(detectAgent({ agent: 'copilot' }, {}), 'copilot');
+  assert.equal(detectAgent({}, { FLOORPLAN_AGENT: 'OpenCode' }), 'opencode');
+  assert.equal(detectAgent({}, { TERM_PROGRAM: 'vscode' }), 'claude');
+});
+
+test('a map built under OpenCode or Copilot records it, and leaves the project notes alone', () => {
+  for (const agent of ['opencode', 'copilot']) {
+    const root = shopApp();
+    try {
+      run('scan.mjs', root);
+      const out = run('build.mjs', root, '--agent', agent);
+      assert.equal(readGraph(root).meta.agent, agent);
+      assert.match(out, /AGENT {2}(OpenCode|GitHub Copilot)/);
+      assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no CLAUDE.local.md');
+    } finally { cleanup(root); }
+  }
+});
+
 test('--agent and FLOORPLAN_AGENT override the guess, and nonsense is ignored', () => {
   assert.equal(detectAgent({ agent: 'codex' }, {}), 'codex');
   assert.equal(detectAgent({ agent: 'Claude' }, { CODEX_THREAD_ID: 'abc' }), 'claude');
