@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Ask through any ACP agent:** the map's server can answer questions and build flows through any agent that speaks the Agent Client Protocol — `node floorplan/serve.mjs --engine acp --acp 'gemini --acp'`, on that agent's own sign-in. `--acp <name>` picks a known agent (`gemini`, `opencode`, `devin`, `claude-code-acp`, `codex-acp`); with none given it auto-detects one on PATH. The server confines it to reading the codebase and running `floorplan/query.mjs` commands (best-effort; some agents use their own tools instead). The engine pill in the Ask bar opens a picker to switch agent or model live; the choice is remembered across restarts. See [ACP agents](docs/acp.md).
+
 ## 0.2.1 (2026-10-28)
 
 - **Firebase Cloud Functions:** callable (`onCall`) and `onRequest` functions now show up as endpoints, named the way your functions entry file exports them, and the website's `httpsCallable` calls and requests reach them, including through a helper of your own that wraps `httpsCallable`. So a React + Firebase app's website and server are connected on the map, Screens shows the server code behind each page, and Ask can follow the links. Callables are shown as `CALL /name`. Reported by @omardlr-aviv in #8.

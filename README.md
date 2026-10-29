@@ -233,6 +233,7 @@ More in [Privacy and security](docs/privacy-and-security.md).
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, first map, updating, removing |
 | [Floorplan in Codex](docs/codex.md) | Installing and using it in Codex |
+| [ACP agents](docs/acp.md) | Ask questions through any ACP agent, like `gemini --acp` |
 | [Using the map](docs/using-the-map.md) | Every button, view, shortcut and menu |
 | [How it works](docs/how-it-works.md) | The pipeline, connection matching, refreshes |
 | [What's in your project](docs/project-files.md) | Every file Floorplan creates, and how to edit it |
