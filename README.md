@@ -171,6 +171,10 @@ codex plugin add floorplan@floorplan
 
 Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask bar runs on your own Codex sign-in, with no API key. More in [Floorplan in Codex](docs/codex.md).
 
+### OpenCode and VS Code
+
+Copy the `skills/floorplan` folder into `~/.agents/skills/`, which both OpenCode and GitHub Copilot in VS Code read, then start a new session. The Ask bar needs the Claude Code CLI or Codex installed. More in [Floorplan in OpenCode and VS Code](docs/opencode-and-vscode.md).
+
 ## Quick start
 
 1. Open your project in Claude Code or Codex. For a frontend and backend in separate repos, open the folder that holds both.

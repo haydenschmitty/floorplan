@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **OpenCode and VS Code:** the skill can be copied into OpenCode or GitHub Copilot in VS Code and makes the same map. A map made in OpenCode is recognised as such, and `--agent copilot` marks one made in VS Code, so the Health panel says "Fix with OpenCode" or "Fix with Copilot". Neither leaves a note in `CLAUDE.local.md`. The Ask bar still answers through the Claude Code CLI or Codex when one is installed. See [Floorplan in OpenCode and VS Code](docs/opencode-and-vscode.md).
+
 ## 0.2.2 (2026-10-28)
 
 - **Light mode:** a new **Theme** button in the top bar cycles **Auto → Light → Dark**. Auto follows your device's light or dark setting and changes with it. Your choice is remembered on this device, and the map shows the right colours from the first moment, with no flash. The button is a 44 px target, works from the keyboard with a visible focus ring, and the change is instant (nothing animates, so Reduce Motion is respected). Dark looks exactly as before. Requested in #9 and built by @menachem-kurkus in #10.

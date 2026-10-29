@@ -5,7 +5,7 @@
   const SC = window.Floorplan;
   if (!SC) return;
   const { h } = SC;
-  const A = SC.agent || { name: 'Claude', app: 'Claude Code' };
+  const A = SC.agent?.fix || SC.agent || { name: 'Claude', app: 'Claude Code' };
   const issues = (SC.graph.health && SC.graph.health.issues) || [];
 
   const SEV = {

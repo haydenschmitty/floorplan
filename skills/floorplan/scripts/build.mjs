@@ -456,9 +456,11 @@ if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detecte
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
   : `RECENT WORK  none highlighted${fs.existsSync(recentFile) ? '' : ' (no recent-work.json)'}`);
-// point future Claude Code sessions in this project at the map. Codex has no personal, uncommitted
-// equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone.
+// point future Claude Code sessions in this project at the map. The other agents have no personal,
+// uncommitted equivalent (AGENTS.md is shared with the team), so their maps leave the project's notes alone.
 if (agent === 'codex') report.push('AGENT  Codex: questions on the map run through Codex');
+else if (agent === 'opencode') report.push('AGENT  OpenCode: questions on the map run through the Claude Code CLI or Codex, if one is installed');
+else if (agent === 'copilot') report.push('AGENT  GitHub Copilot: questions on the map run through the Claude Code CLI or Codex, if one is installed');
 else if (!args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${writeClaudeMd(root, outDir)}`);
 report.push(trackedWarning ? `GIT  ! ${trackedWarning}` : 'GIT  floorplan/ is kept out of git (it ignores itself)');
 report.push('');

@@ -526,6 +526,9 @@ const AGENT = (window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want 
       signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
   : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
       signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
+// "Fix with …" prompts go back to the agent that built the map, even when another CLI answers questions
+AGENT.fix = { opencode: { name: 'OpenCode', app: 'OpenCode' }, copilot: { name: 'Copilot', app: 'GitHub Copilot Chat in VS Code' } }[G?.meta?.agent]
+  || { name: AGENT.name, app: AGENT.app };
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
 if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.mjs.</p>'; return; }
 if (typeof ELK === 'undefined') { document.body.innerHTML = '<p style="padding:2rem">Could not load the ELK layout engine. Rebuild the map with build.mjs.</p>'; return; }
