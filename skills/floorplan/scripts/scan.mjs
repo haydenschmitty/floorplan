@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { discover, gitFiles, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit } from './lib/common.mjs';
-import { extract, callableCallsVia } from './lib/extract.mjs';
+import { extract, callableCallsVia, findBigTreeRoot } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
 import { createResolver } from './lib/resolve.mjs';
@@ -60,6 +60,11 @@ for (const p of found.loose) if (!seen.has(p) && !inMap(p)) { seen.add(p); fileL
 
 // ---------- 2. classify, read, extract ----------
 const files = [];
+const phpSources = new Map(); // kept only until extraction; never written to the map
+const bigtreeRoots = new Set(fileList.flatMap(({ path: p }) => {
+  const match = /^(.*?)core\/inc\/bigtree\//.exec(p);
+  return match ? [match[1].replace(/\/$/, '')] : [];
+}));
 for (const { path: p, repo } of fileList) {
   const abs = path.join(root, p);
   let st;
@@ -73,7 +78,11 @@ for (const { path: p, repo } of fileList) {
     if (src.includes('\u0000')) { f.category = 'asset'; files.push(f); continue; }
     f.loc = src.split('\n').filter((l) => l.trim()).length;
     if (category === 'code' && src.length) {
-      try { Object.assign(f, extract(src, lang, p)); } catch (e) { f.extractError = String(e.message || e); }
+      if (lang === 'php') phpSources.set(p, src);
+      try {
+        Object.assign(f, extract(src, lang, p));
+        if (lang === 'php') { const site = findBigTreeRoot(src, p); if (site !== null) bigtreeRoots.add(site); }
+      } catch (e) { f.extractError = String(e.message || e); }
       // h: exact content. sig: the parts a description depends on (exports, routes, docstring),
       // so edits inside function bodies don't mark a file's description as stale.
       f.h = hash(src);
@@ -91,6 +100,22 @@ for (const { path: p, repo } of fileList) {
   }
   files.push(f);
 }
+
+// Add only the framework rules for files inside an identified BigTree site. Errors remain
+// per-file extraction notes, so one broken file cannot prevent the rest of a map being built.
+const phpPaths = new Set(phpSources.keys());
+const sites = [...bigtreeRoots].sort((a, b) => b.length - a.length);
+for (const f of files) {
+  if (!phpSources.has(f.path)) continue;
+  const site = sites.find((r) => !r || f.path.startsWith(r + '/'));
+  if (site === undefined) continue;
+  try {
+    Object.assign(f, extract(phpSources.get(f.path), 'php', f.path, { bigtreeRoot: site, files: phpPaths }));
+    f.sig = hash(JSON.stringify([(f.symbols || []).map((s) => s.name).sort(), (f.routes || []).map((r) => `${r.method} ${r.path}`).sort(), f.doc || '']));
+  } catch (e) { f.extractError = String(e.message || e); }
+}
+
+phpSources.clear();
 
 /** Lines in a file, read in chunks so a huge file is never held in memory at once. */
 function countLines(abs) {

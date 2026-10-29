@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **PHP and BigTree:** static PHP includes now connect to their files. BigTree maps also show office pages, website request handlers and scripts in the site folder, with their shared headers and footers.
+
 ## 0.4.2 (2026-10-30)
 
 - **Is it safe to install?** A new page lists everything Floorplan does on your computer: no hooks, MCP servers, dependencies or downloads, its one outbound request, and every program it runs. A test enforces it on every change, and each release now includes `CHECKSUMS.txt`, so you can confirm your installed copy matches it (`node tools/checksums.mjs --check <folder>`).

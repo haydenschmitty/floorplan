@@ -162,6 +162,8 @@ People can also use **Flows → Request a new flow** to have the agent trace som
 
 ## Notes
 
+- PHP includes are read without executing PHP. BigTree sites also get office and AJAX paths using the default admin prefix, plus site scripts and inherited headers/footers. Public page URLs stored only in the CMS database are not recovered from template filenames.
+
 - Paths are relative to the codebase root and use forward slashes. In a multi-repo root they start with the repo folder, e.g. `api-service/src/**`.
 - Route keys in descriptions are `"METHOD /full/path"` exactly as the worksheet prints them.
 - The map makes no outside requests: the build inlines the layout engine (ELK) and fonts from `${CLAUDE_SKILL_DIR}/assets/vendor/`, so it works offline.

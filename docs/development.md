@@ -77,7 +77,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 
 | File | What it checks |
 |---|---|
-| `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework |
+| `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework; PHP static includes and BigTree site scripts, office/AJAX pages, shared headers and site isolation |
 | `helpers-lib.test.mjs` | globs, file types, command-line flags, fallback names |
 | `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
 | `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI sample in `fixtures/`) |
