@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **OpenCode and VS Code:** the skill can be copied into OpenCode or GitHub Copilot in VS Code and makes the same map. A map made in OpenCode is recognised as such, and `--agent copilot` marks one made in VS Code, so the Health panel says "Fix with OpenCode" or "Fix with Copilot". Neither leaves a note in `CLAUDE.local.md`. The Ask bar still answers through the Claude Code CLI or Codex when one is installed. See [Floorplan in OpenCode and VS Code](docs/opencode-and-vscode.md).
+
 ## 0.6.1 (2026-11-01)
 
 - **Fewer false alarms in Health** (thanks to the user who reported these):
