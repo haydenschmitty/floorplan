@@ -133,3 +133,15 @@ export function shopApp() {
   };
   return makeProject(files, { repos: ['shop-api', 'shop-web'], arch });
 }
+
+/** Exchange the private fragment once, as the browser's bootstrap page does. */
+export async function openPrivateMap(privateUrl) {
+  const u = new URL(privateUrl);
+  const ticket = u.hash.slice(1), base = u.origin;
+  const r = await fetch(base + '/bootstrap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ticket }) });
+  if (r.status !== 204) throw new Error(`bootstrap failed: ${r.status}`);
+  const cookie = r.headers.get('set-cookie').split(';')[0];
+  const page = await (await fetch(base + '/', { headers: { cookie } })).text();
+  const server = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(page)[1]);
+  return { base, cookie, token: server.token, page: server, ticket };
+}

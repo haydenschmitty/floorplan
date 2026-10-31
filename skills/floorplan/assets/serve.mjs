@@ -87,6 +87,27 @@ const idleExit = Number(opt('idle-exit', 0)) * 60000; // stop this long after th
 const selfHash = crypto.createHash('sha1').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
 const model = opt('model', process.env.FLOORPLAN_MODEL || '');
 const token = crypto.randomBytes(16).toString('hex');
+const control = crypto.randomBytes(32).toString('hex');
+const session = crypto.randomBytes(32).toString('hex');
+const cookieName = `floorplan_${wantPort}_${crypto.randomBytes(12).toString('hex')}`;
+const tickets = new Map();
+function issueTicket() {
+  const now = Date.now();
+  for (const [key, expiry] of tickets) if (expiry < now) tickets.delete(key);
+  const ticket = crypto.randomBytes(32).toString('hex');
+  tickets.set(ticket, now + 5 * 60 * 1000);
+  return ticket;
+}
+function equalSecret(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+const bootstrapPage = `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Open Floorplan</title><p id="status">Opening your map…</p><script>
+const ticket = location.hash.slice(1); history.replaceState(null, '', location.pathname);
+if (!ticket) document.getElementById('status').textContent = 'Open the private link printed by Floorplan to view this map.';
+else fetch('/bootstrap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket }) }).then(r => { if (!r.ok) throw Error(); location.replace('/'); }).catch(() => { document.getElementById('status').textContent = 'This link has expired. Open the map again to get a new link.'; });
+</script>`;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 
 // ---------- find the CLI that answers: Claude Code or Codex ----------
@@ -167,7 +188,9 @@ if (cli) { try { version = execFileSync(cli.cmd, [...cli.args, '--version'], { e
 
 // The page, the graph, and the instructions and answer schema (from query.mjs's inlined graph-query
 // code). Loaded at start and again whenever the map is rebuilt.
-const inject = `<script>window.FLOORPLAN_SERVER=${JSON.stringify({ token, cli: !!cli, engine, want, version, model: model || null, change: canChange })};</script>`;
+const serverData = JSON.stringify({ token, cli: !!cli, engine, want, version, model: model || null, change: canChange })
+  .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+const inject = `<script>if(/^#[0-9a-f]{64}$/.test(location.hash)){const ticket=location.hash.slice(1);history.replaceState(null,'',location.pathname);fetch('/bootstrap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket})}).catch(()=>{});}window.FLOORPLAN_SERVER=${serverData};</script>`;
 let page, G, core, MODES;
 function load() {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
@@ -515,10 +538,37 @@ const server = http.createServer((req, res) => {
   if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(String(req.headers.host || '').toLowerCase())) { res.writeHead(403); return res.end('unknown host'); }
   const url = new URL(req.url, `http://${req.headers.host}`);
   const sameOrigin = !req.headers.origin || req.headers.origin === `http://${req.headers.host}`;
+  const cookies = Object.fromEntries(String(req.headers.cookie || '').split(';').map(s => s.trim().split('=')).filter(pair => pair.length === 2));
+  const authenticated = equalSecret(cookies[cookieName], session);
+  const controlled = !req.headers.origin && equalSecret(req.headers['x-floorplan-control'], control);
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (req.method === 'POST' && url.pathname === '/bootstrap') {
+    if (!sameOrigin || !/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) { res.writeHead(403); return res.end(); }
+    let raw = '';
+    req.on('data', chunk => { raw += chunk; if (raw.length > 1024) req.destroy(); });
+    req.on('end', () => {
+      let ticket; try { ticket = JSON.parse(raw).ticket; } catch {}
+      const match = typeof ticket === 'string' ? [...tickets.keys()].find(key => equalSecret(key, ticket)) : null;
+      const expires = match && tickets.get(match);
+      if (!expires || expires < Date.now()) { res.writeHead(403); return res.end(); }
+      tickets.delete(match);
+      res.writeHead(204, { 'Set-Cookie': `${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/` }); res.end();
+    });
+    return;
+  }
+  if (controlled && req.method === 'POST' && url.pathname === '/control/bootstrap') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ticket: issueTicket() }));
+  }
+  if (controlled && req.method === 'GET' && (url.pathname === '/control/status' || url.pathname === '/control/health')) {
+    const info = url.pathname.endsWith('status') ? { tabs: tabs.size, pid: process.pid, hash: selfHash, root } : { cli: !!cli, engine, want, version, path: cli?.path || null };
+    res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(info));
+  }
   if (url.pathname.startsWith('/api/')) {
     // EventSource can't send headers, so the events stream takes the token in the query string
     const given = req.headers['x-floorplan-token'] || (url.pathname === '/api/events' ? url.searchParams.get('token') : null);
-    if (!sameOrigin || given !== token) { res.writeHead(403); return res.end(); }
+    if (!authenticated || !sameOrigin || !equalSecret(given, token)) { res.writeHead(403); return res.end(); }
     if (req.method === 'GET' && url.pathname === '/api/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
       res.write('retry: 1000\n\n'); // reconnect quickly after a restart
@@ -594,13 +644,12 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(404); return res.end();
   }
-  if (url.pathname === '/' || url.pathname === '/index.html') { res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-store' }); return res.end(page); }
-  let file;
-  try { file = path.join(here, decodeURIComponent(url.pathname)); } catch { res.writeHead(400); return res.end('bad address'); }
-  // inside this folder only: a neighbour like ../floorplan-old/ also starts with this folder's path
-  if (!file.startsWith(here + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); return res.end('not found'); }
-  res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
-  fs.createReadStream(file).pipe(res);
+  if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+    res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Content-Security-Policy': authenticated ? "frame-ancestors 'none'" : "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'" });
+    return res.end(authenticated ? page : bootstrapPage);
+  }
+  // The built page embeds all assets. Never expose map files, caches or symlinks over HTTP.
+  res.writeHead(404); return res.end('not found');
 });
 // another map (or anything else) on the port: take the next free one
 let port = wantPort;
@@ -613,18 +662,26 @@ server.listen(port, '127.0.0.1');
 server.on('listening', () => {
   const u = `http://127.0.0.1:${port}`;
   try {
-    fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-    fs.writeFileSync(stateFile, JSON.stringify({ pid: process.pid, port, url: u, token, hash: selfHash, startedAt: new Date().toISOString() }, null, 2));
-  } catch {}
+    fs.mkdirSync(path.dirname(stateFile), { recursive: true, mode: 0o700 });
+    const cacheStat = fs.lstatSync(path.dirname(stateFile));
+    if (!cacheStat.isDirectory() || cacheStat.isSymbolicLink()) throw new Error('cache must be a real directory');
+    fs.chmodSync(path.dirname(stateFile), 0o700);
+    const fd = fs.openSync(stateFile, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW || 0), 0o600);
+    try {
+      fs.fchmodSync(fd, 0o600);
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, port, url: u, control, hash: selfHash, startedAt: new Date().toISOString() }, null, 2));
+    } finally { fs.closeSync(fd); }
+  } catch (e) { console.error(`Cannot secure server state: ${e.message}`); server.close(); return; }
   const forget = () => { try { if (readState()?.pid === process.pid) fs.unlinkSync(stateFile); } catch {} };
   process.on('exit', forget);
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => process.exit(0));
-  console.log(`Floorplan: ${u}`);
+  const privateUrl = `${u}/#${issueTicket()}`;
+  console.log(`Floorplan: ${has('managed') ? u : privateUrl}`);
   console.log(cli
     ? `asking via ${ENGINES[engine].name} ${version || ''} (${cli.path})${model ? `, model ${model}` : ''}`
     : `${ENGINES[want].name} not found: the map works, but asking questions needs it (${ENGINES[want].site}). Pass --${want} <path> if it is installed somewhere unusual.`);
   if (!has('no-open')) {
-    const opener = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', u]] : process.platform === 'darwin' ? ['open', [u]] : ['xdg-open', [u]];
+    const opener = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', privateUrl]] : process.platform === 'darwin' ? ['open', [privateUrl]] : ['xdg-open', [privateUrl]];
     try { spawn(opener[0], opener[1], { stdio: 'ignore', detached: true }).unref(); } catch {}
   }
 });

@@ -9,6 +9,8 @@ Floorplan works in [Codex](https://developers.openai.com/codex) the same way it 
 
 ## Install
 
+Installing a skill is a code-trust decision. Record the reviewed source/revision and check the installed copy when using a local modification. See [installation and runtime requirements](../skills/floorplan/references/security-requirements.md); installing this local candidate does not establish complete isolation from other local software.
+
 **In the Codex app** (no terminal needed):
 
 1. Open **Plugins** and choose **Add a marketplace**.
@@ -83,3 +85,5 @@ codex plugin add floorplan@floorplan
 ```
 
 Codex copies a local plugin into its cache when you add it (unlike Claude Code, which runs a local plugin straight from the folder). After you change the plugin, run `codex plugin add floorplan@floorplan` again and start a new session.
+
+Also stop existing map servers, rebuild their maps using the updated installed skill, and reopen them. Editing the source clone or reinstalling a cached skill does not replace an already running generated server. Confirm the installed path from the installer rather than choosing a same-named folder inside the project.

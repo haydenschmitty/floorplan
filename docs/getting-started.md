@@ -12,6 +12,8 @@ Floorplan works in **Claude Code** and in **Codex**. Making and using a map is t
 
 ## Install
 
+Choose a plugin source you trust: installing the skill makes its scripts available to run on your machine. For reproducible or sensitive use, record the reviewed revision and verify the actual installed copy. See [requirements across installation and use](../skills/floorplan/references/security-requirements.md), including which controls are implemented and which still require a restricted environment.
+
 **In Codex**, open **Plugins → Add a marketplace**, enter `haydenschmitty/floorplan`, and install Floorplan. Details in [Floorplan in Codex](codex.md#install).
 
 **In Claude Code**, run these once, in any terminal:
@@ -84,6 +86,8 @@ node floorplan/serve.mjs
 
 serves it at http://127.0.0.1:4378 with a working Ask bar, or double-click `floorplan/index.html`, where everything works except asking questions.
 
+In this local development candidate, open the fresh private URL printed by the server, including its initial fragment. The browser exchanges and removes the one-use ticket. The bare server address shows an opening prompt until authorized; an expired ticket requires a fresh link.
+
 When the map is opened for you, the server runs in the background and stops by itself two hours after you close the last tab. To stop it sooner:
 
 ```bash
@@ -91,6 +95,8 @@ node floorplan/serve.mjs --stop
 ```
 
 ## Update the plugin
+
+An installed skill update and a generated map are separate. Stop the old map server, update the installed skill, rebuild the map with that copy, and start a new server. Otherwise an old server can keep running the previous code. The [update requirements](../skills/floorplan/references/security-requirements.md#practical-workflow) explain trusted versus received maps.
 
 For Codex, see [Update or remove it](codex.md#update-or-remove-it).
 

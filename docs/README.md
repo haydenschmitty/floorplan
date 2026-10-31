@@ -9,6 +9,7 @@
 | [What's in your project](project-files.md) | Every file Floorplan creates, which ones you can edit, and how it stays out of git |
 | [Privacy and security](privacy-and-security.md) | What runs where, what leaves your machine, and how secrets are handled |
 | [Is it safe to install?](is-it-safe.md) | Everything Floorplan does on your computer, how a test enforces it, and how to verify your installed copy |
+| [Security requirements](../skills/floorplan/references/security-requirements.md) | Requirements and evidence at installation, invocation, map opening, CLI use and updates; implemented controls and residual limits |
 | [Troubleshooting](troubleshooting.md) | Common problems and how to fix them |
 | [Developing Floorplan](development.md) | Repo layout, testing a local copy, releasing a new version |
 

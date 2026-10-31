@@ -27,7 +27,8 @@ const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'ut
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 async function api(s, p) {
   try {
-    const r = await fetch(s.url + p, { headers: { 'x-floorplan-token': s.token }, signal: AbortSignal.timeout(3000) });
+    if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(s.url) || typeof s.control !== 'string') return null;
+    const r = await fetch(s.url + p, { method: p === '/control/bootstrap' ? 'POST' : 'GET', headers: { 'x-floorplan-control': s.control }, signal: AbortSignal.timeout(3000), redirect: 'error' });
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
@@ -38,16 +39,13 @@ function openBrowser(u) {
 const hash = crypto.createHash('sha1').update(fs.readFileSync(serveFile)).digest('hex').slice(0, 12);
 
 let s = readState();
-let status = s?.pid && alive(s.pid) ? await api(s, '/api/status') : null;
-let restarted = false;
-const hadTabs = status?.tabs > 0;
+let status = s?.pid && alive(s.pid) ? await api(s, '/control/status') : null;
 
 if (status && status.hash !== hash) {
   // a newer serve.mjs came with this build: restart so the map gets it; open tabs reconnect and reload
   try { process.kill(s.pid); } catch {}
   for (let i = 0; i < 20 && alive(s.pid); i++) await sleep(150);
   status = null;
-  restarted = true;
 }
 
 if (!status) {
@@ -56,30 +54,32 @@ if (!status) {
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   const log = fs.openSync(path.join(dir, '.cache', 'server.log'), 'w');
   const prev = s?.pid;
-  spawn(process.execPath, [serveFile, '--no-open', '--idle-exit', String(IDLE_MINUTES), ...pass], {
+  spawn(process.execPath, [serveFile, '--no-open', '--managed', '--idle-exit', String(IDLE_MINUTES), ...pass], {
     cwd: root, detached: true, stdio: ['ignore', log, log], windowsHide: true,
   }).unref();
   // finding the Claude Code or Codex CLI takes a few seconds before the server listens
   for (let i = 0; i < 100; i++) {
     await sleep(200);
     const n = readState();
-    if (n?.pid && n.pid !== prev && alive(n.pid)) { s = n; status = await api(s, '/api/status'); if (status) break; }
+    if (n?.pid && n.pid !== prev && alive(n.pid)) { s = n; status = await api(s, '/control/status'); if (status) break; }
   }
   if (!status) {
     console.error(`✗ The map server didn't start. Its log is in ${rel}/.cache/server.log. The map still opens as a file: ${rel}/index.html`);
     process.exit(1);
   }
-  // tabs from before a restart come back on their own within a few seconds
-  if (restarted && hadTabs) for (let i = 0; i < 50 && !(status?.tabs > 0); i++) { await sleep(200); status = await api(s, '/api/status'); }
+  // A restarted server has new credentials; the private link opens a fresh authenticated tab.
 }
 
-const health = await api(s, '/api/health');
+const health = await api(s, '/control/health');
+const ticket = await api(s, '/control/bootstrap');
+if (!ticket?.ticket) { console.error('✗ Could not create a private map link.'); process.exit(1); }
+const privateUrl = `${s.url}/#${ticket.ticket}`;
 let shown;
 if (status.tabs > 0) shown = `already open in ${status.tabs === 1 ? 'a browser tab' : status.tabs + ' browser tabs'}, which reloaded with the latest map`;
 else if (args['no-open']) shown = 'not opened in a browser (--no-open): open the URL yourself';
-else shown = openBrowser(s.url) ? 'opened in the browser' : 'could not open a browser: open the URL yourself';
+else shown = openBrowser(privateUrl) ? 'opened in the browser' : 'could not open a browser: open the URL yourself';
 
-console.log(`FLOORPLAN  ${s.url}  (${shown})`);
+console.log(`FLOORPLAN  ${privateUrl}  (${shown})`);
 const CLI = {
   claude: { name: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code' },
   codex: { name: 'Codex', docs: 'https://developers.openai.com/codex' },
