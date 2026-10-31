@@ -246,7 +246,7 @@ export function createResolver(root, files) {
       case 'rust': return resolveRust(file.path, imp);
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file.path, imp.spec);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
-      case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
+      case 'php': return imp.exactPath ? (fileSet.has(imp.exactPath) ? { file: imp.exactPath } : { unresolved: true }) : resolveRelative(file.path, imp.spec, ['.php']);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
       default: return resolveRelative(file.path, imp.spec, []);
     }

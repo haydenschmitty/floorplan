@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 // Per-language, regex-based extraction of imports, exported symbols, HTTP routes and HTTP calls.
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
 
@@ -453,6 +455,100 @@ function extractJvm(src) {
   return { imports, symbols, routes, mounts: [], calls, hosts, pkg };
 }
 
+// ---------- PHP ----------
+
+// Keep offsets, but ignore comments, quoted examples and HTML outside PHP blocks.
+function phpSource(src) {
+  const code = src.split(''), syntax = src.split('');
+  const hide = (a, b, stringsOnly = false) => { for (let k = a; k < b; k++) { if (src[k] !== '\n') { syntax[k] = ' '; if (!stringsOnly) code[k] = ' '; } } };
+  let i = 0, active = false;
+  while (i < src.length) {
+    if (!active) {
+      const open = /<\?(?:php\b|=)/ig; open.lastIndex = i;
+      const m = open.exec(src); if (!m) { hide(i, src.length); break; }
+      hide(i, open.lastIndex); i = open.lastIndex; active = true; continue;
+    }
+    if (src.startsWith('?>', i)) { hide(i, i + 2); i += 2; active = false; continue; }
+    const begin = i, ch = src[i];
+    if (ch === "'" || ch === '"') {
+      i++; while (i < src.length) { if (src[i] === '\\') i += 2; else if (src[i++] === ch) break; }
+      hide(begin, Math.min(i, src.length), true); continue;
+    }
+    if (src.startsWith('/*', i)) { const end = src.indexOf('*/', i + 2); i = end < 0 ? src.length : end + 2; hide(begin, i); continue; }
+    if (src.startsWith('//', i) || ch === '#' && src[i + 1] !== '[') {
+      const end = src.indexOf('\n', i), close = src.indexOf('?>', i);
+      i = close >= 0 && (end < 0 || close < end) ? close : end < 0 ? src.length : end; hide(begin, i); continue;
+    }
+    if (src.startsWith('<<<', i)) {
+      const head = /^<<<[ \t]*['"]?([A-Za-z_]\w*)['"]?[^\n]*\n/.exec(src.slice(i));
+      const end = head && new RegExp('^[ \\t]*' + head[1] + '(?=[;\\s]|$)', 'm').exec(src.slice(i + head[0].length));
+      i = end ? i + head[0].length + end.index + end[0].length : src.length; hide(begin, i); continue;
+    }
+    i++;
+  }
+  return { code: code.join(''), syntax: syntax.join('') };
+}
+
+// A framework call in application code is enough for a scoped source snapshot; complete
+// installations are also recognised by their core/inc/bigtree directory in scan.mjs.
+export function findBigTreeRoot(src, filePath) {
+  if (!/\bBigTree(?:Admin|AutoModule|CMS)?\s*::/.test(phpSource(src).syntax)) return null;
+  return /^(.*?)(?:custom|templates|site)\//.exec(filePath)?.[1].replace(/\/$/, '') ?? null;
+}
+
+function extractPhp(src, filePath = '', options = {}) {
+  const { code, syntax } = phpSource(src), at = lineIndex(src), P = path.posix;
+  const imports = [], routes = [];
+  const root = options.bigtreeRoot;
+  for (const m of all(/\b(?:require|include)(?:_once)?\b/g, syntax)) {
+    // Deliberately limited to literal paths and familiar directory constants; never eval PHP.
+    const value = /^\s*\(?\s*(?:(__DIR__|dirname\s*\(\s*__(?:DIR|FILE)__\s*(?:,\s*[1-9][0-9]*)?\s*\)|SERVER_ROOT|SITE_ROOT)\s*\.\s*)?(['"])([^'"\n]+)\2\s*\)?(?=\s*(?:;|\}|\)|$))/.exec(code.slice(m.index + m[0].length));
+    if (!value) continue;
+    const anchor = value[1], literal = value[3];
+    if (/[\\:$]/.test(literal) || !anchor && literal.startsWith('/')) continue;
+    let target;
+    if (anchor === 'SERVER_ROOT' || anchor === 'SITE_ROOT') {
+      if (root === undefined) continue;
+      target = P.join(root, anchor === 'SITE_ROOT' ? 'site' : '', literal);
+    } else {
+      let dir = P.dirname(filePath);
+      if (anchor?.startsWith('dirname')) {
+        const levels = Number(/,\s*([0-9]+)/.exec(anchor)?.[1] || 1); if (levels > 20) continue;
+        for (let n = /__FILE__/.test(anchor) ? 1 : 0; n < levels; n++) dir = P.dirname(dir);
+      }
+      target = P.join(dir, literal);
+    }
+    target = P.normalize(target);
+    if (target === '..' || target.startsWith('../') || P.isAbsolute(target)) continue;
+    imports.push({ spec: './' + P.relative(P.dirname(filePath), target), names: [], line: at(m.index), exactPath: target });
+  }
+  const first = /\S/.exec(syntax), line = first ? at(first.index) : null;
+  const docroot = options.documentRoot ?? (root !== undefined ? P.join(root, 'site') : /^(.*?(?:^|\/)(?:public|www|htdocs))\//.exec(filePath)?.[1]);
+  const add = (url, doc) => { if (line) routes.push({ method: 'ANY', path: url, var: null, line, framework: root !== undefined ? 'bigtree' : 'php', doc }); };
+  if (docroot && filePath.startsWith(docroot + '/')) {
+    const rel = filePath.slice(docroot.length + 1);
+    if (/\.php$/.test(rel) && !rel.split('/').some((part) => part.startsWith('_') || part.startsWith('.'))) add('/' + (rel === 'index.php' ? '' : rel), 'Handles requests to this page.');
+  }
+  // BigTree-specific conventions apply only when the scanner found this site's framework.
+  if (root !== undefined) {
+    const prefix = root ? root + '/' : '';
+    for (const [dir, url, includeBase] of [['custom/admin/modules', '/admin', false], ['custom/admin/ajax', '/admin/ajax', false], ['templates/ajax', '/ajax', true]]) {
+      const folder = prefix + dir + '/'; if (!filePath.startsWith(folder)) continue;
+      const rel = filePath.slice(folder.length);
+      if (!/\.php$/.test(rel) || rel.split('/').some((part) => part.startsWith('_'))) continue;
+      const suffix = rel.replace(/(?:^|\/)default\.php$/, '').replace(/\.php$/, '');
+      const known = options.files || new Set();
+      if (P.basename(rel) !== 'default.php' && known.has(filePath.replace(/\.php$/, '/default.php'))) continue;
+      add(url + (suffix ? '/' + suffix : ''), dir.startsWith('custom/admin') ? 'Handles this office page.' : 'Answers requests from the website.');
+      const dirs = includeBase ? [folder] : []; let current = folder;
+      for (const part of rel.split('/').slice(0, -1)) { current += part + '/'; dirs.push(current); }
+      for (const helper of [...dirs.map((d) => d + '_header.php'), ...dirs.slice().reverse().map((d) => d + '_footer.php')]) if (known.has(helper)) imports.push({ spec: './' + P.relative(P.dirname(filePath), helper), names: [], line, exactPath: helper });
+    }
+  }
+  const { calls, hosts } = extractCalls(code, at);
+  return { imports, symbols: [], routes, mounts: [], calls, hosts };
+}
+
 // ---------- small ones ----------
 
 function extractSimple(src, lang) {
@@ -461,7 +557,6 @@ function extractSimple(src, lang) {
   const imports = [];
   if (lang === 'ruby') for (const m of all(/\brequire_relative\s*\(?\s*["']([^"']+)["']/g, code)) imports.push({ spec: './' + m[1].replace(/^\.\//, ''), names: [], line: at(m.index) });
   if (lang === 'c' || lang === 'cpp' || lang === 'objc') for (const m of all(/^\s*#\s*(?:include|import)\s+"([^"]+)"/gm, code)) imports.push({ spec: m[1], names: [], kind: 'include', line: at(m.index) });
-  if (lang === 'php') for (const m of all(/\b(?:require|include)(?:_once)?\s*\(?\s*(?:__DIR__\s*\.\s*)?["']([^"']+)["']/g, code)) imports.push({ spec: m[1].startsWith('/') ? '.' + m[1] : m[1], names: [], line: at(m.index) });
   if (lang === 'css') for (const m of all(/@(?:import|use|forward)\s+(?:url\()?["']([^"']+)["']/g, code)) imports.push({ spec: m[1].startsWith('.') ? m[1] : './' + m[1], names: [], line: at(m.index) });
   const symbols = [];
   if (lang === 'ruby') for (const m of all(/^\s*(class|module)\s+([A-Z][\w:]*)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
@@ -470,9 +565,10 @@ function extractSimple(src, lang) {
   return { imports, symbols, routes: [], mounts: [], calls, hosts };
 }
 
-function extractByLang(src, lang, filePath) {
+function extractByLang(src, lang, filePath, options) {
   switch (lang) {
     case 'typescript': case 'javascript': case 'vue': case 'svelte': case 'astro': return extractJs(src, filePath);
+    case 'php': return extractPhp(src, filePath, options);
     case 'python': return extractPy(src);
     case 'go': return extractGo(src);
     case 'rust': return extractRust(src);
@@ -481,8 +577,8 @@ function extractByLang(src, lang, filePath) {
   }
 }
 
-export function extract(src, lang, filePath) {
-  const r = extractByLang(src, lang, filePath);
+export function extract(src, lang, filePath, options) {
+  const r = extractByLang(src, lang, filePath, options);
   addDocs(src, lang, r);
   return r;
 }
