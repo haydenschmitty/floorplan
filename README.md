@@ -37,7 +37,7 @@ Floorplan gives you the diagram nobody drew. Ask Claude Code, Codex or Cursor fo
 
 - **For builders:** understand the app you made, in your own words, without reading the code.
 - **For teams:** onboard someone in minutes, from the big picture down to the exact file.
-- **For working with AI:** after every change Claude or Codex makes, see exactly which parts it touched and why.
+- **For working with AI:** after every change Claude, Codex or Cursor makes, see exactly which parts it touched and why.
 
 ## Floorplan, Archify or Understand Anything?
 
@@ -226,7 +226,7 @@ You get a [blueprint](#also-blueprints-for-apps-you-havent-built-yet) of the pla
 
 ### Things to try
 
-| Ask Claude Code or Codex | Ask the map |
+| Ask Claude Code, Codex or Cursor | Ask the map |
 |---|---|
 | "Make me a floorplan of this app" | "What happens when someone places an order?" |
 | "Update the floorplan" | "Where do we talk to Stripe?" |
@@ -240,13 +240,13 @@ You get a [blueprint](#also-blueprints-for-apps-you-havent-built-yet) of the pla
 ```mermaid
 flowchart LR
     code["Your codebase<br/>one repo or several"] --> scan["Scan<br/>files, imports, routes, requests"]
-    scan --> agent["Claude or Codex<br/>names the parts, describes every file"]
+    scan --> agent["Claude, Codex or Cursor<br/>names the parts, describes every file"]
     agent --> build["Build<br/>map, health, screens, recent work"]
     build --> map["floorplan/index.html<br/>opens in your browser"]
     map -. "update the floorplan" .-> scan
 ```
 
-Scripts do the mechanical work: finding repos, parsing code in a dozen languages, matching web requests to endpoints, laying out the map. They're plain Node with no dependencies. Claude or Codex does the part only a reader can: deciding what the parts of your app *are*, and saying so plainly. Details in [How it works](docs/how-it-works.md).
+Scripts do the mechanical work: finding repos, parsing code in a dozen languages, matching web requests to endpoints, laying out the map. They're plain Node with no dependencies. Claude, Codex or Cursor does the part only a reader can: deciding what the parts of your app *are*, and saying so plainly. Details in [How it works](docs/how-it-works.md).
 
 **Languages:** TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, plus Vue, Svelte and Astro files, with lighter support for others.<br>
 **Endpoints:** Express, Koa, Hono, Next.js, Firebase Cloud Functions, Flask, FastAPI, Django, Go's net/http, Gin, Echo and chi, Actix, Axum, Spring.<br>
@@ -292,7 +292,7 @@ Floorplan has no hooks, no MCP servers and no dependencies, downloads nothing, a
 <details>
 <summary><b>Does my code leave my computer?</b></summary>
 
-Only the way Claude Code and Codex always work: the AI reads the files it needs to describe your app, through your own account. The map itself is a local file and its server only listens on your machine. If you choose to open the map in the Claude app instead, Claude uploads the map (names, descriptions and structure, not your source code) to your private claude.ai account, and asks first. The one thing Floorplan itself ever sends is your email, and only if you sign up for the [Floorplan Cloud waitlist](docs/privacy-and-security.md#floorplan-cloud-waitlist).
+Only the way Claude Code, Codex and Cursor always work: the AI reads the files it needs to describe your app, through your own account. The map itself is a local file and its server only listens on your machine. If you choose to open the map in the Claude app instead, Claude uploads the map (names, descriptions and structure, not your source code) to your private claude.ai account, and asks first. The one thing Floorplan itself ever sends is your email, and only if you sign up for the [Floorplan Cloud waitlist](docs/privacy-and-security.md#floorplan-cloud-waitlist).
 </details>
 
 <details>

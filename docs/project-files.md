@@ -16,7 +16,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI, Codex or the Cursor CLI | No |
 | `query.mjs` | Looks things up in the map from the command line; Claude, Codex and Cursor use it too | No |
 | `artifact.html` | A copy for opening in the Claude app, only if you asked for one | No |
-| `<project>-map.html` | An exported copy to share, only if you exported one from Claude or Codex (the map's Export button downloads it instead) | No |
+| `<project>-map.html` | An exported copy to share, only if you exported one from Claude, Codex or Cursor (the map's Export button downloads it instead) | No |
 | `.cache/` | The scan, the description worksheets, the last update's changes, the running server's address, and, for a blueprint, the last 20 versions of the plan that **Undo** goes back to | No. Safe to delete, though Undo then has nothing to go back to |
 | `.gitignore` | Keeps this whole folder out of git | No |
 
@@ -29,7 +29,7 @@ Your edits to `architecture.json` and `descriptions/` are kept on every update. 
 - pin a note to a file;
 - add or change flows and the tour.
 
-Or just ask Claude or Codex ("rename 'Main server' to 'Shop API' on the floorplan").
+Or just ask Claude, Codex or Cursor ("rename 'Main server' to 'Shop API' on the floorplan").
 
 A blueprint is edited the same way, through `plan.json` and `architecture.json`, or from the map with the Ask bar's **Change** switch. The plan's format is in [`blueprint.md`](../skills/floorplan/references/blueprint.md).
 

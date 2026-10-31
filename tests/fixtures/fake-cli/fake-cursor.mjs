@@ -41,5 +41,7 @@ out({ type: 'tool_call', subtype: 'completed', call_id: 'c1', tool_call: { shell
 out({ type: 'tool_call', subtype: 'started', call_id: 'c2', tool_call: { readToolCall: { args: { path: process.cwd() + '/shop-api/routes/orders.js' } } }, session_id: sid });
 out({ type: 'tool_call', subtype: 'completed', call_id: 'c2', tool_call: { readToolCall: { args: { path: 'x' }, result: { success: {} } } }, session_id: sid });
 out({ type: 'tool_call', subtype: 'started', call_id: 'c3', tool_call: { grepToolCall: { args: { pattern: 'refund' } } }, session_id: sid });
-out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '```json\n' + answer + '\n```' }] }, session_id: sid });
+// RESULT-ONLY: the last message is a closing remark with braces in it, and the JSON is only in the final result
+if (!input.includes('RESULT-ONLY')) out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '```json\n' + answer + '\n```' }] }, session_id: sid });
+else out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Done, see the {answer} above.' }] }, session_id: sid });
 out({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1, result: 'Let me check the {refund} route.```json\n' + answer + '\n```', session_id: sid });

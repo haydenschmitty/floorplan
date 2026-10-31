@@ -245,6 +245,13 @@ test('a failure still reaches the map when the Cursor CLI exits but its backgrou
   assert.ok(Date.now() - t0 < 8000, 'the request hung');
 });
 
+test('the Cursor answer is found in the final result when the last message is only a remark with braces in it', async () => {
+  const s = await serve({ ...NO_OTHERS(root), FLOORPLAN_CURSOR: path.join(FAKE, 'fake-cursor.mjs') });
+  const [answer] = pick(await ask(s, 'RESULT-ONLY question'), 'answer');
+  assert.equal(answer.title, 'Refunds');
+  assert.deepEqual(answer.items.map((i) => i.id), ['f:shop-api/routes/orders.js']);
+});
+
 test('the map does not offer Change when the engine is Cursor, which cannot hold an answer to a schema', async () => {
   const s = await serve({ ...NO_OTHERS(root), FLOORPLAN_CURSOR: path.join(FAKE, 'fake-cursor.mjs') });
   assert.equal(s.page.engine, 'cursor');

@@ -2012,7 +2012,7 @@ function showFailure(question, code, message, partial) {
   if (code === 'not_logged_in' || code === 'not_granted') setWarning(code);
   if (code === 'not_granted' || code === 'sampling_disabled') setEngine(null, null, code === 'not_granted' ? 'not_granted' : 'app_unavailable');
   if (code === 'cancelled') { sheet.hidden = true; return; }
-  const copy = { rate_limited: `${AGENT.name} is busy or you have hit a usage limit. Try again in a bit.`, not_logged_in: `${Cap(AGENT.cli)} needs you to sign in first.`, cli_missing: `${Cap(AGENT.cli)} not found.`, trust_required: `${Cap(AGENT.cli)} needs you to trust this folder first. In a terminal, go to the project folder, run agent once, choose to trust it, then ask again.`, invalid_json: `${AGENT.name}'s answer couldn't be read as a map view. Try rephrasing.`, session_expired: `Your ${AGENT.name} session expired. Sign in again.` }[code];
+  const copy = { rate_limited: `${AGENT.name} is busy or you have hit a usage limit. Try again in a bit.`, not_logged_in: `${Cap(AGENT.cli)} needs you to sign in first.`, cli_missing: `${Cap(AGENT.cli)} not found.`, trust_required: `${Cap(AGENT.cli)} needs you to trust this folder first. In a terminal, go to the project folder, run agent once, choose to trust it if you trust the project, then ask again.`, invalid_json: `${AGENT.name}'s answer couldn't be read as a map view. Try rephrasing.`, session_expired: `Your ${AGENT.name} session expired. Sign in again.` }[code];
   sheetShell(question, `<p class="err">${h(copy || message || 'Something went wrong.')}</p>${partial ? md(partial) : ''}${code === 'cli_error' && message ? `<p style="font-family:var(--mono);font-size:11px;color:var(--text-3)">${h(message.slice(0, 400))}</p>` : ''}`);
 }
 function setBusy(b) {

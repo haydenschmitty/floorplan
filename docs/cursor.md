@@ -38,11 +38,13 @@ Claude Code and Codex are read-only because their CLIs enforce it. The Cursor CL
 
 - Ask mode is Cursor's read-only mode for questions, and it turns down requests to edit files. But the CLI's own help says print mode "has access to all tools, including write and shell", so ask mode is not a lock.
 - The CLI does have permission rules (`deny` entries such as `Write(...)` and `Shell(...)`), but they can only be set in your own Cursor CLI config (`~/.cursor/cli-config.json`, or `.cursor/cli.json` in the project). Floorplan doesn't edit those, so it doesn't use them.
-- So Floorplan also tells the agent in the prompt never to create, edit or delete a file. That is an instruction, not a guarantee. If you need a hard guarantee, ask through Claude Code or Codex (`--engine claude` or `--engine codex`).
+- So Floorplan also tells the agent in the prompt never to create, edit or delete a file. That is an instruction, not a guarantee. If you need a hard guarantee, or the project isn't yours, ask through Claude Code or Codex (`--engine claude` or `--engine codex`): a poisoned file in an untrusted project could steer an agent that still has write and shell tools.
 
 ### Trusting the folder
 
-The first time the Cursor CLI runs in a folder, it asks whether you trust it, and stops with "Workspace Trust Required" until you decide. Floorplan doesn't answer for you: it never passes `--trust`. That flag saves the trust for good and makes the CLI run the project's own `.cursor/hooks.json`, which could be any command. So, once per project, open a terminal in the project folder, run `agent`, and choose to trust it. After that the Ask bar works. The map says the same thing if it hits this.
+The first time the Cursor CLI runs in a folder, it asks whether you trust it, and stops with "Workspace Trust Required" until you decide. Floorplan doesn't answer for you: it never passes `--trust` (which also saves the trust for good). So, once per project, open a terminal in the project folder, run `agent`, and choose to trust it. After that the Ask bar works. The map says the same thing if it hits this.
+
+Trusting is a real decision, not a formality. In a trusted folder the Cursor CLI runs the project's own `.cursor/hooks.json` commands (I checked that), and other project settings such as rules and MCP servers may apply too. That happens whenever the CLI runs there, whether through Floorplan or not. So trust a project only if you would run `agent` in it anyway. For a project you don't trust, ask through Claude Code or Codex (`--engine claude` or `--engine codex`), which don't load anything from the project.
 
 The server uses whichever agent built the map and falls back to the others if that one isn't installed. To choose:
 
@@ -50,7 +52,7 @@ The server uses whichever agent built the map and falls back to the others if th
 node floorplan/serve.mjs --engine cursor
 ```
 
-It finds `cursor-agent` on your PATH and in `~/.local/bin`; it never runs a program just called `agent`. If yours is somewhere else, or installed only as `agent`, pass `--cursor /path/to/cursor-agent`. `--model <name>` picks the model; otherwise your Cursor settings decide.
+It finds `cursor-agent` on your PATH and in `~/.local/bin` (not tested on Windows; if it isn't found there, point to it with `--cursor`); it never runs a program just called `agent`. If yours is somewhere else, or installed only as `agent`, pass `--cursor /path/to/cursor-agent`. `--model <name>` picks the model; otherwise your Cursor settings decide.
 
 ## What's different from Claude Code
 

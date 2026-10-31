@@ -134,7 +134,8 @@ function codexApp() {
 // The agents that can answer, one entry each: what it's called, where to get it, how to find its CLI, how to
 // run one request (run, below), and whether its answers are held to a schema (structured). Changing a
 // blueprint from the map needs that, so Change is offered only with a structured engine. schemaFile: the
-// CLI reads its schema from a file rather than the command line.
+// CLI reads its schema from a file rather than the command line. lingers: its CLI leaves background processes
+// holding its pipes after it exits.
 const ENGINES = {
   claude: {
     name: 'Claude Code CLI', site: 'https://docs.claude.com/en/docs/claude-code', structured: true,
@@ -160,6 +161,7 @@ const ENGINES = {
       path.join(HOME, '.local', 'bin', process.platform === 'win32' ? 'cursor-agent.exe' : 'cursor-agent'),
     ], ['cursor-agent', 'index.js']),
     run: cursorRun,
+    lingers: true, // leaves background processes holding its pipes after it exits
   },
 };
 // --engine (or FLOORPLAN_ENGINE) decides; otherwise the agent that built the map, then the others in order
@@ -309,12 +311,16 @@ function describeTool(name, input = {}) {
   if (name === 'Glob') return `Listing ${input.pattern}`;
   return name;
 }
+/** The JSON object in a reply (bare, fenced, or between the first { and the last }), or null. */
+function findJson(t) {
+  const fence = /```(?:json)?\s*([\s\S]*?)```/.exec(t);
+  for (const cand of [t, fence?.[1], t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)]) { try { const v = JSON.parse(cand); if (v && typeof v === 'object') return v; } catch {} }
+  return null;
+}
 function parseAnswer(ev) {
   if (ev.structured_output && typeof ev.structured_output === 'object') return ev.structured_output;
   const t = String(ev.result || '');
-  const fence = /```(?:json)?\s*([\s\S]*?)```/.exec(t);
-  for (const cand of [t, fence?.[1], t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)]) { try { const v = JSON.parse(cand); if (v && typeof v === 'object') return v; } catch {} }
-  return { title: 'Answer', answer: t, items: [] };
+  return findJson(t) || { title: 'Answer', answer: t, items: [] };
 }
 const failCode = (msg) => /not logged in|logged out|\/login|log ?in again|sign in|authenticat|unauthori[sz]ed|\b401\b/i.test(msg) ? 'not_logged_in'
   : /workspace trust required/i.test(msg) ? 'trust_required'
@@ -408,7 +414,8 @@ function cursorRun(body, mode) {
       }
       if (ev.type !== 'result') return;
       if (ev.is_error) return out.fail(String(ev.result || ev.subtype || 'The Cursor CLI reported an error'));
-      const a = parseAnswer({ result: last.includes('{') ? last : ev.result });
+      // the answer is the last message; if that isn't JSON (a closing remark with braces in it), the whole result may be
+      const a = findJson(last) || findJson(String(ev.result || '')) || { title: 'Answer', answer: String(ev.result || last), items: [] };
       remember(c, a.answer);
       out.answer({ ...a, session });
     },
@@ -451,9 +458,9 @@ function runAgent(res, send, body) {
       running.delete(id);
       out.fail(run.lastError?.() || stderr.trim() || `${engine} exited with code ${code}`);
     });
-    // 'close' waits for every holder of the pipes. The Cursor CLI leaves background processes that inherit them, so
-    // shortly after the CLI itself exits, close them (which fires 'close') and a failure still reaches the map.
-    child.on('exit', () => setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, 300));
+    // 'close' waits for every holder of the pipes. An engine that leaves background processes holding them (lingers)
+    // would never get there, so shortly after its CLI exits, close them (which fires 'close'): a failure reaches the map.
+    if (ENGINES[engine].lingers) child.on('exit', () => setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, 300));
     // the browser went away (closed tab, Stop): don't leave the CLI working. Note req 'close' fires as soon as
     // the body is read, so watch the response instead.
     res.on('close', () => { if (!done) { done = true; clearTimeout(quiet); child.kill(); reject(CLOSED); } });

@@ -133,9 +133,9 @@ The map has a floating Ask bar. The user types a question, and the agent answers
 - **Claude Code CLI, Codex or Cursor CLI (best).** The map's server (`floorplan/serve.mjs`, started by open.mjs in step 8) serves it at http://127.0.0.1:4378, or the next free port. Each question runs on the user's own sign-in, in the codebase, read-only, so answers can cite real code:
   - **Claude Code:** `claude -p` with the map (via `floorplan/query.mjs`) plus Read/Grep/Glob on the source. The server finds `claude` on PATH or in `~/.local/bin`.
   - **Codex:** `codex exec` in Codex's read-only sandbox, with nothing saved to their Codex history. The server finds `codex` on PATH, or the CLI that comes with the Codex app.
-  - **Cursor:** `cursor-agent -p --mode ask` (Cursor's ask mode, which the CLI doesn't enforce as read-only; the server also tells it not to write). Each question shows up in the user's Cursor chat history. The server finds `cursor-agent` on PATH or in `~/.local/bin`. The project folder must have been trusted once (the user runs `agent` in a terminal there): the server never passes `--trust`, which would run the project's own hooks.
+  - **Cursor:** `cursor-agent -p --mode ask` (Cursor's ask mode, which the CLI doesn't enforce as read-only; the server also tells it not to write). Each question shows up in the user's Cursor chat history. The server finds `cursor-agent` on PATH or in `~/.local/bin`. The project folder must have been trusted once (the user runs `agent` in a terminal there, and should do that only for a project they'd run `agent` in anyway, since a trusted folder's own `.cursor/hooks.json` then runs): the server never passes `--trust`.
 
-  It uses the agent that built the map, and falls back to the other if that one isn't installed. `--engine claude|codex|cursor` forces one, `--claude <path>`, `--codex <path>` or `--cursor <path>` points at an unusual install, and `--model <name>` picks the model (open.mjs passes all of these through). Users can also run `node floorplan/serve.mjs` themselves at any time, and stop a background one with `node floorplan/serve.mjs --stop`.
+  It uses the agent that built the map, and falls back to the others if that one isn't installed. `--engine claude|codex|cursor` forces one, `--claude <path>`, `--codex <path>` or `--cursor <path>` points at an unusual install, and `--model <name>` picks the model (open.mjs passes all of these through). Users can also run `node floorplan/serve.mjs` themselves at any time, and stop a background one with `node floorplan/serve.mjs --stop`.
 - **Claude app.** If you're running in the Claude app (the Artifact tool is available), offer to publish the map so they can open it there and ask questions on their own Claude account. Answers then come from the map only (names, descriptions, connections, endpoints), not the source, and the Ask bar shows a hint to install the CLI for a better experience. To publish:
   1. `node ${CLAUDE_SKILL_DIR}/scripts/build.mjs <root> --artifact`. This writes `floorplan/artifact.html` without the machine's absolute path.
   2. Publish that file with the Artifact tool, `capabilities: {"sample": {}}`, and keep the same file path for later publishes so the URL stays stable.
@@ -146,7 +146,7 @@ The map has a floating Ask bar. The user types a question, and the agent answers
 
 ### Sharing a copy
 
-When the user wants to send the map to someone (a teammate, a client, someone without Claude or Codex), export it. An export is the same single HTML file without the Ask bar, prompts for Claude or Codex, editor links, this machine's folder path or git remotes. The map's **Export** button does this from the browser; from here, run:
+When the user wants to send the map to someone (a teammate, a client, someone without Claude, Codex or Cursor), export it. An export is the same single HTML file without the Ask bar, prompts for Claude, Codex or Cursor, editor links, this machine's folder path or git remotes. The map's **Export** button does this from the browser; from here, run:
 
 ```
 node floorplan/serve.mjs --export [<file>] [--include flows,notes,recent,health]
