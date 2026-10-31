@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { REPO, makeProject, shopApp, run, readGraph, readJson, writeJson, routeKeys, cleanup } from './helpers.mjs';
+import { REPO, makeProject, shopApp, run, readGraph, readJson, writeJson, routeKeys, cleanup, openPrivateMap } from './helpers.mjs';
 
 const FIXTURE = path.join(REPO, 'tests', 'fixtures', 'blueprint');
 const FAKE = path.join(REPO, 'tests', 'fixtures', 'fake-cli', 'fake-claude.mjs');
@@ -39,11 +39,12 @@ async function served(replies, root) {
     server.stdout.on('data', (d) => { out += d; const m = /Floorplan: (http:\/\/\S+)/.exec(out); if (m) { clearTimeout(timer); resolve(m[1]); } });
     server.on('exit', (code) => reject(new Error(`server exited (${code}): ${out}`)));
   });
-  const page = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(await (await fetch(base + '/')).text())[1]);
-  const token = page.token;
+  const auth = await openPrivateMap(base);
+  const { page, token, cookie } = auth;
+  const origin = auth.base;
   // the stand-in is Claude Code, which holds its answers to a schema, so the map offers Change
   assert.equal(page.change, true);
-  const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': token }, body: JSON.stringify(body || {}) });
+  const post = (p, body) => fetch(origin + p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': token, cookie }, body: JSON.stringify(body || {}) });
   return {
     root,
     async change(question) {

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Private links for local maps:** one-use opening links establish a browser session; anonymous clients cannot load the map or its API token. Local CLI control uses a separate secret, POSIX cache/state permissions are restricted, and the server no longer serves arbitrary map-folder files.
+- **Safer skill installation and updates:** fix the skill description YAML, document installed-copy verification and server rebuilds after updates, and require mapping to preserve application source files. These controls do not isolate every local service; see the installation and runtime requirements.
+
+- **Codex-built blueprints say they are plans:** the build report now includes the "planned, not built yet" line when Codex is selected, alongside the Codex agent line.
+
 ## 0.6.0 (2026-10-31)
 
 - **Health catches the classic mistakes in AI-built apps.** Five new checks, each in plain words with a fix to paste:

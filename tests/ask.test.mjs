@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { REPO, shopApp, run, cleanup } from './helpers.mjs';
+import { REPO, shopApp, run, cleanup, openPrivateMap } from './helpers.mjs';
 
 const FAKE = path.join(REPO, 'tests', 'fixtures', 'fake-cli');
 let root;
@@ -26,14 +26,13 @@ async function serve(env) {
     server.stdout.on('data', (d) => { out += d; const m = /Floorplan: (http:\/\/\S+)/.exec(out); if (m) { clearTimeout(timer); resolve(m[1]); } });
     server.on('exit', (code) => reject(new Error(`server exited (${code}): ${out}`)));
   });
-  const html = await (await fetch(base + '/')).text();
-  const page = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(html)[1]);
-  return { base, token: page.token, page, calls: () => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) };
+  const auth = await openPrivateMap(base);
+  return { ...auth, calls: () => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) };
 }
 
 /** Asks one question and returns its server-sent events as [{ event, data }]. */
 async function ask(s, question, session) {
-  const r = await fetch(s.base + '/api/ask', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': s.token }, body: JSON.stringify({ question, session }) });
+  const r = await fetch(s.base + '/api/ask', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': s.token, cookie: s.cookie }, body: JSON.stringify({ question, session }) });
   return (await r.text()).split('\n\n').filter(Boolean).map((b) => ({ event: /^event: (\w+)/.exec(b)[1], data: JSON.parse(/^data: (.*)$/m.exec(b)[1]) }));
 }
 const pick = (events, name) => events.filter((e) => e.event === name).map((e) => e.data);

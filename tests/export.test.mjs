@@ -6,10 +6,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
-import { shopApp, run, readJson, writeJson, cleanup, FAKE_PASSWORD } from './helpers.mjs';
+import { shopApp, run, readJson, writeJson, cleanup, FAKE_PASSWORD, openPrivateMap } from './helpers.mjs';
 
 const TOKEN_IN_REMOTE = 'ghp-not-a-real-token-1234';
-let root, server, base, token;
+let root, server, base, token, cookie;
 const serveJs = () => path.join(root, 'floorplan', 'serve.mjs');
 /** The graph inside an exported page. */
 const dataOf = (html) => JSON.parse(/<script>window\.FLOORPLAN = (.*?);<\/script>/s.exec(html)[1]);
@@ -43,7 +43,7 @@ before(async () => {
     server.stdout.on('data', (d) => { out += d; const m = /Floorplan: (http:\/\/\S+)/.exec(out); if (m) { clearTimeout(timer); resolve(m[1]); } });
     server.on('exit', (code) => reject(new Error(`server exited (${code}): ${out}`)));
   });
-  token = /"token":"([0-9a-f]+)"/.exec(await (await fetch(base + '/')).text())[1];
+  ({ base, token, cookie } = await openPrivateMap(base));
 });
 after(async () => {
   if (server && server.exitCode === null) await new Promise((resolve) => { server.once('exit', resolve); server.kill(); });
@@ -111,7 +111,7 @@ test('the exported page is still the whole map, ready to open', () => {
   assert.match(html, /ui\/60-export\.js/);
 });
 
-const api = (body, headers = {}) => fetch(base + '/api/export', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+const api = (body, headers = {}) => fetch(base + '/api/export', { method: 'POST', headers: { 'content-type': 'application/json', cookie, ...headers }, body: JSON.stringify(body) });
 
 test('the Export button needs the map page’s token', async () => {
   assert.equal((await api({ include: ['flows'] })).status, 403);
