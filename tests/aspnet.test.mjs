@@ -95,7 +95,7 @@ test('ASP.NET Core minimal APIs: MapGet and friends, under their MapGroup prefix
   assert.deepEqual(r.routes.map((x) => `${x.method} ${x.path} ${x.var} ${x.handler ?? '-'}`), [
     'GET /{id} users GetUser',
     'POST /login app -',
-    'ANY /proxy/{**path} app -',
+    'ANY /proxy/{**path} app Handle',
   ]);
 });
 
@@ -297,4 +297,70 @@ test('Health, C#: CORS that allows every site, Stripe webhooks without a signatu
   assert.deepEqual(conn('{ "ConnectionStrings": { "Db": "Server=prod-sql.shop.io;Database=shop;User Id=app;Password=Tr0ub4dor&3x;" } }'), ['a database password inside a connection string']);
   assert.deepEqual(conn('{ "ConnectionStrings": { "Db": "Host=localhost;Username=app;Password=Tr0ub4dor&3x" } }'), []);
   assert.deepEqual(conn('{ "ConnectionStrings": { "Db": "Host=db.shop.io;Password=${DB_PASSWORD}" } }'), []);
+});
+
+// ---------- across files: handlers, base controllers, project mappers, base-class chains ----------
+
+test('ASP.NET Core across files: inherited actions, mapper prefixes, handler checks and base chains reach Health', () => {
+  const root = makeProject({
+    'Api/Api.csproj': '<Project />\n',
+    // a handler in another file that checks the caller, and one that doesn't
+    'Api/Program.cs': [
+      'app.MapGet("/api/account", AccountEndpoints.AccountAsync);',
+      'app.MapPost("/api/notes", NoteEndpoints.Create);',
+      'app.MapGroup("/api/orders").RequireAuthorization().MapOrders();',
+      'app.MapGroup("/shop/orders").MapOrders();',
+    ].join('\n'),
+    'Api/AccountEndpoints.cs': 'public static class AccountEndpoints\n{\n    public static IResult AccountAsync(HttpContext ctx)\n    {\n        if (!(ctx.User.Identity?.IsAuthenticated ?? false)) return Results.Unauthorized();\n        return Results.Ok();\n    }\n}\n',
+    'Api/NoteEndpoints.cs': 'public static class NoteEndpoints\n{\n    public static IResult Create(Note note) => Results.Ok();\n}\n',
+    // a project mapper, called under two different groups
+    'Api/OrderEndpoints.cs': 'public static class OrderEndpoints\n{\n    public static RouteGroupBuilder MapOrders(this RouteGroupBuilder group)\n    {\n        group.MapGet("/", List);\n        group.MapPost("/{id}/refund", Refund);\n        return group;\n    }\n}\n',
+    // a base controller without [Route]: each subclass serves its actions under its own [Route]
+    'Api/StatusControllerBase.cs': 'public abstract class StatusControllerBase<TTenant> : ControllerBase\n{\n    [HttpGet("summary")] public IActionResult Summary() => Ok();\n    [HttpPost("rebuild")] public IActionResult Rebuild() => Ok();\n}\n',
+    'Api/BillingStatusController.cs': '[Authorize]\n[Route("api/billing")]\npublic class BillingStatusController : StatusControllerBase<Tenant> { }\n',
+    'Api/ShopStatusController.cs': '[Route("api/shop")]\npublic class ShopStatusController : StatusControllerBase<Tenant> { }\n',
+    // [Authorize] two base classes up
+    'Api/SecureBase.cs': '[Authorize]\npublic abstract class SecureBase : ControllerBase { }\n',
+    'Api/ApiControllerBase.cs': 'public abstract class ApiControllerBase : SecureBase { }\n',
+    'Api/ReportsController.cs': '[Route("api/reports")]\npublic class ReportsController : ApiControllerBase\n{\n    [HttpPost] public IActionResult Create() => Ok();\n}\n',
+  }, {
+    arch: { project: { name: 'shop', summary: 'Test.' }, nodes: [{ id: 'api', label: 'API', kind: 'service', summary: 'The API.', paths: ['Api/**'] }] },
+  });
+  try {
+    scanAndBuild(root);
+    const graph = readGraph(root);
+    const routes = graph.routes.map((r) => `${r.m} ${r.p} ${r.f.split('/').pop()}`).sort();
+    assert.deepEqual(routes.filter((r) => /orders|billing|shop\//.test(r)), [
+      'GET /api/billing/summary BillingStatusController.cs',
+      'GET /api/orders OrderEndpoints.cs',
+      'GET /api/shop/summary ShopStatusController.cs',
+      'GET /shop/orders OrderEndpoints.cs',
+      'POST /api/billing/rebuild BillingStatusController.cs',
+      'POST /api/orders/{id}/refund OrderEndpoints.cs',
+      'POST /api/shop/rebuild ShopStatusController.cs',
+      'POST /shop/orders/{id}/refund OrderEndpoints.cs',
+    ]);
+    assert.ok(!routes.some((r) => /StatusControllerBase/.test(r)), 'the base controller serves nothing itself');
+    assert.deepEqual(openEndpoints(graph), [
+      'GET /api/shop/summary',
+      'GET /shop/orders',
+      'POST /api/notes',
+      'POST /api/shop/rebuild',
+      'POST /shop/orders/{id}/refund',
+    ]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('Health, ASP.NET Core: a handler named without its class is looked up in the same file', () => {
+  const src = 'app.MapGet("/me", GetMe);\napp.MapGet("/menu", GetMenu);\nstatic IResult GetMe(ClaimsPrincipal user, [FromHeader(Name = "X-Api-Key")] string key) => Results.Ok();\nstatic IResult GetMenu() => Results.Ok();\n';
+  assert.deepEqual(health(src, 'Api/Program.cs', 'route').map((r) => `${r.fn} ${r.via || 'open'}`), ['GetMe inline', 'GetMenu open']);
+});
+
+test('Health, ASP.NET Core: .RequireAuthorization() after a multi-line lambda, and checks made through a named gate', () => {
+  const lambda = 'app.MapGet("/api/me", (HttpContext context) =>\n{\n    var email = context.User.FindFirstValue("email");\n    return Results.Ok(email);\n})\n.WithName("Me")\n.RequireAuthorization("AdminUser");\n';
+  assert.deepEqual(health(lambda, 'Api/MeEndpoints.cs', 'route').map((r) => r.guard), ['.RequireAuthorization("AdminUser")']);
+  const gate = 'public static class AccountEndpoints\n{\n    public static async Task<IResult> AccountAsync(HttpContext context, CancellationToken ct)\n    {\n        if (await TenantAccessGate.CheckAsync(context, ct) is { } block) return block;\n        return Results.Ok();\n    }\n}\n';
+  assert.deepEqual(health(gate, 'Bff/AccountEndpoints.cs', 'caller-check').map((c) => c.name), ['AccountEndpoints.AccountAsync']);
 });

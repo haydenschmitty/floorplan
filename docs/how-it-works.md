@@ -31,7 +31,7 @@ Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro 
 The most useful lines on the map connect a screen's web requests to the server code that answers them, often across repos. Floorplan:
 
 - **Finds endpoints** in Express, Koa, Hono, Next.js (route files and API routes), Firebase Cloud Functions, Flask, FastAPI, Django, Go (net/http, Gin, Echo, chi, Fiber), Actix, Axum, Spring and ASP.NET Core (attribute-routed controllers, conventional routes from `MapControllerRoute`, minimal APIs and SignalR hubs).
-- **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express routers mounted with `app.use('/api/users', usersRouter)`, including routers mounted inside other routers and mounts with middleware in front; ASP.NET Core `[Route]` prefixes on controllers and `MapGroup` prefixes on minimal APIs.
+- **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express routers mounted with `app.use('/api/users', usersRouter)`, including routers mounted inside other routers and mounts with middleware in front; ASP.NET Core `[Route]` prefixes on controllers (a subclass's prefix for actions it inherits) and `MapGroup` prefixes on minimal APIs, including groups an endpoint-mapping extension method is called on from another file.
 - **Finds requests** made with `fetch`, axios, ky, `requests`, a SignalR `withUrl(…)` and similar, including:
   - addresses built in a variable first: `const url = …; api.get(url)`;
   - template strings with nested parts;

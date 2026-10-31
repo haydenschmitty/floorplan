@@ -465,7 +465,7 @@ const CS_ROUTE = /\bRoute(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?"([^"]*)"/g;
 const CS_TYPE = /(?<=^[ \t]*|\][ \t]*)((?:(?:public|internal|private|protected|static|abstract|sealed|partial|readonly|ref|file|unsafe|new)\s+)*)(class|interface|enum|record|struct)\s+(\w+)([^{;]*)/gm;
 // Minimal APIs: app.MapGet("/orders/{id}", GetOrder), route groups: var api = app.MapGroup("/api"),
 // and SignalR hubs: app.MapHub<ChatHub>("/hubs/chat")
-const CS_MAP = /\b(\w+)\s*\.\s*Map(Get|Post|Put|Patch|Delete|Methods)\s*\(\s*(?:pattern\s*:\s*)?@?"([^"]*)"\s*,\s*([\w.]+(?=\s*[,)]))?/g;
+const CS_MAP = /\b(\w+)\s*\.\s*Map(Get|Post|Put|Patch|Delete|Methods)\s*\(\s*(?:pattern\s*:\s*)?@?"([^"]*)"\s*,\s*([\w.]+(?=\s*[,)]))?(?:\s*,\s*([\w.]+(?=\s*[,)])))?/g;
 const CS_HUB = /\b(\w+)\s*\.\s*MapHub\s*<\s*(\w+)\s*>\s*\(\s*(?:pattern\s*:\s*)?@?"([^"]*)"/g;
 const CS_GROUP = /\b(\w+)\s*=\s*(\w+)\s*\.\s*MapGroup\s*\(\s*(?:prefix\s*:\s*)?@?"([^"]*)"/g;
 // Conventional routing, for controllers without route attributes: app.MapControllerRoute(…, "{controller=Home}/{action=Index}/{id?}")
@@ -497,7 +497,7 @@ function csAttributeGroups(code) {
 }
 
 /** The access an attribute list grants: a named check, deliberately public, or nothing said. */
-function csAccess(attrs) {
+export function csAccess(attrs) {
   if (CS_ANONYMOUS.test(attrs)) return { anonymous: true };
   const m = CS_AUTHORIZE.exec(attrs);
   if (m) return { guard: `[Authorize${m[1] ? m[1].replace(/\s+/g, ' ').trim() : ''}]` };
@@ -505,10 +505,10 @@ function csAccess(attrs) {
 }
 
 /** Attribute names, short form: `[Feature("x"), HttpGet]` -> ['Feature', 'HttpGet'] */
-const csAttrNames = (attrs) => all(CS_ATTR_NAMES, attrs).map((m) => m[1].replace(/Attribute$/, ''));
+export const csAttrNames = (attrs) => all(CS_ATTR_NAMES, attrs).map((m) => m[1].replace(/Attribute$/, ''));
 
 /** Fill in [controller], [action] and [area], and put the action's template under its controller's. */
-function csRoutePath(prefix, template, tokens) {
+export function csRoutePath(prefix, template, tokens) {
   const raw = /^~?\//.test(template) ? template.replace(/^~/, '') : [prefix, template].filter(Boolean).join('/');
   // no template at all: conventional routing, which csConventionalActions picks up
   if (!raw) return null;
@@ -525,16 +525,28 @@ function csActionAccess(g, owner) {
   return { ...access, decos };
 }
 
-/** The endpoints one controller action declares: each verb's own template, or its [Route]s, under each controller prefix. */
-function csActionRoutes(g, owner, line) {
-  const verbs = all(CS_VERB, g.attrs).map((m) => ({ method: m[1].toUpperCase(), template: m[2] }));
-  const templates = all(CS_ROUTE, g.attrs).map((m) => m[1]);
-  if (!verbs.length && !templates.length) return [];
+/** [method, template] for each endpoint an action's attributes declare. */
+function csActionPairs(attrs) {
+  const verbs = all(CS_VERB, attrs).map((m) => ({ method: m[1].toUpperCase(), template: m[2] }));
+  const templates = all(CS_ROUTE, attrs).map((m) => m[1]);
   const pairs = verbs.filter((v) => v.template != null).map((v) => [v.method, v.template]);
   const bare = verbs.filter((v) => v.template == null).map((v) => v.method);
   // [Route] on an action takes the verbs written without a template, or any verb when there are none
   for (const t of templates) for (const method of bare.length ? bare : ['ANY']) pairs.push([method, t]);
   if (!templates.length) for (const method of bare) pairs.push([method, '']);
+  return pairs;
+}
+
+/**
+ * A base controller with no [Route] of its own (abstract, or generic like ControllerBase<T>) only
+ * declares actions: each subclass serves them under its own [Route]. resolveRoutes places them there.
+ */
+const csInheritable = (owner) => owner && !owner.prefixes.some(Boolean) && (/\babstract\b/.test(owner.mods) || owner.generic);
+
+/** The endpoints one controller action declares: each verb's own template, or its [Route]s, under each controller prefix. */
+function csActionRoutes(g, owner, line) {
+  const pairs = csActionPairs(g.attrs);
+  if (!pairs.length) return [];
   const tokens = { controller: owner?.name.replace(/Controller$/, ''), action: g.decl.name?.replace(/Async$/, ''), area: owner?.area };
   const auth = csActionAccess(g, owner);
   const routes = [];
@@ -583,7 +595,16 @@ function csConventionalActions(code, at, t, groups) {
 }
 
 /** Attribute-routed controller actions, under the [Route] and [Area] of the class they sit in. */
-function csControllerRoutes(code, at, types) {
+/** Actions of an inheritable base controller, kept as templates for its subclasses. */
+function csBaseActions(g, owner, line) {
+  const own = csAccess(g.attrs);
+  return csActionPairs(g.attrs).map(([method, template]) => ({
+    base: owner.name, method, template, line, handler: g.decl.name, action: g.decl.name?.replace(/Async$/, ''),
+    auth: { ...own, decos: csAttrNames(g.attrs) },
+  }));
+}
+
+function csControllerRoutes(code, at, types, flat) {
   const groups = csAttributeGroups(code);
   for (const g of groups) {
     if (g.decl.kind !== 'type') continue;
@@ -594,41 +615,85 @@ function csControllerRoutes(code, at, types) {
     t.area = /\bArea(?:Attribute)?\s*\(\s*"([^"]*)"/.exec(g.attrs)?.[1] ?? null;
     t.attrs = g.attrs;
   }
-  const flat = code.replace(STR_LITERAL, blank);
   for (const t of types) t.end = csBodyEnd(flat, t.at);
   const owner = (g) => types.findLast((t) => t.at < g.start && g.start < t.end);
-  const routes = groups.filter((g) => g.decl.kind === 'member').flatMap((g) => csActionRoutes(g, owner(g), at(g.start)));
+  const members = groups.filter((g) => g.decl.kind === 'member').map((g) => ({ g, owner: owner(g) }));
+  const routes = members.filter((x) => !csInheritable(x.owner)).flatMap(({ g, owner }) => csActionRoutes(g, owner, at(g.start)));
+  const baseActions = members.filter((x) => csInheritable(x.owner)).flatMap(({ g, owner }) => csBaseActions(g, owner, at(g.start)));
   const conventional = types.flatMap((t) => csConventionalActions(code, at, t, groups));
-  return { routes, conventional };
+  return { routes, baseActions, conventional };
 }
 
-/** The statement a Map… call starts, up to its semicolon, for the calls chained onto it. */
-const csStatement = (code, from) => code.slice(from, from + 600).split(';')[0];
+/**
+ * The statement a Map… call starts, up to the semicolon that ends it, for the calls chained onto it.
+ * A lambda handler has semicolons of its own, so only one outside every bracket counts; `flat` has its
+ * strings blanked so a bracket inside one doesn't count.
+ */
+function csStatement(code, flat, from) {
+  let depth = 0;
+  const limit = Math.min(flat.length, from + 8000);
+  for (let i = from; i < limit; i++) {
+    const c = flat[i];
+    if (c === '(' || c === '{' || c === '[') depth++;
+    else if (c === ')' || c === '}' || c === ']') depth--;
+    else if (c === ';' && depth <= 0) return code.slice(from, i);
+  }
+  return code.slice(from, limit);
+}
+
+// An extension method that maps endpoints onto whatever it is called on:
+// public static RouteGroupBuilder MapOrders(this RouteGroupBuilder group) { group.MapGet(…) }
+const CS_MAPPER = /\bstatic\s+[\w<>?.]+\s+(Map\w+)\s*\(\s*this\s+[\w<>?.]+\s+(\w+)/g;
+// …and its call sites: api.MapOrders(), app.MapGroup("/api").RequireAuthorization().MapOrders()
+const CS_MAPPER_CALL = /\b(\w+)((?:\s*\.\s*MapGroup\s*\(\s*(?:prefix\s*:\s*)?@?"([^"]*)"\s*\))?(?:\s*\.\s*(?:RequireAuthorization|AllowAnonymous|WithTags|WithName|WithOpenApi|WithGroupName|RequireCors|RequireRateLimiting|DisableAntiforgery)\s*\([^()]*\))*)\s*\.\s*(Map\w+)\s*\(\s*\)/g;
+// ASP.NET Core's own parameterless Map… calls, which aren't project mappers
+const CS_BUILTIN_MAPS = /^Map(Controllers|DefaultControllerRoute|RazorPages|StaticAssets|OpenApi|BlazorHub|FallbackToPage|Group|Hub)$/;
+
+/** The project mappers this file defines (name, parameter, body span), so the routes inside them can be moved under each caller's prefix. */
+function csMappers(code, flat) {
+  return all(CS_MAPPER, code).map((m) => ({ name: m[1], param: m[2], start: m.index, end: csBodyEnd(flat, m.index + m[0].length) }));
+}
+
+/** Where this file calls a project mapper, with the prefix and access of the group it calls it on. */
+function csMapperCalls(code, at, routers, groupAccess) {
+  return all(CS_MAPPER_CALL, code).filter((m) => !CS_BUILTIN_MAPS.test(m[4])).map((m) => {
+    const prefix = [routers[m[1]], m[3]].filter(Boolean).join('/').replace(/\/{2,}/g, '/');
+    const own = csChainAccess(m[2]);
+    const access = own.guard || own.anonymous ? own : groupAccess[m[1]] || {};
+    return { name: m[4], prefix, line: at(m.index), ...(access.guard || access.anonymous ? { access } : {}) };
+  });
+}
 
 /** Minimal-API endpoints and hubs, with route groups as named prefixes (`routers`, as for Flask blueprints). */
-function csMinimalRoutes(code, at) {
+function csMinimalRoutes(code, at, flat) {
   const routers = {};
   const groupAccess = {};
   for (const m of all(CS_GROUP, code)) {
     routers[m[1]] = [routers[m[2]], m[3]].filter(Boolean).join('/').replace(/\/{2,}/g, '/');
-    const access = csChainAccess(csStatement(code, m.index));
+    const access = csChainAccess(csStatement(code, flat, m.index));
     groupAccess[m[1]] = access.guard || access.anonymous ? access : groupAccess[m[2]] || {};
   }
   // `api.RequireAuthorization();` on its own line, after the group is made
   for (const m of all(/\b(\w+)\s*\.\s*(RequireAuthorization\s*\([^;]*|AllowAnonymous\s*\(\s*\))\s*;/g, code)) {
     if (routers[m[1]] !== undefined) groupAccess[m[1]] = csChainAccess(m[0]);
   }
-  const endpoint = (m, method, path, handler, decos = []) => {
-    const own = csChainAccess(csStatement(code, m.index));
+  const mappers = csMappers(code, flat);
+  const endpoint = (m, method, path, handlerRef, decos = []) => {
+    const own = csChainAccess(csStatement(code, flat, m.index));
     const auth = own.guard || own.anonymous ? own : groupAccess[m[1]] || {};
-    return { method, path, var: m[1], line: at(m.index), ...(handler ? { handler } : {}), framework: 'aspnet', caseInsensitive: true, auth: { ...auth, decos } };
+    const mapper = mappers.find((x) => x.param === m[1] && x.start < m.index && m.index < x.end)?.name;
+    return {
+      method, path, var: m[1], line: at(m.index), ...(handlerRef ? { handler: handlerRef.split('.').pop(), handlerRef } : {}),
+      framework: 'aspnet', caseInsensitive: true, auth: { ...auth, decos }, ...(mapper ? { mapper } : {}),
+    };
   };
   const routes = [
-    ...all(CS_MAP, code).map((m) => endpoint(m, m[2] === 'Methods' ? 'ANY' : m[2].toUpperCase(), m[3], m[2] !== 'Methods' && m[4] ? m[4].split('.').pop() : null)),
+    // MapMethods(pattern, methods, handler): the handler is the third argument
+    ...all(CS_MAP, code).map((m) => (m[2] === 'Methods' ? endpoint(m, 'ANY', m[3], m[5]) : endpoint(m, m[2].toUpperCase(), m[3], m[4]))),
     // a hub's [Authorize] sits on its class, usually in another file
     ...all(CS_HUB, code).map((m) => endpoint(m, 'ANY', m[3], m[2], [m[2]])),
   ];
-  return { routes, routers };
+  return { routes, routers, mapperCalls: csMapperCalls(code, at, routers, groupAccess) };
 }
 
 /** `.RequireAuthorization("Admin")` or `.AllowAnonymous()` chained onto a Map… or MapGroup call. */
@@ -655,21 +720,29 @@ function extractCSharp(src) {
   }
   const types = all(CS_TYPE, code).map((m) => ({
     at: m.index, name: m[3], kind: m[2], mods: m[1], nested: /\b(private|protected)\b/.test(m[1]), prefixes: [''], area: null, attrs: '',
+    generic: /^\s*</.test(m[4]),
     // `class OrdersController : SecureControllerBase` -> ['SecureControllerBase']
     bases: (/:\s*([^{]*?)(?:\bwhere\b|$)/.exec(m[4].replace(/\([^)]*\)/g, ''))?.[1] || '').split(',').map((b) => b.trim().replace(/<.*$/, '')).filter(Boolean),
   }));
   const symbols = types.filter((t) => !t.nested).map((t) => ({ name: t.name, kind: t.kind, line: at(t.at) }));
   // type names this file mentions, so a `using` links only the files that declare one of them
   const typeRefs = new Set(code.replace(STR_LITERAL, ' ').match(/\b[A-Z]\w*\b/g) || []);
-  const minimal = csMinimalRoutes(code, at);
-  const controllers = csControllerRoutes(code, at, types);
+  const flat = code.replace(STR_LITERAL, blank);
+  const minimal = csMinimalRoutes(code, at, flat);
+  const controllers = csControllerRoutes(code, at, types, flat);
   const routes = [...controllers.routes, ...minimal.routes];
   const { calls, hosts } = extractCalls(code, at, { skip: /^\s*\[|\.Map(Get|Post|Put|Patch|Delete|Methods|Group|Hub)\s*[<(]/ });
   const conventions = csConventions(code);
   return {
     imports, symbols, routes, mounts: [], routers: minimal.routers, calls, hosts, pkg: namespaces[0]?.name || null,
-    namespaces: namespaces.map((n) => n.name), typeRefs, csTypes: types.map((t) => ({ name: t.name, line: at(t.at), bases: t.bases, attrs: t.attrs })),
+    namespaces: namespaces.map((n) => n.name), typeRefs,
+    csTypes: types.map((t) => ({
+      name: t.name, line: at(t.at), bases: t.bases, attrs: t.attrs, prefixes: t.prefixes.filter(Boolean), area: t.area,
+      ...(/\babstract\b/.test(t.mods) ? { abstract: true } : {}),
+    })),
     ...(controllers.conventional.length ? { conventionalActions: controllers.conventional } : {}),
+    ...(controllers.baseActions.length ? { baseActions: controllers.baseActions } : {}),
+    ...(minimal.mapperCalls.length ? { mapperCalls: minimal.mapperCalls } : {}),
     ...(conventions.length ? { controllerConventions: conventions } : {}),
   };
 }

@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob } from './common.mjs';
-import { csProjects } from './resolve.mjs';
+import { csRoutes, csCors, csStripeEvents, csStripeVerified, csBuildContext, csFinding } from './health-csharp.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -349,46 +349,6 @@ function jsRoutes(src, f, out) {
   });
 }
 
-// ASP.NET Core: who may call each controller action, minimal-API endpoint and hub.
-// A handler that checks the caller itself, or rejects one with 401/403
-const CS_INLINE_CHECK = /\bUser\.Identity\??\.IsAuthenticated\b|\b(?:Unauthorized|Forbid|Challenge)\s*\(|StatusCodes\.Status40[13]|\bAuthorizeAsync\s*\(|\[FromHeader\(\s*Name\s*=\s*"(?:Authorization|X-Api-Key|X-[\w-]*(?:Token|Key|Signature)[\w-]*)"/i;
-// App-wide checks: a fallback policy, an AuthorizeFilter on every controller, or MapControllers().RequireAuthorization()
-const CS_GLOBAL_GUARDS = [
-  [/\bFallbackPolicy\s*=\s*(?!null\b)[^;]*\bRequire/, 'a fallback authorization policy'],
-  [/\bSetFallbackPolicy\s*\(\s*(?!null\b)[^;]*\bRequire/, 'a fallback authorization policy'],
-  [/\bFilters\.Add\s*(?:<\s*AuthorizeFilter\s*>|\(\s*new\s+AuthorizeFilter\b)/, 'an AuthorizeFilter on every controller'],
-  [/\bMapControllers\s*\(\s*\)\s*\.\s*RequireAuthorization\s*\(/, 'MapControllers().RequireAuthorization()'],
-];
-// Custom attributes that check the caller: class FeatureAttribute : AuthorizeAttribute
-const CS_AUTH_BASE = /^(AuthorizeAttribute|IAuthorizationFilter|IAsyncAuthorizationFilter|IAuthorizeData)$/;
-
-function csRoutes(src, f, out) {
-  const lines = src.split('\n');
-  const code = src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ' '));
-  for (const [re, name] of CS_GLOBAL_GUARDS) {
-    const m = re.exec(code);
-    if (m) out.push({ k: 'global-guard', framework: 'aspnet', name, line: code.slice(0, m.index).split('\n').length });
-  }
-  for (const t of f.csTypes || []) {
-    // an attribute that checks the caller, used as [Feature(...)]
-    if (/Attribute$/.test(t.name) && t.bases.some((b) => CS_AUTH_BASE.test(b))) out.push({ k: 'guard-def', name: t.name.replace(/Attribute$/, ''), line: t.line });
-    // a base controller or hub with [Authorize] protects every class built on it
-    else if (/\bAuthorize\b/.test(t.attrs) && !/\bAllowAnonymous\b/.test(t.attrs)) out.push({ k: 'guard-def', name: t.name, line: t.line, wrapper: true, base: true });
-  }
-  const conventional = (f.conventionalActions || []).flatMap((a) => a.methods.map((method) => ({ ...a, method })));
-  const routes = [...(f.routes || []).filter((r) => r.framework === 'aspnet'), ...conventional].sort((a, b) => a.line - b.line);
-  routes.forEach((r, idx) => {
-    const rec = { k: 'route', line: r.line, method: r.method, fn: r.handler, decos: r.auth?.decos || [] };
-    if (r.auth?.anonymous) rec.public = true;
-    else if (r.auth?.guard) Object.assign(rec, { guard: r.auth.guard, via: 'attribute' });
-    const next = routes.slice(idx + 1).find((x) => x.line > r.line)?.line || r.line + 80;
-    const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 80)).join('\n');
-    if (!rec.via && !rec.public && CS_INLINE_CHECK.test(body)) rec.via = 'inline';
-    if (SIGNATURE_CHECK.test(body) || /\bConstructEvent\s*\(/.test(body)) rec.signed = true;
-    out.push(rec);
-  });
-}
-
 /**
  * FastAPI dependency aliases that check the caller, per repo: Map(repo -> Map(alias -> file)).
  * An alias checks the caller when its dependency function does: by its name (admin_user), by taking a
@@ -462,16 +422,10 @@ function findPublicEnv(src, f, out) {
 const STRIPE_EVENT = /(?:\bcase\s*|[!=]==?\s*)["'](checkout\.session\.(?:completed|async_payment_succeeded)|payment_intent\.succeeded|invoice\.(?:paid|payment_succeeded|payment_failed)|customer\.subscription\.(?:created|updated|deleted)|charge\.(?:succeeded|refunded))["']/g;
 const STRIPE_VERIFIED = /constructEvent(?:Async)?\s*\(|construct_event\s*\(|verifyHeader|verify_header|events\.retrieve\s*\(|Event\.retrieve\s*\(/;
 
-// Stripe.net names events as constants: EventTypes.CheckoutSessionCompleted is "checkout.session.completed"
-const STRIPE_EVENT_CONST = /\b(?:EventTypes|Events)\.(CheckoutSessionCompleted|CheckoutSessionAsyncPaymentSucceeded|PaymentIntentSucceeded|InvoicePaid|InvoicePaymentSucceeded|InvoicePaymentFailed|CustomerSubscriptionCreated|CustomerSubscriptionUpdated|CustomerSubscriptionDeleted|ChargeSucceeded|ChargeRefunded)\b/g;
-const STRIPE_EVENT_NAME = { CheckoutSessionCompleted: 'checkout.session.completed', CheckoutSessionAsyncPaymentSucceeded: 'checkout.session.async_payment_succeeded', PaymentIntentSucceeded: 'payment_intent.succeeded', InvoicePaid: 'invoice.paid', InvoicePaymentSucceeded: 'invoice.payment_succeeded', InvoicePaymentFailed: 'invoice.payment_failed', CustomerSubscriptionCreated: 'customer.subscription.created', CustomerSubscriptionUpdated: 'customer.subscription.updated', CustomerSubscriptionDeleted: 'customer.subscription.deleted', ChargeSucceeded: 'charge.succeeded', ChargeRefunded: 'charge.refunded' };
-// Stripe.net: EventUtility.ConstructEvent checks the signature; EventUtility.ParseEvent does not
-const STRIPE_VERIFIED_CS = /\bConstructEvent(?:Async)?\s*\(|\bValidateSignature\s*\(/;
-
 function findStripeWebhook(src, f, out) {
-  if (!/stripe/i.test(src) || STRIPE_VERIFIED.test(src) || (f.lang === 'csharp' && STRIPE_VERIFIED_CS.test(src))) return;
+  if (!/stripe/i.test(src) || STRIPE_VERIFIED.test(src) || (f.lang === 'csharp' && csStripeVerified(src))) return;
   const hits = [...src.matchAll(STRIPE_EVENT)].map((m) => ({ index: m.index, event: m[1] }));
-  if (f.lang === 'csharp') for (const m of src.matchAll(STRIPE_EVENT_CONST)) hits.push({ index: m.index, event: STRIPE_EVENT_NAME[m[1]] });
+  if (f.lang === 'csharp') hits.push(...csStripeEvents(src));
   if (!hits.length) return;
   hits.sort((a, b) => a.index - b.index);
   out.push({ k: 'stripe-unsigned', line: lineIndex(src)(hits[0].index), events: [...new Set(hits.map((h) => h.event))].slice(0, 4) });
@@ -551,11 +505,7 @@ function findCors(src, f, out) {
     const all = /^\s*CORS_(?:ALLOW_ALL_ORIGINS|ORIGIN_ALLOW_ALL)\s*=\s*True\b/m.exec(src);
     if (all) add(all.index, 'CORS_ALLOW_ALL_ORIGINS = True', /^\s*CORS_ALLOW_CREDENTIALS\s*=\s*True\b/m.test(src));
   } else if (f.lang === 'csharp') {
-    // ASP.NET Core refuses AllowAnyOrigin with AllowCredentials, but not an origin check that always says yes
-    const credentials = /\.\s*AllowCredentials\s*\(\s*\)/.test(src);
-    for (const m of src.matchAll(/\.\s*AllowAnyOrigin\s*\(\s*\)/g)) add(m.index, 'AllowAnyOrigin()', false);
-    for (const m of src.matchAll(/\.\s*WithOrigins\s*\(\s*"\*"\s*\)/g)) add(m.index, 'WithOrigins("*")', false);
-    for (const m of src.matchAll(/\.\s*SetIsOriginAllowed\s*\(\s*(?:\w+|\(\s*\w*\s*\))\s*=>\s*true\s*\)/g)) add(m.index, 'SetIsOriginAllowed(_ => true)', credentials);
+    csCors(src, add);
   }
 }
 
@@ -618,7 +568,7 @@ export function findIssues(src, f) {
   if (['typescript', 'javascript', 'python'].includes(f.lang) && USES_SUPABASE.test(src)) out.push({ k: 'uses-supabase' });
   if (f.lang === 'python') pyRoutes(src, f, out);
   else if (['typescript', 'javascript'].includes(f.lang)) jsRoutes(src, f, out);
-  else if (f.lang === 'csharp' && !TEST_FILE.test(f.path)) csRoutes(src, f, out);
+  else if (f.lang === 'csharp' && !TEST_FILE.test(f.path)) csRoutes(src, f, out, SIGNATURE_CHECK);
   // run directly or registered by name (so "nothing imports it" doesn't mean unused)
   if (/^#!|if\s+__name__\s*==\s*['"]__main__['"]|@(?:\w+\.)*(?:task|shared_task|command|group|receiver|scheduled_job|on_event|listener|hookimpl|periodic_task|cli\.command)\b|require\.main\s*===\s*module|import\.meta\.main/m.test(src)) out.push({ k: 'runnable' });
   // a frontend calling a fixed localhost address (breaks once deployed)
@@ -1028,8 +978,8 @@ export function buildHealth({ graph, scan, arch, root }) {
 
   // ---------- endpoints anyone can call ----------
   const routeFinding = new Map(); // `${file}|${line}|${method}` -> finding
-  // an ASP.NET Core app-wide check covers its own project (the folder of its .csproj), not the whole repo
-  const csProjectOf = csProjects(scan.files.map((f) => f.path));
+  // ASP.NET Core facts that span files: projects, mounted and inherited access, handler checks, base classes
+  const cs = csBuildContext(scan, findings);
   const globalGuards = new Map(); // repo -> [{framework, name, file}]
   const guardDefs = new Map();    // name -> [{ file, wrapper }]
   for (const f of scan.files) for (const x of findings(f.path)) {
@@ -1048,7 +998,8 @@ export function buildHealth({ graph, scan, arch, root }) {
   const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isGuardDep)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardDep)]));
   const perRepo = new Map(); // repo -> { guarded, open: [], guardCounts }
   graph.routes.forEach((r, i) => {
-    const fnd = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
+    const own = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
+    const fnd = /\.cs$/.test(r.f) ? csFinding(own, r, cs) : own;
     if (!fnd) return; // framework we don't analyse: say nothing
     if (fnd.public) return; // [AllowAnonymous] / .AllowAnonymous(): public on purpose
     const gf = fileByPath.get(r.f);
@@ -1057,7 +1008,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (!perRepo.has(repo)) perRepo.set(repo, { guarded: 0, total: 0, open: [], misplaced: [], guardCounts: new Map(), fileGuards: new Map(), guardedIn: new Map() });
     const pr = perRepo.get(repo);
     pr.total++;
-    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m) || (g.framework === 'aspnet' && csProjectOf(g.file) === csProjectOf(r.f)));
+    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m) || (g.framework === 'aspnet' && cs.projectOf(g.file) === cs.projectOf(r.f)));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);

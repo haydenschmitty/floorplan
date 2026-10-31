@@ -1,5 +1,6 @@
 // Turn per-file route definitions + mounts into full paths, then match HTTP call literals to them.
 // This is what links a frontend repo to a backend repo when no import connects them.
+import { csRoutePath, csAccess, csAttrNames } from './extract.mjs';
 
 export const routeSegments = (p) => p.split('/').filter(Boolean).map((s) =>
   /^(<[^>]*>|\{[^}]*\}|:\w+|\[\.{0,3}[^\]]*\]|\*{1,2}|\$\{[^}]*\})$/.test(s) || /\$\{|\{[^}]*\}/.test(s) ? '*' : s);
@@ -94,6 +95,7 @@ export function resolveRoutes(files) {
   const wrapsApp = (file, prefix) => [...mountsTo].some(([to, ms]) => ms.some((m) => m.from === file && m.prefix === prefix) && byPath.get(to)?.routes?.some((r) => r.framework !== 'firebase'));
 
   const routes = [];
+  const mappers = mapperCallIndex(files);
   for (const f of files) {
     // Test files define throwaway apps and stub servers; their routes aren't part of the system.
     if (!f.routes?.length || TEST_FILE.test(f.path)) continue;
@@ -105,12 +107,75 @@ export function resolveRoutes(files) {
         continue;
       }
       const defPrefix = (r.var && f.routers?.[r.var]) || '';
+      const calls = r.mapper && mappers.get(`${f.repo ?? ''}|${r.mapper}`);
+      if (calls) { routes.push(...calls.map((c) => mappedRoute(f, r, c, defPrefix))); continue; }
       const mw = mountMw(f.path, r.var);
       for (const mp of outerPrefixes(f.path, r.var)) routes.push({ file: f.path, method: r.method, path: joinPath(mp, defPrefix, r.path), line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}), ...(r.caseInsensitive ? { caseInsensitive: true } : {}) });
     }
   }
-  routes.push(...conventionalRoutes(files));
+  routes.push(...conventionalRoutes(files), ...inheritedRoutes(files));
   return dedupe(routes, (r) => `${r.file}|${r.method}|${r.path}`);
+}
+
+/** Where each ASP.NET Core project mapper (MapOrders(this RouteGroupBuilder g)) is called: `${repo}|${name}` -> calls */
+function mapperCallIndex(files) {
+  const index = new Map();
+  for (const f of files) for (const c of f.mapperCalls || []) {
+    if (TEST_FILE.test(f.path)) continue;
+    const k = `${f.repo ?? ''}|${c.name}`;
+    index.set(k, [...(index.get(k) || []), c]);
+  }
+  return index;
+}
+
+const hasAccess = (a) => !!(a?.guard || a?.anonymous);
+const accessOf = (a) => (a.anonymous ? { anonymous: true } : { guard: a.guard });
+
+/** A route inside a project mapper, under the prefix (and sign-in check) of the group it was called on. */
+function mappedRoute(f, r, call, defPrefix) {
+  const access = !hasAccess(r.auth) && hasAccess(call.access) ? { access: { ...accessOf(call.access), mounted: true } } : {};
+  return {
+    file: f.path, method: r.method, path: joinPath(call.prefix, defPrefix, r.path), line: r.line,
+    ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), caseInsensitive: true, ...access,
+  };
+}
+
+/**
+ * Actions declared on a base controller with no [Route] of its own, served by each subclass under the
+ * subclass's [Route]. Who may call one: the action's own attributes, else the subclass's, else the base's.
+ */
+function inheritedRoutes(files) {
+  const bases = new Map(); // `${repo}|${base}` -> { actions, attrs }
+  for (const f of files) for (const a of f.baseActions || []) {
+    const k = `${f.repo ?? ''}|${a.base}`;
+    if (!bases.has(k)) bases.set(k, { actions: [], attrs: f.csTypes?.find((t) => t.name === a.base)?.attrs || '' });
+    bases.get(k).actions.push(a);
+  }
+  if (!bases.size) return [];
+  const out = [];
+  for (const f of files) {
+    if (TEST_FILE.test(f.path)) continue;
+    for (const t of f.csTypes || []) {
+      if (t.abstract) continue;
+      for (const b of t.bases) {
+        const base = bases.get(`${f.repo ?? ''}|${b}`);
+        if (base) out.push(...base.actions.flatMap((a) => inheritedAction(f, t, a, base.attrs)));
+      }
+    }
+  }
+  return out;
+}
+
+/** One base-controller action as served by subclass `t`, once per [Route] on the subclass. */
+function inheritedAction(f, t, a, baseAttrs) {
+  const tokens = { controller: t.name.replace(/Controller$/, ''), action: a.action, area: t.area };
+  const sub = csAccess(t.attrs);
+  const base = csAccess(baseAttrs);
+  const winner = [a.auth, sub, base].find(hasAccess);
+  const decos = [...a.auth.decos, ...csAttrNames(t.attrs), ...t.bases, ...csAttrNames(baseAttrs)];
+  const access = { ...(winner ? accessOf(winner) : {}), decos, inherited: true };
+  return (t.prefixes.length ? t.prefixes : ['']).map((prefix) => csRoutePath(prefix, a.template, tokens)).filter(Boolean)
+    .map((path) => ({ file: f.path, method: a.method, path, line: t.line, handler: a.handler, caseInsensitive: true, access }));
 }
 
 /**
