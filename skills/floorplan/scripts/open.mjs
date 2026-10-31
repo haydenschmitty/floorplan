@@ -2,7 +2,7 @@
 // Show the map to the user after a build or refresh. Reuses this map's server if it's running (open tabs
 // have already reloaded themselves), restarts it if serve.mjs changed, otherwise starts it in the
 // background and opens a browser tab. Prints the URL and how to stop it.
-// usage: node open.mjs [root] [--no-open] [--port N] [--engine claude|codex] [--model M] [--claude PATH] [--codex PATH]
+// usage: node open.mjs [root] [--no-open] [--port N] [--engine claude|codex|cursor] [--model M] [--claude PATH] [--codex PATH] [--cursor PATH]
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -51,7 +51,7 @@ if (status && status.hash !== hash) {
 }
 
 if (!status) {
-  const pass = ['port', 'engine', 'model', 'claude', 'codex'].flatMap((k) => (args[k] ? ['--' + k, String(args[k])] : []));
+  const pass = ['port', 'engine', 'model', 'claude', 'codex', 'cursor'].flatMap((k) => (args[k] ? ['--' + k, String(args[k])] : []));
   if (!args.port && s?.port) pass.push('--port', String(s.port)); // keep the address people have open
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   const log = fs.openSync(path.join(dir, '.cache', 'server.log'), 'w');
@@ -59,7 +59,7 @@ if (!status) {
   spawn(process.execPath, [serveFile, '--no-open', '--idle-exit', String(IDLE_MINUTES), ...pass], {
     cwd: root, detached: true, stdio: ['ignore', log, log], windowsHide: true,
   }).unref();
-  // finding the Claude Code or Codex CLI takes a few seconds before the server listens
+  // finding the Claude Code, Codex or Cursor CLI takes a few seconds before the server listens
   for (let i = 0; i < 100; i++) {
     await sleep(200);
     const n = readState();
@@ -83,6 +83,7 @@ console.log(`FLOORPLAN  ${s.url}  (${shown})`);
 const CLI = {
   claude: { name: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code' },
   codex: { name: 'Codex', docs: 'https://developers.openai.com/codex' },
+  cursor: { name: 'the Cursor CLI', docs: 'https://cursor.com/docs/cli/overview' },
 };
 console.log(health?.cli
   ? `ASK  works: questions run through ${CLI[health.engine]?.name || 'the Claude Code CLI'}${health.version ? ' (' + health.version + ')' : ''}`

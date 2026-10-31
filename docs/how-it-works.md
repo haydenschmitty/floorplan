@@ -1,6 +1,6 @@
 # How it works
 
-Floorplan splits the work between scripts and the AI you run it in, Claude Code or Codex. The scripts do everything mechanical: finding files, parsing code, matching requests to endpoints, laying out the map. They're plain Node.js with no dependencies, and they cost no tokens. The AI does what only a reader of the code can: deciding what the parts of your app *are*, and explaining them plainly.
+Floorplan splits the work between scripts and the AI you run it in, Claude Code, Codex or Cursor. The scripts do everything mechanical: finding files, parsing code, matching requests to endpoints, laying out the map. They're plain Node.js with no dependencies, and they cost no tokens. The AI does what only a reader of the code can: deciding what the parts of your app *are*, and explaining them plainly.
 
 ```mermaid
 flowchart TD
@@ -43,7 +43,7 @@ It's pattern matching, not a compiler, so it catches most connections but not al
 
 ## 3. The AI describes the system
 
-Claude or Codex reads the scan summary, READMEs, setup files and entry points, then writes `architecture.json`:
+Claude, Codex or Cursor reads the scan summary, READMEs, setup files and entry points, then writes `architecture.json`:
 
 - the main parts of your app, each with a plain summary;
 - the outside services it really talks to (databases, payment providers, email);
@@ -63,7 +63,7 @@ By default everything is written for the app's owner, not an engineer: what each
 - connects the parts, using imports, matched requests and the AI's explicit connections;
 - runs the **Health** check;
 - detects **screens**: Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack;
-- writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one.
+- writes `graph.json` and the self-contained `index.html`, noting whether Claude Code, Codex or Cursor made it, so the map's Ask bar and fix prompts name the right one.
 
 The map lays itself out in your browser with [ELK](https://eclipse.dev/elk/), so the build itself is fast.
 
@@ -110,7 +110,9 @@ The map's server answers each question with the AI on your computer, in your pro
 - **Claude Code:** it runs `claude -p` with read-only tools only: reading and searching files, and `floorplan/query.mjs`, which looks things up in the map.
 - **Codex:** it runs `codex exec` in Codex's read-only sandbox, with the same lookups. These runs aren't saved to your Codex history, so a follow-up brings the last few questions and answers along.
 
-It uses whichever made the map, and the other one if that isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
+- **Cursor:** it runs `cursor-agent -p --mode ask`, Cursor's ask mode, with the same lookups. The CLI doesn't enforce read-only, so Floorplan also tells it not to write (see [Floorplan in Cursor](cursor.md#read-only-what-is-and-isnt-guaranteed)). Each question also appears in your Cursor chat history, so a follow-up brings the last few questions and answers along, as with Codex.
+
+It uses whichever made the map, and another one if that isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
 
 In the Claude app, the map asks Claude through the app instead, with the same lookups but no access to your source.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Works in Cursor:** Floorplan's skill runs in Cursor (from `~/.agents/skills/` or a project's `.agents/skills/`), and the map's Ask bar can now answer through the Cursor CLI (`cursor-agent -p --mode ask`: Cursor's ask mode plus an instruction not to write, not a hard lock like Claude Code's and Codex's; the folder must be trusted once with `agent`) on your own Cursor sign-in. The map's server uses the agent that made the map and falls back to the others (`--engine claude|codex|cursor` picks one, `--cursor <path>` points at an unusual install). In Cursor, Floorplan leaves your project's notes alone, like in Codex. See [Floorplan in Cursor](docs/cursor.md).
+
 ## 0.6.0 (2026-10-31)
 
 - **Health catches the classic mistakes in AI-built apps.** Five new checks, each in plain words with a fix to paste:

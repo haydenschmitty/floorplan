@@ -1,4 +1,4 @@
-// Claude Code and Codex: the skill notices which one is running it, and the map remembers, so its
+// Claude Code, Codex and Cursor: the skill notices which one is running it, and the map remembers, so its
 // Ask bar and "Fix with …" prompts name the right one. Only Claude Code gets the CLAUDE.local.md note.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +15,14 @@ test('Codex is recognised by the variables it sets for every command', () => {
   assert.equal(detectAgent({}, { CLAUDECODE: '1' }), 'claude');
 });
 
+test('Cursor is recognised by its agent variable, unless Claude Code or Codex is running inside it', () => {
+  assert.equal(detectAgent({}, { CURSOR_AGENT: '1' }), 'cursor');
+  assert.equal(detectAgent({}, { CURSOR_AGENT: '1', CLAUDECODE: '1' }), 'claude');
+  assert.equal(detectAgent({}, { CURSOR_AGENT: '1', CODEX_THREAD_ID: 'abc' }), 'codex');
+  assert.equal(detectAgent({ agent: 'cursor' }, {}), 'cursor');
+  assert.equal(detectAgent({}, { FLOORPLAN_AGENT: 'cursor' }), 'cursor');
+});
+
 test('--agent and FLOORPLAN_AGENT override the guess, and nonsense is ignored', () => {
   assert.equal(detectAgent({ agent: 'codex' }, {}), 'codex');
   assert.equal(detectAgent({ agent: 'Claude' }, { CODEX_THREAD_ID: 'abc' }), 'claude');
@@ -29,6 +37,18 @@ test('a map built under Codex records it, and leaves the project notes alone', (
     const out = run('build.mjs', root, '--agent', 'codex');
     assert.equal(readGraph(root).meta.agent, 'codex');
     assert.match(out, /AGENT {2}Codex/);
+    assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no CLAUDE.local.md');
+    assert.ok(!fs.existsSync(path.join(root, 'AGENTS.md')), 'no AGENTS.md');
+  } finally { cleanup(root); }
+});
+
+test('a map built under Cursor records it, and leaves the project notes alone', () => {
+  const root = shopApp();
+  try {
+    run('scan.mjs', root);
+    const out = run('build.mjs', root, '--agent', 'cursor');
+    assert.equal(readGraph(root).meta.agent, 'cursor');
+    assert.match(out, /AGENT {2}Cursor/);
     assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no CLAUDE.local.md');
     assert.ok(!fs.existsSync(path.join(root, 'AGENTS.md')), 'no AGENTS.md');
   } finally { cleanup(root); }

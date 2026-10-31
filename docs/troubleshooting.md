@@ -24,10 +24,19 @@ If it says Codex isn't signed in, open the Codex app (or run `codex login`) and 
 ### Codex: the map didn't open, or Ask stopped working after Codex opened it
 Codex runs commands in a sandbox, and the map's server needs to keep running and reach the network. Allow the server to run outside the sandbox when Codex asks, or run `node floorplan/serve.mjs` yourself from the project folder.
 
-### `node` isn't recognized
-Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so Claude Code or Codex picks it up.
+### Cursor: the Ask bar says it needs the Cursor CLI
+The map's server looks for `cursor-agent` on your PATH and in `~/.local/bin`. Install the [Cursor CLI](https://cursor.com/docs/cli/overview), or point the server at yours (also if it's installed only as `agent`):
 
-### Claude or Codex keeps asking to run `node` scripts
+```bash
+node floorplan/serve.mjs --cursor /path/to/cursor-agent
+```
+
+If it says you're not signed in, run `cursor-agent login`. If it says you've hit a limit, that's your Cursor plan's usage or spending limit, so raise it in your Cursor settings or wait for it to reset. If it says it needs you to trust the folder, open a terminal in the project folder, run `agent` once and choose to trust it (only if you trust the project: a trusted folder's own hooks run), then ask again.
+
+### `node` isn't recognized
+Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so Claude Code, Codex or Cursor picks it up.
+
+### Claude, Codex or Cursor keeps asking to run `node` scripts
 In Claude Code, Floorplan pre-approves its own scripts while it's running, but it may still ask in some setups. Choose the option to always allow them for this project. Codex asks according to your approval settings; allowing Floorplan's `node` scripts for the project stops the prompts.
 
 ### The skill doesn't show up
@@ -42,7 +51,7 @@ Plain requests like "make me a floorplan" work without the slash command. If you
 In Codex, check **Plugins** in the app, or run `codex plugin list`, and start a new chat after installing. To call it by name, type `$floorplan`.
 
 ### The map looks out of date
-Ask Claude or Codex to "update the floorplan". If a tab was already open, it reloads itself once the update finishes.
+Ask Claude, Codex or Cursor to "update the floorplan". If a tab was already open, it reloads itself once the update finishes.
 
 ### The map is blank, or stuck on "Laying out"
 Maps made before version 0.1.3 load their layout engine from the internet, so check your connection or any content blocker, or ask Claude to "update the floorplan". Newer maps have everything built in and work offline.
@@ -81,4 +90,4 @@ node floorplan/serve.mjs --stop
 It also stops by itself two hours after the last tab closes.
 
 ### Still stuck?
-[Open an issue](https://github.com/haydenschmitty/floorplan/issues/new/choose) with what you asked, what happened, whether you used Claude Code or Codex, and the output it showed. Please leave out anything private from your code.
+[Open an issue](https://github.com/haydenschmitty/floorplan/issues/new/choose) with what you asked, what happened, whether you used Claude Code, Codex or Cursor, and the output it showed. Please leave out anything private from your code.
