@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Codex-built blueprints say they are plans:** the build report now includes the "planned, not built yet" line when Codex is selected, alongside the Codex agent line.
+
 ## 0.6.0 (2026-10-31)
 
 - **Health catches the classic mistakes in AI-built apps.** Five new checks, each in plain words with a fix to paste:
