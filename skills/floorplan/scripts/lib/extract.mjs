@@ -453,6 +453,131 @@ function extractJvm(src) {
   return { imports, symbols, routes, mounts: [], calls, hosts, pkg };
 }
 
+// ---------- C# / ASP.NET Core ----------
+
+// One attribute section at the start of a line or right after another: `[Route("api/[controller]")]`,
+// `[HttpGet("{id}"), Authorize]`, possibly over several lines. Strings are taken whole, so brackets
+// inside a template don't end it.
+const CS_ATTR_SECTION = /(?<=^[ \t]*|\][ \t]*)\[((?:"(?:[^"\\\n]|\\.)*"|[^\]"])*)\]/gm;
+const CS_VERB = /\bHttp(Get|Post|Put|Patch|Delete|Head|Options)(?:Attribute)?\b(?:\s*\(\s*(?:template\s*:\s*)?"([^"]*)")?/g;
+const CS_ROUTE = /\bRoute(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?"([^"]*)"/g;
+const CS_TYPE = /(?<=^[ \t]*|\][ \t]*)((?:(?:public|internal|private|protected|static|abstract|sealed|partial|readonly|ref|file|unsafe|new)\s+)*)(class|interface|enum|record|struct)\s+(\w+)/gm;
+// Minimal APIs: app.MapGet("/orders/{id}", GetOrder), and route groups: var api = app.MapGroup("/api")
+const CS_MAP = /\b(\w+)\s*\.\s*Map(Get|Post|Put|Patch|Delete|Methods)\s*\(\s*(?:pattern\s*:\s*)?@?"([^"]*)"\s*,\s*([\w.]+(?=\s*[,)]))?/g;
+const CS_GROUP = /\b(\w+)\s*=\s*(\w+)\s*\.\s*MapGroup\s*\(\s*(?:prefix\s*:\s*)?@?"([^"]*)"/g;
+
+/** Consecutive attribute sections merged per declaration, with the declaration they decorate. */
+function csAttributeGroups(code) {
+  const groups = [];
+  for (const m of all(CS_ATTR_SECTION, code)) {
+    const prev = groups[groups.length - 1];
+    if (prev && !code.slice(prev.end, m.index).trim()) { prev.attrs += ', ' + m[1]; prev.end = m.index + m[0].length; continue; }
+    groups.push({ start: m.index, end: m.index + m[0].length, attrs: m[1] });
+  }
+  for (const g of groups) {
+    // comments are blanked to spaces, so a long one between the attributes and the declaration is only whitespace
+    const space = /\s*/y;
+    space.lastIndex = g.end;
+    space.exec(code);
+    const head = /^[^{;(=]*/.exec(code.slice(space.lastIndex, space.lastIndex + 400))[0];
+    const type = /\b(?:class|interface|record|struct)\s+(\w+)/.exec(head);
+    g.decl = type ? { kind: 'type', name: type[1] } : { kind: 'member', name: /(\w+)\s*(?:<[^>]*>)?\s*$/.exec(head)?.[1] || null };
+  }
+  return groups;
+}
+
+/** Fill in [controller], [action] and [area], and put the action's template under its controller's. */
+function csRoutePath(prefix, template, tokens) {
+  const raw = /^~?\//.test(template) ? template.replace(/^~/, '') : [prefix, template].filter(Boolean).join('/');
+  // no template at all: conventional routing, whose paths live in Program.cs rather than here
+  if (!raw) return null;
+  const path = raw.replace(/\[(controller|action|area)\]/gi, (m, k) => tokens[k.toLowerCase()] ?? m);
+  return '/' + path.replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
+}
+
+/** The endpoints one controller action declares: each verb's own template, or its [Route]s, under each controller prefix. */
+function csActionRoutes(g, owner, line) {
+  const verbs = all(CS_VERB, g.attrs).map((m) => ({ method: m[1].toUpperCase(), template: m[2] }));
+  const templates = all(CS_ROUTE, g.attrs).map((m) => m[1]);
+  if (!verbs.length && !templates.length) return [];
+  const pairs = verbs.filter((v) => v.template != null).map((v) => [v.method, v.template]);
+  const bare = verbs.filter((v) => v.template == null).map((v) => v.method);
+  // [Route] on an action takes the verbs written without a template, or any verb when there are none
+  for (const t of templates) for (const method of bare.length ? bare : ['ANY']) pairs.push([method, t]);
+  if (!templates.length) for (const method of bare) pairs.push([method, '']);
+  const tokens = { controller: owner?.name.replace(/Controller$/, ''), action: g.decl.name?.replace(/Async$/, ''), area: owner?.area };
+  const routes = [];
+  for (const [method, template] of pairs) for (const prefix of owner?.prefixes || ['']) {
+    const path = csRoutePath(prefix, template, tokens);
+    if (path) routes.push({ method, path, var: null, line, handler: g.decl.name, framework: 'aspnet', caseInsensitive: true });
+  }
+  return routes;
+}
+
+/** Where a type's body closes, so an action is placed in the class around it and not a record declared above it. */
+function csBodyEnd(flat, from) {
+  const start = /[{;]/g;
+  start.lastIndex = from;
+  const m = start.exec(flat);
+  if (!m || m[0] === ';') return m ? m.index : flat.length; // `record Refund(Guid Id);` has no body
+  let depth = 0;
+  for (let i = m.index; i < flat.length; i++) {
+    if (flat[i] === '{') depth++;
+    else if (flat[i] === '}' && --depth === 0) return i;
+  }
+  return flat.length;
+}
+
+/** Attribute-routed controller actions, under the [Route] and [Area] of the class they sit in. */
+function csControllerRoutes(code, at, types) {
+  const groups = csAttributeGroups(code);
+  for (const g of groups) {
+    if (g.decl.kind !== 'type') continue;
+    const t = types.find((x) => x.at >= g.end && x.name === g.decl.name);
+    if (!t) continue;
+    const prefixes = all(CS_ROUTE, g.attrs).map((m) => m[1]);
+    if (prefixes.length) t.prefixes = prefixes;
+    t.area = /\bArea(?:Attribute)?\s*\(\s*"([^"]*)"/.exec(g.attrs)?.[1] ?? null;
+  }
+  const flat = code.replace(STR_LITERAL, blank);
+  for (const t of types) t.end = csBodyEnd(flat, t.at);
+  return groups.filter((g) => g.decl.kind === 'member')
+    .flatMap((g) => csActionRoutes(g, types.findLast((t) => t.at < g.start && g.start < t.end), at(g.start)));
+}
+
+/** Minimal-API endpoints, with route groups as named prefixes (`routers`, as for Flask blueprints). */
+function csMinimalRoutes(code, at) {
+  const routers = {};
+  for (const m of all(CS_GROUP, code)) routers[m[1]] = [routers[m[2]], m[3]].filter(Boolean).join('/').replace(/\/{2,}/g, '/');
+  const routes = all(CS_MAP, code).map((m) => ({
+    method: m[2] === 'Methods' ? 'ANY' : m[2].toUpperCase(), path: m[3], var: m[1], line: at(m.index),
+    ...(m[2] !== 'Methods' && m[4] ? { handler: m[4].split('.').pop() } : {}),
+    framework: 'aspnet', caseInsensitive: true,
+  }));
+  return { routes, routers };
+}
+
+function extractCSharp(src) {
+  const code = stripCStyle(src);
+  const at = lineIndex(code);
+  const namespaces = all(/^\s*namespace\s+([\w.]+)/gm, code).map((m) => ({ name: m[1], line: at(m.index) }));
+  const imports = all(/^[ \t]*(?:global\s+)?using\s+(?:static\s+)?(?:\w+\s*=\s*)?([\w.]+)\s*;/gm, code)
+    .map((m) => ({ spec: m[1], names: [], line: at(m.index) }));
+  // a file's own namespace and the ones enclosing it are in scope without a using
+  for (const ns of namespaces) {
+    const parts = ns.name.split('.');
+    for (let k = parts.length; k >= 1; k--) imports.push({ spec: parts.slice(0, k).join('.'), names: [], line: ns.line, implicit: true });
+  }
+  const types = all(CS_TYPE, code).map((m) => ({ at: m.index, name: m[3], kind: m[2], nested: /\b(private|protected)\b/.test(m[1]), prefixes: [''], area: null }));
+  const symbols = types.filter((t) => !t.nested).map((t) => ({ name: t.name, kind: t.kind, line: at(t.at) }));
+  // type names this file mentions, so a `using` links only the files that declare one of them
+  const typeRefs = new Set(code.replace(STR_LITERAL, ' ').match(/\b[A-Z]\w*\b/g) || []);
+  const minimal = csMinimalRoutes(code, at);
+  const routes = [...csControllerRoutes(code, at, types), ...minimal.routes];
+  const { calls, hosts } = extractCalls(code, at, { skip: /^\s*\[|\.Map(Get|Post|Put|Patch|Delete|Methods|Group)\s*\(/ });
+  return { imports, symbols, routes, mounts: [], routers: minimal.routers, calls, hosts, pkg: namespaces[0]?.name || null, namespaces: namespaces.map((n) => n.name), typeRefs };
+}
+
 // ---------- small ones ----------
 
 function extractSimple(src, lang) {
@@ -465,8 +590,7 @@ function extractSimple(src, lang) {
   if (lang === 'css') for (const m of all(/@(?:import|use|forward)\s+(?:url\()?["']([^"']+)["']/g, code)) imports.push({ spec: m[1].startsWith('.') ? m[1] : './' + m[1], names: [], line: at(m.index) });
   const symbols = [];
   if (lang === 'ruby') for (const m of all(/^\s*(class|module)\s+([A-Z][\w:]*)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
-  if (lang === 'csharp') for (const m of all(/^\s*public\s+(?:static\s+|abstract\s+|sealed\s+|partial\s+)*(class|interface|enum|record|struct)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
-  const { calls, hosts } = ['ruby', 'php', 'csharp', 'swift', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
+  const { calls, hosts } = ['ruby', 'php', 'swift', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
   return { imports, symbols, routes: [], mounts: [], calls, hosts };
 }
 
@@ -477,6 +601,7 @@ function extractByLang(src, lang, filePath) {
     case 'go': return extractGo(src);
     case 'rust': return extractRust(src);
     case 'java': case 'kotlin': case 'scala': case 'groovy': return extractJvm(src);
+    case 'csharp': return extractCSharp(src);
     default: return extractSimple(src, lang);
   }
 }
@@ -492,8 +617,18 @@ export function extract(src, lang, filePath) {
 const HASH_LANGS = new Set(['python', 'ruby', 'shell', 'powershell', 'r', 'elixir', 'perl']);
 const LICENSE = /copyright|license|spdx|eslint-disable|@ts-nocheck|prettier-ignore|^-\*-|coding[:=]|generated by|do not edit/i;
 
+// C# XML doc comments: keep the <summary>, and turn <see cref="Orders.Refund"/> into its name
+const CS_XML_DOC = /^\s*\/\/\/\s*</m;
+function csXmlDoc(text) {
+  const summary = /<summary>([\s\S]*?)<\/summary>/i.exec(text)?.[1] ?? text;
+  return summary
+    .replace(/<(?:see|seealso|paramref|typeparamref)\s+(?:cref|name|langword|href)\s*=\s*"(?:\w:)?([^"]*)"\s*\/>/gi, (m, n) => n.split('.').pop())
+    .replace(/<\/?(?:para|c|code|b|i|remarks|returns|value|example|inheritdoc)\b[^>]*>/gi, ' ');
+}
+
 export function cleanDoc(text) {
   if (!text) return null;
+  if (CS_XML_DOC.test(text)) text = csXmlDoc(text);
   const lines = text.split('\n')
     .map((l) => l.replace(/^\s*(\/\*\*?|\*\/|\*|\/\/\/?|#+|"""|''')\s?/, '').replace(/(\*\/|"""|''')\s*$/, '').trim())
     .filter((l) => l && !/^@\w+/.test(l) && !/^[-=*_]{3,}$/.test(l));
@@ -541,10 +676,11 @@ function hashHeader(lines) {
   return cleanDoc(buf.join('\n'));
 }
 
-function commentBefore(lines, idx) {
-  // idx: 0-based line of the declaration. Skip decorators/annotations, then read a /** */ block or // run.
+function commentBefore(lines, idx, lang) {
+  // idx: 0-based line of the declaration. Skip decorators/annotations (C# attributes too), then read a /** */ block or // run.
+  const annotation = lang === 'csharp' ? /^\s*[@[]/ : /^\s*@/;
   let i = idx - 1;
-  while (i >= 0 && /^\s*@/.test(lines[i])) i--;
+  while (i >= 0 && annotation.test(lines[i])) i--;
   if (i < 0) return null;
   if (/\*\/\s*$/.test(lines[i])) {
     const end = i;
@@ -574,7 +710,7 @@ function addDocs(src, lang, r) {
   const lines = src.split('\n');
   r.doc = lang === 'python' ? pyDocAfter(lines, -1) : HASH_LANGS.has(lang) ? hashHeader(lines) : headerComment(lines);
   for (const s of r.symbols || []) {
-    const d = lang === 'python' ? pyDocAfter(lines, s.line - 1) : commentBefore(lines, s.line - 1);
+    const d = lang === 'python' ? pyDocAfter(lines, s.line - 1) : commentBefore(lines, s.line - 1, lang);
     if (d) s.doc = d;
   }
   // A route's handler is the first declaration after it (decorator-style frameworks).
@@ -583,6 +719,8 @@ function addDocs(src, lang, r) {
   const syms = (r.symbols || []).filter((s) => !fbNames.has(s.name)).sort((a, b) => a.line - b.line);
   for (const rt of r.routes || []) {
     if (rt.framework === 'next') { rt.handler = rt.method; continue; }
+    // the extractor already named the action; its doc sits above the attributes, where rt.line points
+    if (rt.framework === 'aspnet') { const d = commentBefore(lines, rt.line - 1, lang); if (d) rt.doc = d; continue; }
     if (rt.framework === 'firebase') { const d = r.symbols.find((s) => s.name === rt.handler)?.doc || commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     const h = syms.find((s) => s.line >= rt.line && s.line - rt.line <= 12);
     if (h) { rt.handler = h.name; if (h.doc) rt.doc = h.doc; }

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **ASP.NET Core endpoints:** controller actions are found from `[Route]`, `[HttpGet]` and the other verb attributes, with `[controller]`, `[action]` and `[area]` filled in and `~/` paths kept as written, and minimal-API `MapGet`/`MapPost`/… calls under their `MapGroup` prefixes. Each action is named and described from its `<summary>`. A frontend's requests are matched to them ignoring case, the way ASP.NET Core routes, so `/api/orders` finds `[Route("api/[controller]")]` on `OrdersController`. Conventional routing (paths set only in `Program.cs`) is not read yet.
+- **C# files are connected:** a `using` links a file to the files in that namespace that declare a type it mentions, and a file's own namespace counts without one. `System` and `Microsoft.AspNetCore`/`Extensions` are treated as built in, and other namespaces become NuGet packages on the map. Folders named like `Orders.Api.Tests` are test projects, so their stub endpoints stay off the map.
+
 ## 0.6.0 (2026-10-31)
 
 - **Health catches the classic mistakes in AI-built apps.** Five new checks, each in plain words with a fix to paste:

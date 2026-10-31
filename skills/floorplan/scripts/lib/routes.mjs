@@ -4,7 +4,8 @@
 export const routeSegments = (p) => p.split('/').filter(Boolean).map((s) =>
   /^(<[^>]*>|\{[^}]*\}|:\w+|\[\.{0,3}[^\]]*\]|\*{1,2}|\$\{[^}]*\})$/.test(s) || /\$\{|\{[^}]*\}/.test(s) ? '*' : s);
 
-const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/;
+// .NET test projects are folders named like Orders.Api.Tests or Orders.IntegrationTests
+const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|(^|\/)[\w-]+(\.[\w-]+)*\.\w*Tests?\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/;
 
 const joinPath =(...parts) => '/' + parts.map((p) => (p || '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
 
@@ -105,7 +106,7 @@ export function resolveRoutes(files) {
       }
       const defPrefix = (r.var && f.routers?.[r.var]) || '';
       const mw = mountMw(f.path, r.var);
-      for (const mp of outerPrefixes(f.path, r.var)) routes.push({ file: f.path, method: r.method, path: joinPath(mp, defPrefix, r.path), line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}) });
+      for (const mp of outerPrefixes(f.path, r.var)) routes.push({ file: f.path, method: r.method, path: joinPath(mp, defPrefix, r.path), line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}), ...(r.caseInsensitive ? { caseInsensitive: true } : {}) });
     }
   }
   return dedupe(routes, (r) => `${r.file}|${r.method}|${r.path}`);
@@ -146,20 +147,22 @@ function score(c, r) {
  * @returns [{ from, to, method, path, call, line }]
  */
 export function matchCalls(files, routes) {
-  const rs = routes.map((r) => ({ ...r, segs: routeSegments(r.path) }));
+  // ASP.NET Core matches paths ignoring case, so /api/Orders answers a call to /api/orders
+  const rs = routes.map((r) => ({ ...r, segs: routeSegments(r.caseInsensitive ? r.path.toLowerCase() : r.path) }));
   const pending = [];
   const learned = new Map(); // caller file or dir -> Map(prefix -> count)
   const learn = (key, prefix) => { if (!learned.has(key)) learned.set(key, new Map()); const m = learned.get(key); m.set(prefix, (m.get(prefix) || 0) + 1); };
   for (const f of files) {
     for (const call of f.calls || []) {
       const cs = routeSegments(call.path);
+      const csLower = routeSegments(call.path.toLowerCase());
       let best = -Infinity, hits = [];
       for (const r of rs) {
         if (r.file === f.path) continue;
         // a Firebase callable (CALL) is only ever reached through httpsCallable, and only reaches callables
         if ((call.method === 'CALL') !== (r.method === 'CALL')) continue;
         if (call.method && r.method !== 'ANY' && r.method !== call.method) continue;
-        const sc = score(cs, r.segs);
+        const sc = score(r.caseInsensitive ? csLower : cs, r.segs);
         if (!sc) continue;
         if (sc.s > best) { best = sc.s; hits = [{ r, ...sc }]; } else if (sc.s === best) hits.push({ r, ...sc });
       }

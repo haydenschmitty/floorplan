@@ -226,6 +226,34 @@ export function createResolver(root, files) {
     return { external: parts.slice(0, Math.min(3, parts.length - 1)).join('.'), eco: 'maven' };
   };
 
+  // ---- C# ----
+  // A `using` names a namespace, not a file, so it links only the files in that namespace that
+  // declare a type this file mentions.
+  const csTypes = new Map(); // namespace -> Map(type name -> [files])
+  for (const f of files) for (const ns of f.lang === 'csharp' ? f.namespaces || [] : []) {
+    if (!csTypes.has(ns)) csTypes.set(ns, new Map());
+    const byName = csTypes.get(ns);
+    for (const s of f.symbols || []) byName.set(s.name, [...(byName.get(s.name) || []), f.path]);
+  }
+  const csRoots = new Set([...csTypes.keys()].map((ns) => ns.split('.')[0]));
+  const CS_BUILTIN = /^(System|Microsoft\.(AspNetCore|Extensions|CSharp|VisualBasic|Win32|NET))(\.|$)/;
+  const resolveCs = (file, imp) => {
+    const byName = csTypes.get(imp.spec);
+    if (byName) {
+      const targets = new Map(); // file -> the first type it supplies
+      for (const [name, paths] of byName) if (file.typeRefs?.has(name)) for (const p of paths) if (p !== file.path && !targets.has(p)) targets.set(p, name);
+      return targets.size ? { files: [...targets.keys()], names: [...targets.values()] } : { unused: true };
+    }
+    // `using static Orders.Domain.OrderRules;` names a type
+    const dot = imp.spec.lastIndexOf('.');
+    const declaring = (csTypes.get(imp.spec.slice(0, dot))?.get(imp.spec.slice(dot + 1)) || []).filter((p) => p !== file.path);
+    if (declaring.length) return { files: declaring };
+    // the project's own namespace that declares no types itself, or a using it doesn't need
+    if (imp.implicit || csRoots.has(imp.spec.split('.')[0])) return { unused: true };
+    if (CS_BUILTIN.test(imp.spec)) return { builtin: true };
+    return { external: imp.spec.split('.').slice(0, 2).join('.'), eco: 'nuget' };
+  };
+
   // ---- generic relative (C, Ruby, PHP, CSS) ----
   const byBasename = new Map();
   for (const f of files) { const b = P.basename(f.path); byBasename.set(b, byBasename.has(b) ? null : f.path); }
@@ -245,6 +273,7 @@ export function createResolver(root, files) {
       case 'go': return resolveGo(file.path, imp.spec);
       case 'rust': return resolveRust(file.path, imp);
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file.path, imp.spec);
+      case 'csharp': return resolveCs(file, imp);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
