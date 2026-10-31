@@ -9,7 +9,7 @@
 
 **See how your app actually fits together.**
 
-Claude or Codex reads your codebase and draws an interactive map of it. Every part, file and web request gets a plain-English name, and every connection between them is shown.
+Claude, Codex or Cursor reads your codebase and draws an interactive map of it. Every part, file and web request gets a plain-English name, and every connection between them is shown.
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
@@ -33,7 +33,7 @@ Claude or Codex reads your codebase and draws an interactive map of it. Every pa
 
 You built an app, probably with a lot of help from AI, and it works. But ask "what happens when someone checks out?" or "what breaks if I change this?" and the honest answer is *no idea*.
 
-Floorplan gives you the diagram nobody drew. Ask Claude Code or Codex for a floorplan and a few minutes later you have a map you can explore, ask questions on, and keep up to date as you work.
+Floorplan gives you the diagram nobody drew. Ask Claude Code, Codex or Cursor for a floorplan and a few minutes later you have a map you can explore, ask questions on, and keep up to date as you work.
 
 - **For builders:** understand the app you made, in your own words, without reading the code.
 - **For teams:** onboard someone in minutes, from the big picture down to the exact file.
@@ -161,7 +161,7 @@ Want to click around yourself? Open the [live demo](https://haydenschmitty.githu
 
 ## Install
 
-You need [Node.js 18+](https://nodejs.org) and either Claude Code or Codex. Floorplan runs on the plan you already have, with no API keys.
+You need [Node.js 18+](https://nodejs.org) and either Claude Code, Codex or Cursor. Floorplan runs on the plan you already have, with no API keys.
 
 ### Claude Code
 
@@ -191,9 +191,21 @@ codex plugin add floorplan@floorplan
 
 Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask bar runs on your own Codex sign-in, with no API key. More in [Floorplan in Codex](docs/codex.md).
 
+### Cursor
+
+Put the skill in Cursor's skills folder:
+
+```bash
+git clone https://github.com/haydenschmitty/floorplan ~/floorplan
+mkdir -p ~/.agents/skills
+ln -s ~/floorplan/skills/floorplan ~/.agents/skills/floorplan
+```
+
+Start a new chat and ask for a floorplan, or type `/floorplan`. The map's Ask bar runs the Cursor CLI (`cursor-agent login` once) on your own Cursor plan. More in [Floorplan in Cursor](docs/cursor.md).
+
 ## Quick start
 
-1. Open your project in Claude Code or Codex. For a frontend and backend in separate repos, open the folder that holds both.
+1. Open your project in Claude Code, Codex or Cursor. For a frontend and backend in separate repos, open the folder that holds both.
 2. Ask:
    > Make me a floorplan of this app.
 
@@ -242,13 +254,13 @@ Scripts do the mechanical work: finding repos, parsing code in a dozen languages
 
 ## What it adds to your project
 
-A `floorplan/` folder holding the map. In Claude Code, if you say yes, it also adds a short section to `CLAUDE.local.md` so future sessions know the map is there. **Neither is committed:** the folder ignores itself in git, and `CLAUDE.local.md` goes in your clone's private ignore list. In Codex, only the `floorplan/` folder is added. Your `.gitignore` and other tracked files are never touched. See [What's in your project](docs/project-files.md).
+A `floorplan/` folder holding the map. In Claude Code, if you say yes, it also adds a short section to `CLAUDE.local.md` so future sessions know the map is there. **Neither is committed:** the folder ignores itself in git, and `CLAUDE.local.md` goes in your clone's private ignore list. In Codex and Cursor, only the `floorplan/` folder is added. Your `.gitignore` and other tracked files are never touched. See [What's in your project](docs/project-files.md).
 
 ## Privacy
 
 - The scan, the map and its small local server all run on your computer. The server only accepts connections from your own machine.
 - No dependencies or install scripts, and the map works offline: its layout engine and fonts are built in.
-- Questions on the map go to your own account, through the Claude Code CLI or Codex, which can read your code but not change it.
+- Questions on the map go to your own account, through the Claude Code CLI, Codex or the Cursor CLI. They read your code. Claude Code and Codex are held to read-only by their CLIs; Cursor's CLI can't be, so it runs in ask mode with an instruction not to write, which is not a lock (see [Privacy and security](docs/privacy-and-security.md#the-local-server)).
 - The Health check never stores or shows secret values, only where they are.
 - No analytics or tracking. The map may ask once whether you'd like an email when Floorplan Cloud launches. Nothing is sent unless you sign up, and then only your email and "just me" or "with my team".
 
@@ -260,6 +272,7 @@ More in [Privacy and security](docs/privacy-and-security.md). Wondering whether 
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, first map, updating, planning from a PRD, removing |
 | [Floorplan in Codex](docs/codex.md) | Installing and using it in Codex |
+| [Floorplan in Cursor](docs/cursor.md) | Installing and using it in Cursor |
 | [Using the map](docs/using-the-map.md) | Every button, view, shortcut and menu |
 | [How it works](docs/how-it-works.md) | The pipeline, connection matching, refreshes |
 | [What's in your project](docs/project-files.md) | Every file Floorplan creates, and how to edit it |
@@ -291,7 +304,7 @@ A first map takes a few minutes for a small app and longer for a big one, becaus
 <details>
 <summary><b>Do I need a CLI for the Ask bar?</b></summary>
 
-No. The map works without one. The Ask bar answers through the Claude Code CLI or Codex, which can read your real code. Codex's desktop app already includes what it needs. With Claude, without the CLI you can ask from the Claude app instead, using the map alone.
+No. The map works without one. The Ask bar answers through the Claude Code CLI, Codex or the Cursor CLI, which can read your real code. Codex's desktop app already includes what it needs. With Claude, without the CLI you can ask from the Claude app instead, using the map alone.
 </details>
 
 <details>
@@ -309,7 +322,7 @@ Yes. Just ask ("rename 'Main server' to 'Shop API' on the floorplan"), or edit `
 <details>
 <summary><b>Does it work with Codex as well as Claude Code?</b></summary>
 
-Yes. It's the same plugin, the same map and the same Health check. Each app runs it on your own plan: Claude Code on your Claude account, Codex on your ChatGPT sign-in. A map made in one opens fine with the other. See [Floorplan in Codex](docs/codex.md).
+Yes. It's the same plugin, the same map and the same Health check. Each app runs it on your own plan: Claude Code on your Claude account, Codex on your ChatGPT sign-in. A map made in one opens fine with the other. See [Floorplan in Codex](docs/codex.md). It works in Cursor too, on your Cursor plan: see [Floorplan in Cursor](docs/cursor.md).
 </details>
 
 <details>

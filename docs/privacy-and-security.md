@@ -7,12 +7,13 @@ For what the plugin itself can and can't do on your computer (no hooks, MCP serv
 | Part | Where it runs | What it sends |
 |---|---|---|
 | Scan, build, updates | your computer (Node.js) | nothing |
-| Writing names and descriptions | Claude or Codex, through your session | the files it reads, the same as any other task you give it |
+| Writing names and descriptions | Claude, Codex or Cursor, through your session | the files it reads, the same as any other task you give it |
 | The map | your browser | nothing. Its layout engine and fonts are bundled into the file, so it works offline |
 | The map's server (`serve.mjs`) | your computer, listening on `127.0.0.1` only | nothing on its own |
 | Asking questions (Claude Code CLI) | a `claude -p` session on your computer, with your account | your question, and the files Claude chooses to read |
 | Asking questions (Codex) | a `codex exec` run on your computer, with your ChatGPT sign-in, not saved to your Codex history | your question, and the files Codex chooses to read |
-| Changing a blueprint from the map | the same as asking questions, with Claude Code or Codex; the map's server then writes only the plan's files in `floorplan/` | your request, and the files the AI chooses to read |
+| Asking questions (Cursor) | a `cursor-agent -p --mode ask` run on your computer, with your Cursor sign-in. It shows up in your Cursor chat history | your question, and the files Cursor chooses to read |
+| Changing a blueprint from the map | the same as asking questions, with Claude Code or Codex (not offered with Cursor); the map's server then writes only the plan's files in `floorplan/` | your request, and the files the AI chooses to read |
 | Asking questions (Claude app) | your claude.ai account | the map (names, descriptions, structure), never your source code. Claude asks before publishing it there |
 | Exporting a copy | your computer: the map's server writes one HTML file | nothing. You decide who gets the file. It holds the map, plus Health or recent work only if you tick them, and never your folder path, git remotes or source code |
 | Floorplan Cloud waitlist (only if you sign up) | the map's server, to Floorplan's waitlist service | the email you typed or chose, and "just me" or "with my team". See [below](#floorplan-cloud-waitlist) |
@@ -28,7 +29,8 @@ The layout engine ([elkjs](https://github.com/kieler/elkjs) 0.9.3, EPL-2.0) and 
 - It answers only to `127.0.0.1` and `localhost` at its own port, so a website that points its own domain at your computer (DNS rebinding) can't load the map or its token.
 - Questions run Claude with **read-only** tools: reading files, searching, and the map's own lookup script. It can't edit files or run other commands.
 - With Codex, questions run in Codex's **read-only** sandbox: it can read and search, but not write files.
-- On a blueprint (a map planned from a PRD), **Change** requests run the same read-only way. The agent replies with the updated plan, and the server itself writes only `floorplan/plan.json`, `floorplan/architecture.json` and `floorplan/recent-work.json`, after checking them, keeping the old copies for Undo.
+- With Cursor, questions run in Cursor's **ask mode**, which reads and searches and turns down edits. Unlike Claude Code and Codex it isn't enforced by the CLI (print mode can still use write and shell tools), so Floorplan also tells it never to write files, and that is an instruction, not a lock. Floorplan never passes `--trust` to the Cursor CLI, because that saves trust for good and makes the CLI run the project's own `.cursor/hooks.json`; you trust a folder yourself by running `agent` in it once.
+- On a blueprint (a map planned from a PRD), **Change** requests (not offered with Cursor) run the same read-only way. The agent replies with the updated plan, and the server itself writes only `floorplan/plan.json`, `floorplan/architecture.json` and `floorplan/recent-work.json`, after checking them, keeping the old copies for Undo.
 - It stops by itself two hours after the last tab closes, and `node floorplan/serve.mjs --stop` stops it immediately.
 
 ## Floorplan Cloud waitlist

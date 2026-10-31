@@ -614,11 +614,15 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
 'use strict';
 const G = window.FLOORPLAN;
 // who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map
-const AGENT = (window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent) === 'codex'
-  ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
-      signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
-  : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
-      signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
+const AGENTS = {
+  codex: { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
+    signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' },
+  cursor: { id: 'cursor', name: 'Cursor', app: 'Cursor', cli: 'the Cursor CLI', docs: 'https://cursor.com/docs/cli/overview',
+    signIn: 'Run <code>cursor-agent login</code> in a terminal to sign in, then ask again.' },
+  claude: { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
+    signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' },
+};
+const AGENT = AGENTS[window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent] || AGENTS.claude;
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
 if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.mjs.</p>'; return; }
 // a blueprint: planned from a PRD, so its files don't exist yet (no line counts, nothing to open in an editor)
@@ -2008,7 +2012,7 @@ function showFailure(question, code, message, partial) {
   if (code === 'not_logged_in' || code === 'not_granted') setWarning(code);
   if (code === 'not_granted' || code === 'sampling_disabled') setEngine(null, null, code === 'not_granted' ? 'not_granted' : 'app_unavailable');
   if (code === 'cancelled') { sheet.hidden = true; return; }
-  const copy = { rate_limited: `${AGENT.name} is busy or you have hit a usage limit. Try again in a bit.`, not_logged_in: `${Cap(AGENT.cli)} needs you to sign in first.`, cli_missing: `${Cap(AGENT.cli)} not found.`, invalid_json: `${AGENT.name}'s answer couldn't be read as a map view. Try rephrasing.`, session_expired: `Your ${AGENT.name} session expired. Sign in again.` }[code];
+  const copy = { rate_limited: `${AGENT.name} is busy or you have hit a usage limit. Try again in a bit.`, not_logged_in: `${Cap(AGENT.cli)} needs you to sign in first.`, cli_missing: `${Cap(AGENT.cli)} not found.`, trust_required: `${Cap(AGENT.cli)} needs you to trust this folder first. In a terminal, go to the project folder, run agent once, choose to trust it, then ask again.`, invalid_json: `${AGENT.name}'s answer couldn't be read as a map view. Try rephrasing.`, session_expired: `Your ${AGENT.name} session expired. Sign in again.` }[code];
   sheetShell(question, `<p class="err">${h(copy || message || 'Something went wrong.')}</p>${partial ? md(partial) : ''}${code === 'cli_error' && message ? `<p style="font-family:var(--mono);font-size:11px;color:var(--text-3)">${h(message.slice(0, 400))}</p>` : ''}`);
 }
 function setBusy(b) {

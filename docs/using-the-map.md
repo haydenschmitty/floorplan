@@ -63,7 +63,7 @@ A count of important issues, and a plain-language list of problems the scan foun
 - files nothing uses;
 - files over about 1,000 lines, which AI struggles to edit safely.
 
-Each issue has **Show on map**, which highlights the affected files and endpoints with notes, and **Fix with Claude** (or **Fix with Codex**, for a map made in Codex), which copies a ready-made prompt naming the exact files and lines and the safe fix. It's a quick automatic check, not a security audit. On a blueprint this button is **Review** instead (see [Blueprints](#blueprints)).
+Each issue has **Show on map**, which highlights the affected files and endpoints with notes, and **Fix with Claude** (or **Fix with Codex** or **Fix with Cursor**, for a map made in those), which copies a ready-made prompt naming the exact files and lines and the safe fix. It's a quick automatic check, not a security audit. On a blueprint this button is **Review** instead (see [Blueprints](#blueprints)).
 
 ### Recent work
 Appears when Claude or Codex has just changed things. It lays the changed cards out on one board, with what you asked for, a summary of what was done, and a note on every card. Elsewhere on the map, changed cards have a green ring and a **Changed** or **New** tag, and the parts that contain them show **N changed**, so you can follow the green down from the top level.
@@ -101,7 +101,7 @@ Guided walkthroughs of the app's main jobs, like "Checkout" or "Sign up". A flow
 Type into the Ask bar at the bottom and press **Enter**. Claude or Codex answers in a few sentences and shows an **answer board**: just the cards involved, how they connect, a short note on each, and a numbered walkthrough when the answer is a sequence. Follow-up suggestions appear under the answer. **Back to map** returns to where you were.
 
 - **Right-click → Ask about this** on any card or line adds it to your question as context.
-- The label in the bar shows what's answering. **Claude Code** means the Claude Code CLI and **Codex** means Codex, both running on your computer and able to read your source code. **Claude** means the map was opened in the Claude app, which answers from the map alone.
+- The label in the bar shows what's answering. **Claude Code** means the Claude Code CLI, **Codex** means Codex and **Cursor** means the Cursor CLI, all running on your computer and able to read your source code. **Claude** means the map was opened in the Claude app, which answers from the map alone.
 - If neither is available, the bar explains what's needed. See [Troubleshooting](troubleshooting.md).
 
 ## Blueprints

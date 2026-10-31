@@ -13,8 +13,8 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `plan.json` | Blueprints only: the planned files, endpoints and screens, who may use each endpoint, the stack, assumptions and open questions. Names and descriptions live here instead of `descriptions/` | **Yes** |
 | `recent-work.json` | What was just worked on, and why. Replaced on every update | Rarely. The AI writes it |
 | `custom-flows.json` | Flows requested from the map | Only to delete one |
-| `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI or Codex | No |
-| `query.mjs` | Looks things up in the map from the command line; Claude and Codex use it too | No |
+| `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI, Codex or the Cursor CLI | No |
+| `query.mjs` | Looks things up in the map from the command line; Claude, Codex and Cursor use it too | No |
 | `artifact.html` | A copy for opening in the Claude app, only if you asked for one | No |
 | `<project>-map.html` | An exported copy to share, only if you exported one from Claude or Codex (the map's Export button downloads it instead) | No |
 | `.cache/` | The scan, the description worksheets, the last update's changes, the running server's address, and, for a blueprint, the last 20 versions of the plan that **Undo** goes back to | No. Safe to delete, though Undo then has nothing to go back to |
@@ -46,7 +46,7 @@ To remove it, delete the section. To keep it from coming back, put `<!-- floorpl
 
 A blueprint adds no section, since there's no code to look up yet. Claude offers it once the map switches to the real code.
 
-In Codex this file isn't touched. Codex has no personal, uncommitted notes file (`AGENTS.md` is shared with your team), so Floorplan doesn't add a note there.
+In Codex and Cursor this file isn't touched. Neither has a personal, uncommitted notes file (`AGENTS.md` is shared with your team), so Floorplan doesn't add a note there.
 
 ## Staying out of git
 

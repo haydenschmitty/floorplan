@@ -110,7 +110,9 @@ The map's server answers each question with the AI on your computer, in your pro
 - **Claude Code:** it runs `claude -p` with read-only tools only: reading and searching files, and `floorplan/query.mjs`, which looks things up in the map.
 - **Codex:** it runs `codex exec` in Codex's read-only sandbox, with the same lookups. These runs aren't saved to your Codex history, so a follow-up brings the last few questions and answers along.
 
-It uses whichever made the map, and the other one if that isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
+- **Cursor:** it runs `cursor-agent -p --mode ask`, Cursor's ask mode, with the same lookups. The CLI doesn't enforce read-only, so Floorplan also tells it not to write (see [Floorplan in Cursor](cursor.md#read-only-what-is-and-isnt-guaranteed)). Each question also appears in your Cursor chat history, so a follow-up brings the last few questions and answers along, as with Codex.
+
+It uses whichever made the map, and another one if that isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
 
 In the Claude app, the map asks Claude through the app instead, with the same lookups but no access to your source.
 

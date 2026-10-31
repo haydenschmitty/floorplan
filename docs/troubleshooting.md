@@ -24,8 +24,17 @@ If it says Codex isn't signed in, open the Codex app (or run `codex login`) and 
 ### Codex: the map didn't open, or Ask stopped working after Codex opened it
 Codex runs commands in a sandbox, and the map's server needs to keep running and reach the network. Allow the server to run outside the sandbox when Codex asks, or run `node floorplan/serve.mjs` yourself from the project folder.
 
+### Cursor: the Ask bar says it needs the Cursor CLI
+The map's server looks for `cursor-agent` on your PATH and in `~/.local/bin`. Install the [Cursor CLI](https://cursor.com/docs/cli/overview), or point the server at yours (also if it's installed only as `agent`):
+
+```bash
+node floorplan/serve.mjs --cursor /path/to/cursor-agent
+```
+
+If it says you're not signed in, run `cursor-agent login`. If it says you've hit a limit, that's your Cursor plan's usage or spending limit, so raise it in your Cursor settings or wait for it to reset. If it says it needs you to trust the folder, open a terminal in the project folder, run `agent` once and choose to trust it, then ask again.
+
 ### `node` isn't recognized
-Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so Claude Code or Codex picks it up.
+Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so Claude Code, Codex or Cursor picks it up.
 
 ### Claude or Codex keeps asking to run `node` scripts
 In Claude Code, Floorplan pre-approves its own scripts while it's running, but it may still ask in some setups. Choose the option to always allow them for this project. Codex asks according to your approval settings; allowing Floorplan's `node` scripts for the project stops the prompts.

@@ -19,15 +19,15 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **One outbound request: the Floorplan Cloud waitlist,** sent only if you type your email into the card on the map and click to join. It goes to `floorplan-waitlist-690500262396.us-central1.run.app` and carries your email and "just me" or "with my team". Details in [Privacy and security](privacy-and-security.md#floorplan-cloud-waitlist).
 - **The map page loads nothing from the internet.** Its layout engine and fonts are built into the file. It only links to documentation, which opens when you click.
 
-Asking questions on the map runs Claude Code or Codex, which talk to Anthropic or OpenAI the way they always do, on your account. Floorplan itself sends nothing.
+Asking questions on the map runs Claude Code, Codex or the Cursor CLI, which talk to Anthropic, OpenAI or Cursor the way they always do, on your account. Floorplan itself sends nothing.
 
 ### The programs it runs
 
 | Program | When | Why |
 |---|---|---|
 | `git` | scan | Read-only: which files are tracked, the current branch and commit, what changed since the last map |
-| `where` (Windows) or `which` | starting the map's server | Finding the Claude Code or Codex CLI |
-| `claude` or `codex` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, or `codex exec --sandbox read-only` |
+| `where` (Windows) or `which` | starting the map's server | Finding the Claude Code, Codex or Cursor CLI (only `cursor-agent` is looked for, never a program just called `agent`) |
+| `claude`, `codex` or `cursor-agent` | when you ask a question on the map | Answering it: `claude -p` limited to reading files and Floorplan's lookup script, `codex exec --sandbox read-only`, or `cursor-agent -p --mode ask` (Cursor's CLI can't enforce read-only, so Floorplan also tells it not to write, and never passes `--trust`; see [Floorplan in Cursor](cursor.md#read-only-what-is-and-isnt-guaranteed)) |
 | `node` | throughout | Running Floorplan's own scripts |
 | `cmd /c start`, `open` or `xdg-open` | opening the map | Opening the map's local address in your browser |
 
@@ -85,7 +85,7 @@ It prints either that all files are identical, or which ones changed, are extra 
 ## The honest limits
 
 - Claude Code and Codex install a plugin from its repository, and an update brings whatever the newest release contains, for this plugin as for any other. Releases are made only by the maintainer, and `main` is protected: its history can't be rewritten or deleted. Outside pull requests are reviewed before they're run or merged, and the checks above run on every one of them. Before you update, you can read the changes in the [changelog](../CHANGELOG.md) and verify the new version with its checksums.
-- Floorplan works by having Claude or Codex read your code to describe it. That goes to Anthropic or OpenAI under your account, like any other task you give them. See [Privacy and security](privacy-and-security.md).
+- Floorplan works by having Claude, Codex or Cursor read your code to describe it. That goes to Anthropic, OpenAI or Cursor under your account, like any other task you give them. See [Privacy and security](privacy-and-security.md).
 
 ## Found something?
 

@@ -34,7 +34,7 @@ skills/floorplan/
     viewer.html    the map (template the build fills in)
     ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
-    serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
+    serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code, Codex or the Cursor CLI
     query-cli.mjs  becomes floorplan/query.mjs
     logo.png, favicon.png
     vendor/        bundled layout engine (elkjs) and fonts, with their licenses
@@ -90,7 +90,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
-| `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
+| `ask.test.mjs` | asking through Claude Code, Codex or the Cursor CLI: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
