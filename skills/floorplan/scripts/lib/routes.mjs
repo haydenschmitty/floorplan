@@ -109,7 +109,37 @@ export function resolveRoutes(files) {
       for (const mp of outerPrefixes(f.path, r.var)) routes.push({ file: f.path, method: r.method, path: joinPath(mp, defPrefix, r.path), line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}), ...(r.caseInsensitive ? { caseInsensitive: true } : {}) });
     }
   }
+  routes.push(...conventionalRoutes(files));
   return dedupe(routes, (r) => `${r.file}|${r.method}|${r.path}`);
+}
+
+/**
+ * ASP.NET Core controllers without route attributes are reached through a MapControllerRoute pattern
+ * ("{controller=Home}/{action=Index}/{id?}") set up elsewhere in the same repo; area controllers only
+ * through a pattern with {area}.
+ */
+function conventionalRoutes(files) {
+  const patterns = new Map(); // repo -> [pattern]
+  for (const f of files) for (const p of f.controllerConventions || []) {
+    if (TEST_FILE.test(f.path)) continue;
+    const k = f.repo ?? '';
+    patterns.set(k, [...(patterns.get(k) || []), p]);
+  }
+  const out = [];
+  for (const f of files) {
+    const ps = patterns.get(f.repo ?? '');
+    if (!ps || !f.conventionalActions?.length || TEST_FILE.test(f.path)) continue;
+    for (const a of f.conventionalActions) {
+      const pattern = ps.find((p) => /\{area\b/.test(p) === !!a.area);
+      if (!pattern) continue;
+      const path = joinPath(...pattern.split('/').map((seg) => seg
+        .replace(/\{controller(?:=[^}]*)?\}/, a.controller)
+        .replace(/\{action(?:=[^}]*)?\}/, a.action)
+        .replace(/\{area(?::exists)?(?:=[^}]*)?\}/, a.area || '')));
+      for (const method of a.methods) out.push({ file: f.path, method, path, line: a.line, handler: a.handler, caseInsensitive: true });
+    }
+  }
+  return out;
 }
 
 function dedupe(list, key) {

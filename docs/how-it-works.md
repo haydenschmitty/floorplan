@@ -30,14 +30,14 @@ Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro 
 
 The most useful lines on the map connect a screen's web requests to the server code that answers them, often across repos. Floorplan:
 
-- **Finds endpoints** in Express, Koa, Hono, Next.js (route files and API routes), Firebase Cloud Functions, Flask, FastAPI, Django, Go (net/http, Gin, Echo, chi, Fiber), Actix, Axum, Spring and ASP.NET Core (attribute-routed controllers and minimal APIs).
-- **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express routers mounted with `app.use('/api/users', usersRouter)`, including routers mounted inside other routers and mounts with middleware in front.
-- **Finds requests** made with `fetch`, axios, ky, `requests` and similar, including:
+- **Finds endpoints** in Express, Koa, Hono, Next.js (route files and API routes), Firebase Cloud Functions, Flask, FastAPI, Django, Go (net/http, Gin, Echo, chi, Fiber), Actix, Axum, Spring and ASP.NET Core (attribute-routed controllers, conventional routes from `MapControllerRoute`, minimal APIs and SignalR hubs).
+- **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express routers mounted with `app.use('/api/users', usersRouter)`, including routers mounted inside other routers and mounts with middleware in front; ASP.NET Core `[Route]` prefixes on controllers and `MapGroup` prefixes on minimal APIs.
+- **Finds requests** made with `fetch`, axios, ky, `requests`, a SignalR `withUrl(…)` and similar, including:
   - addresses built in a variable first: `const url = …; api.get(url)`;
   - template strings with nested parts;
   - small helpers in the same file that add a prefix, like `call('/definitions')`.
 - **Firebase Cloud Functions** are called by name rather than by address. A callable function (`onCall`) shows up as `CALL /approveItem` under the name your functions entry file exports it as, and the website's `httpsCallable(functions, 'approveItem')` calls reach it, including through a helper of your own that wraps `httpsCallable`. An `onRequest` function is an ordinary endpoint at `/<name>`, and an Express app passed to it keeps its own routes under that name. Scheduled and other background functions (Firestore, Storage, Pub/Sub) are listed for the AI to place on the map.
-- **Matches** the two. When a request only spells out part of the address, because the base URL lives in settings, Floorplan learns each client's base path and prefers matches that fit it.
+- **Matches** the two, ignoring case for ASP.NET Core, which routes that way. When a request only spells out part of the address, because the base URL lives in settings, Floorplan learns each client's base path and prefers matches that fit it.
 
 It's pattern matching, not a compiler, so it catches most connections but not all. If an important link is missing, ask for it to be added to the floorplan, and it will record it as an explicit connection.
 

@@ -11,6 +11,38 @@ const RUST_STD = new Set(['std', 'core', 'alloc', 'crate', 'self', 'super']);
 
 const JS_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.vue', '.svelte', '.d.ts', '.json'];
 
+/** The folder of the nearest .csproj above each path, or null. */
+export function csProjects(paths) {
+  const projects = new Set(paths.filter((p) => p.endsWith('.csproj')).map((p) => P.dirname(p)));
+  return (p) => {
+    for (let d = P.dirname(p); ; d = P.dirname(d)) {
+      if (projects.has(d)) return d;
+      if (d === '.' || d === '/' || d === P.dirname(d)) return null;
+    }
+  };
+}
+
+/** A C# `global using` puts its namespace in scope for every file of the same project. */
+export function applyGlobalUsings(files) {
+  const cs = files.filter((f) => f.lang === 'csharp' && f.imports);
+  if (!cs.some((f) => f.imports.some((i) => i.global))) return;
+  const projectOf = csProjects(files.map((f) => f.path));
+  const globals = new Map(); // project -> [{ spec, from }]
+  for (const f of cs) for (const imp of f.imports) {
+    if (!imp.global) continue;
+    const k = projectOf(f.path) ?? '';
+    globals.set(k, [...(globals.get(k) || []), { spec: imp.spec, from: f.path }]);
+  }
+  for (const f of cs) {
+    const own = new Set(f.imports.map((i) => i.spec));
+    for (const g of globals.get(projectOf(f.path) ?? '') || []) {
+      if (g.from === f.path || own.has(g.spec)) continue;
+      own.add(g.spec);
+      f.imports.push({ spec: g.spec, names: [], line: 1, implicit: true });
+    }
+  }
+}
+
 export function createResolver(root, files) {
   const fileSet = new Set(files.map((f) => f.path));
   const byPath = new Map(files.map((f) => [f.path, f]));

@@ -59,7 +59,7 @@ A count of important issues, and a plain-language list of problems the scan foun
 - Firebase rules that let anyone read or change your data or files, including "test mode" rules and when they run out;
 - Stripe webhooks that act on payments without checking Stripe's signature, so anyone could fake one;
 - servers that let any website call them, flagged as worth fixing when login cookies go along too;
-- endpoints that let anyone change or read data without signing in;
+- endpoints that let anyone change or read data without signing in, ASP.NET Core apps included;
 - files nothing uses;
 - files over about 1,000 lines, which AI struggles to edit safely.
 

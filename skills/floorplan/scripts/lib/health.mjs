@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob } from './common.mjs';
+import { csProjects } from './resolve.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -71,12 +72,14 @@ const FORMATS = [
 ];
 const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}/g;
 const DB_URL = /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?)(?:\+\w+)?:\/\/([^:\s\/'"@]+):([^@\s'"]+)@([^\/\s'":?,]+)/g;
+// .NET-style connection strings: "Server=db.example.com;User Id=app;Password=…;"
+const ADO_CONN = /(?:Server|Host|Data Source|Address|Addr)\s*=[^"'\n]*?;[^"'\n]*?\b(?:Password|Pwd)\s*=\s*([^;"'\n]+)/gi;
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|db|postgres|mysql|redis|mongo|database|host\.docker\.internal)$/i;
 
 // Names that hold secrets (after camelCase → snake_case). Public-by-design keys are excluded below.
 const SECRET_NAME = /(?:^|[_.-])(api_?key|apikey|secret(?:_?key)?|client_?secret|app_?secret|token|access_?token|refresh_?token|auth_?token|authtoken|bearer_?token|passw(?:or)?d|passwd|pwd|private_?key|secret_?access_?key|signing_?(?:key|secret)|signature_?key|webhook_?secret|encryption_?key|auth(?:orization)?_?key|master_?key|credentials?)$/i;
 const PUBLIC_NAME = /(^|_)(public|publishable|anon|site_?key|example|sample|test|dummy|fake|mock|placeholder|default|field|label|header|name|type|url|uri|endpoint|path|file|env|var|prefix|length|len|min|max|regex|pattern|format|expires?|ttl)(_|$)|^(next_public|vite|react_app|expo_public|nuxt_public|gatsby)_/i;
-const ENV_LOOKUP = /os\.environ|os\.getenv|getenv\(|process\.env|import\.meta\.env|ENV\[|ENV\.fetch|System\.getenv|Deno\.env|secrets\.|config\(\s*['"]|env\(\s*['"]|\$\{\{/;
+const ENV_LOOKUP = /Environment\.GetEnvironmentVariable|GetConnectionString\(|Configuration\[|os\.environ|os\.getenv|getenv\(|process\.env|import\.meta\.env|ENV\[|ENV\.fetch|System\.getenv|Deno\.env|secrets\.|config\(\s*['"]|env\(\s*['"]|\$\{\{/;
 const PASSWORD_NAME = /pass|pwd/i;
 const CONFIG_LANGS = new Set(['yaml', 'yml', 'ini', 'cfg', 'conf', 'properties', 'env', 'toml']);
 
@@ -143,6 +146,12 @@ function findSecrets(src, f, out) {
       try { payload = JSON.parse(Buffer.from(m[0].split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); } catch { continue; }
       if (payload?.role !== 'service_role') continue; // "anon" keys are public by design
       add(at(m.index), { what: 'a Supabase service-role key (full access to your database, skipping all security rules)', svc: 'Supabase', sev: 'high', hint: mask(m[0]) });
+    }
+    for (const m of src.matchAll(ADO_CONN)) {
+      const host = /(?:Server|Host|Data Source|Address|Addr)\s*=\s*(?:tcp:)?([^;,"'\s]+)/i.exec(m[0])?.[1] || '';
+      const pw = m[1];
+      if (LOCAL_HOST.test(host.split(':')[0]) || PLACEHOLDER.test(pw) || /^[:$%{<]/.test(pw) || pw.length < 4 || /^(password|pass|postgres|root|secret|admin|user|sa)$/i.test(pw)) continue;
+      add(at(m.index), { what: 'a database password inside a connection string', svc: 'your database', sev: 'high', hint: mask(pw, true) });
     }
     for (const m of src.matchAll(DB_URL)) {
       const [, user, pw, host] = m;
@@ -340,6 +349,46 @@ function jsRoutes(src, f, out) {
   });
 }
 
+// ASP.NET Core: who may call each controller action, minimal-API endpoint and hub.
+// A handler that checks the caller itself, or rejects one with 401/403
+const CS_INLINE_CHECK = /\bUser\.Identity\??\.IsAuthenticated\b|\b(?:Unauthorized|Forbid|Challenge)\s*\(|StatusCodes\.Status40[13]|\bAuthorizeAsync\s*\(|\[FromHeader\(\s*Name\s*=\s*"(?:Authorization|X-Api-Key|X-[\w-]*(?:Token|Key|Signature)[\w-]*)"/i;
+// App-wide checks: a fallback policy, an AuthorizeFilter on every controller, or MapControllers().RequireAuthorization()
+const CS_GLOBAL_GUARDS = [
+  [/\bFallbackPolicy\s*=\s*(?!null\b)[^;]*\bRequire/, 'a fallback authorization policy'],
+  [/\bSetFallbackPolicy\s*\(\s*(?!null\b)[^;]*\bRequire/, 'a fallback authorization policy'],
+  [/\bFilters\.Add\s*(?:<\s*AuthorizeFilter\s*>|\(\s*new\s+AuthorizeFilter\b)/, 'an AuthorizeFilter on every controller'],
+  [/\bMapControllers\s*\(\s*\)\s*\.\s*RequireAuthorization\s*\(/, 'MapControllers().RequireAuthorization()'],
+];
+// Custom attributes that check the caller: class FeatureAttribute : AuthorizeAttribute
+const CS_AUTH_BASE = /^(AuthorizeAttribute|IAuthorizationFilter|IAsyncAuthorizationFilter|IAuthorizeData)$/;
+
+function csRoutes(src, f, out) {
+  const lines = src.split('\n');
+  const code = src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ' '));
+  for (const [re, name] of CS_GLOBAL_GUARDS) {
+    const m = re.exec(code);
+    if (m) out.push({ k: 'global-guard', framework: 'aspnet', name, line: code.slice(0, m.index).split('\n').length });
+  }
+  for (const t of f.csTypes || []) {
+    // an attribute that checks the caller, used as [Feature(...)]
+    if (/Attribute$/.test(t.name) && t.bases.some((b) => CS_AUTH_BASE.test(b))) out.push({ k: 'guard-def', name: t.name.replace(/Attribute$/, ''), line: t.line });
+    // a base controller or hub with [Authorize] protects every class built on it
+    else if (/\bAuthorize\b/.test(t.attrs) && !/\bAllowAnonymous\b/.test(t.attrs)) out.push({ k: 'guard-def', name: t.name, line: t.line, wrapper: true, base: true });
+  }
+  const conventional = (f.conventionalActions || []).flatMap((a) => a.methods.map((method) => ({ ...a, method })));
+  const routes = [...(f.routes || []).filter((r) => r.framework === 'aspnet'), ...conventional].sort((a, b) => a.line - b.line);
+  routes.forEach((r, idx) => {
+    const rec = { k: 'route', line: r.line, method: r.method, fn: r.handler, decos: r.auth?.decos || [] };
+    if (r.auth?.anonymous) rec.public = true;
+    else if (r.auth?.guard) Object.assign(rec, { guard: r.auth.guard, via: 'attribute' });
+    const next = routes.slice(idx + 1).find((x) => x.line > r.line)?.line || r.line + 80;
+    const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 80)).join('\n');
+    if (!rec.via && !rec.public && CS_INLINE_CHECK.test(body)) rec.via = 'inline';
+    if (SIGNATURE_CHECK.test(body) || /\bConstructEvent\s*\(/.test(body)) rec.signed = true;
+    out.push(rec);
+  });
+}
+
 /**
  * FastAPI dependency aliases that check the caller, per repo: Map(repo -> Map(alias -> file)).
  * An alias checks the caller when its dependency function does: by its name (admin_user), by taking a
@@ -413,11 +462,63 @@ function findPublicEnv(src, f, out) {
 const STRIPE_EVENT = /(?:\bcase\s*|[!=]==?\s*)["'](checkout\.session\.(?:completed|async_payment_succeeded)|payment_intent\.succeeded|invoice\.(?:paid|payment_succeeded|payment_failed)|customer\.subscription\.(?:created|updated|deleted)|charge\.(?:succeeded|refunded))["']/g;
 const STRIPE_VERIFIED = /constructEvent(?:Async)?\s*\(|construct_event\s*\(|verifyHeader|verify_header|events\.retrieve\s*\(|Event\.retrieve\s*\(/;
 
+// Stripe.net names events as constants: EventTypes.CheckoutSessionCompleted is "checkout.session.completed"
+const STRIPE_EVENT_CONST = /\b(?:EventTypes|Events)\.(CheckoutSessionCompleted|CheckoutSessionAsyncPaymentSucceeded|PaymentIntentSucceeded|InvoicePaid|InvoicePaymentSucceeded|InvoicePaymentFailed|CustomerSubscriptionCreated|CustomerSubscriptionUpdated|CustomerSubscriptionDeleted|ChargeSucceeded|ChargeRefunded)\b/g;
+const STRIPE_EVENT_NAME = { CheckoutSessionCompleted: 'checkout.session.completed', CheckoutSessionAsyncPaymentSucceeded: 'checkout.session.async_payment_succeeded', PaymentIntentSucceeded: 'payment_intent.succeeded', InvoicePaid: 'invoice.paid', InvoicePaymentSucceeded: 'invoice.payment_succeeded', InvoicePaymentFailed: 'invoice.payment_failed', CustomerSubscriptionCreated: 'customer.subscription.created', CustomerSubscriptionUpdated: 'customer.subscription.updated', CustomerSubscriptionDeleted: 'customer.subscription.deleted', ChargeSucceeded: 'charge.succeeded', ChargeRefunded: 'charge.refunded' };
+// Stripe.net: EventUtility.ConstructEvent checks the signature; EventUtility.ParseEvent does not
+const STRIPE_VERIFIED_CS = /\bConstructEvent(?:Async)?\s*\(|\bValidateSignature\s*\(/;
+
 function findStripeWebhook(src, f, out) {
-  if (!/stripe/i.test(src) || STRIPE_VERIFIED.test(src)) return;
-  const hits = [...src.matchAll(STRIPE_EVENT)];
+  if (!/stripe/i.test(src) || STRIPE_VERIFIED.test(src) || (f.lang === 'csharp' && STRIPE_VERIFIED_CS.test(src))) return;
+  const hits = [...src.matchAll(STRIPE_EVENT)].map((m) => ({ index: m.index, event: m[1] }));
+  if (f.lang === 'csharp') for (const m of src.matchAll(STRIPE_EVENT_CONST)) hits.push({ index: m.index, event: STRIPE_EVENT_NAME[m[1]] });
   if (!hits.length) return;
-  out.push({ k: 'stripe-unsigned', line: lineIndex(src)(hits[0].index), events: [...new Set(hits.map((m) => m[1]))].slice(0, 4) });
+  hits.sort((a, b) => a.index - b.index);
+  out.push({ k: 'stripe-unsigned', line: lineIndex(src)(hits[0].index), events: [...new Set(hits.map((h) => h.event))].slice(0, 4) });
+}
+
+const ENV_SECRET_STEP = `4. Add STRIPE_WEBHOOK_SECRET (empty) to .env.example and tell me where to get it: the Stripe dashboard (Developers → Webhooks → the endpoint → Signing secret), or \`stripe listen\` when testing locally.`;
+const STRIPE_FIX = {
+  python: {
+    verify: 'stripe.Webhook.construct_event',
+    steps: [
+      `1. Read the raw request body as bytes (FastAPI: \`await request.body()\`; Flask: \`request.get_data()\`), not the parsed JSON.`,
+      `2. Call \`stripe.Webhook.construct_event(payload, request.headers["stripe-signature"], os.environ["STRIPE_WEBHOOK_SECRET"])\` and return 400 if it raises.`,
+    ],
+    secret: ENV_SECRET_STEP,
+  },
+  next: {
+    verify: 'stripe.webhooks.constructEvent',
+    steps: [
+      `1. Read the raw request body with \`await req.text()\` (App Router) or turn off the body parser for this route (Pages Router), not the parsed JSON.`,
+      `2. Call \`stripe.webhooks.constructEvent(rawBody, signatureHeader, process.env.STRIPE_WEBHOOK_SECRET)\` (the \`stripe-signature\` header) and return 400 if it throws.`,
+    ],
+    secret: ENV_SECRET_STEP,
+  },
+  express: {
+    verify: 'stripe.webhooks.constructEvent',
+    steps: [
+      `1. Give this route the raw body: \`express.raw({ type: 'application/json' })\` on it, registered before \`express.json()\` runs for it.`,
+      `2. Call \`stripe.webhooks.constructEvent(rawBody, signatureHeader, process.env.STRIPE_WEBHOOK_SECRET)\` (the \`stripe-signature\` header) and return 400 if it throws.`,
+    ],
+    secret: ENV_SECRET_STEP,
+  },
+  csharp: {
+    verify: 'EventUtility.ConstructEvent',
+    steps: [
+      `1. Read the raw request body with \`await new StreamReader(Request.Body).ReadToEndAsync()\`, not a model-bound parameter.`,
+      `2. Call \`EventUtility.ConstructEvent(json, Request.Headers["Stripe-Signature"], webhookSecret)\` with the secret read from configuration, and return 400 if it throws a \`StripeException\`.`,
+    ],
+    secret: `4. Add an empty Stripe:WebhookSecret setting (user secrets locally, an environment variable such as Stripe__WebhookSecret when deployed) and tell me where to get it: the Stripe dashboard (Developers → Webhooks → the endpoint → Signing secret), or \`stripe listen\` when testing locally.`,
+  },
+};
+
+/** Which Stripe fix instructions fit a file: Python, a Next.js route, Express, or ASP.NET Core. */
+function stripeStack(file) {
+  if (/\.py$/.test(file)) return 'python';
+  if (/\.cs$/.test(file)) return 'csharp';
+  if (/(^|\/)app\/.*route\.[jt]s$|(^|\/)pages\/api\//.test(file)) return 'next';
+  return 'express';
 }
 
 // CORS: a server that tells browsers any website may call it. Harmless for a public API without login
@@ -449,6 +550,12 @@ function findCors(src, f, out) {
     }
     const all = /^\s*CORS_(?:ALLOW_ALL_ORIGINS|ORIGIN_ALLOW_ALL)\s*=\s*True\b/m.exec(src);
     if (all) add(all.index, 'CORS_ALLOW_ALL_ORIGINS = True', /^\s*CORS_ALLOW_CREDENTIALS\s*=\s*True\b/m.test(src));
+  } else if (f.lang === 'csharp') {
+    // ASP.NET Core refuses AllowAnyOrigin with AllowCredentials, but not an origin check that always says yes
+    const credentials = /\.\s*AllowCredentials\s*\(\s*\)/.test(src);
+    for (const m of src.matchAll(/\.\s*AllowAnyOrigin\s*\(\s*\)/g)) add(m.index, 'AllowAnyOrigin()', false);
+    for (const m of src.matchAll(/\.\s*WithOrigins\s*\(\s*"\*"\s*\)/g)) add(m.index, 'WithOrigins("*")', false);
+    for (const m of src.matchAll(/\.\s*SetIsOriginAllowed\s*\(\s*(?:\w+|\(\s*\w*\s*\))\s*=>\s*true\s*\)/g)) add(m.index, 'SetIsOriginAllowed(_ => true)', credentials);
   }
 }
 
@@ -506,11 +613,12 @@ export function findIssues(src, f) {
   if (f.lang === 'sql') findSql(src, f, out);
   if (!TEST_FILE.test(f.path) && !EXAMPLE_FILE.test(f.path)) {
     if (['typescript', 'javascript', 'vue', 'svelte', 'astro'].includes(f.lang)) findPublicEnv(src, f, out);
-    if (['typescript', 'javascript', 'python'].includes(f.lang)) { findStripeWebhook(src, f, out); findCors(src, f, out); }
+    if (['typescript', 'javascript', 'python', 'csharp'].includes(f.lang)) { findStripeWebhook(src, f, out); findCors(src, f, out); }
   }
   if (['typescript', 'javascript', 'python'].includes(f.lang) && USES_SUPABASE.test(src)) out.push({ k: 'uses-supabase' });
   if (f.lang === 'python') pyRoutes(src, f, out);
   else if (['typescript', 'javascript'].includes(f.lang)) jsRoutes(src, f, out);
+  else if (f.lang === 'csharp' && !TEST_FILE.test(f.path)) csRoutes(src, f, out);
   // run directly or registered by name (so "nothing imports it" doesn't mean unused)
   if (/^#!|if\s+__name__\s*==\s*['"]__main__['"]|@(?:\w+\.)*(?:task|shared_task|command|group|receiver|scheduled_job|on_event|listener|hookimpl|periodic_task|cli\.command)\b|require\.main\s*===\s*module|import\.meta\.main/m.test(src)) out.push({ k: 'runnable' });
   // a frontend calling a fixed localhost address (breaks once deployed)
@@ -534,6 +642,15 @@ const NOT_USED_KINDS = new Set(['test', 'script', 'infra', 'config', 'worker', '
 const SPECIAL_FILE = /(^|\/)(index|main|app|server|cli|manage|wsgi|asgi|__init__|__main__|conftest|setup|config|settings|env|middleware|instrumentation|layout|page|route|loading|error|not-found|template|default|global-error|sitemap|robots|manifest|opengraph-image|twitter-image|icon|apple-icon|_app|_document|_error|404|500|models|admin|apps|views|urls|signals|tasks|forms|serializers|celery|gunicorn\.conf|vite-env\.d|worker|sw|service-worker)\.[a-z]+$|\.d\.ts$|\.config\.[a-z]+$|\.stories\.|(^|\/)(pages|migrations|alembic|versions|scripts|bin|tools|seeds?|fixtures?|examples?|docs?|public|static|templates|\.github|e2e|cypress|playwright)\//i;
 const USED_LANGS = new Set(['typescript', 'javascript', 'python', 'vue', 'svelte', 'astro']);
 const plural = (n, w, ws) => `${n} ${n === 1 ? w : ws || w + 's'}`;
+
+/** How a fix prompt names a check: a FastAPI alias parameter, a Python decorator, a C# attribute, or as written. */
+function guardLabel(name, defs, lang) {
+  if (defs.some((g) => g.alias)) return `a parameter typed ${name}`;
+  if (lang === 'python') return '@' + name;
+  // [Authorize(...)] and .RequireAuthorization(...) arrive written out; a custom attribute arrives as its name
+  if (lang === 'csharp' && !/^[[.]/.test(name)) return `[${name}]`;
+  return name;
+}
 
 export function buildHealth({ graph, scan, arch, root }) {
   const issues = [];
@@ -860,8 +977,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     const routesHere = graph.routes.map((r, i) => ({ r, i })).filter(({ r }) => r.f === file && r.m !== 'GET');
     const it = itemFor(file);
     const items = [...(it ? [it] : []), ...routesHere.map(({ i }) => 'r:' + i)];
-    const py = /\.py$/.test(file);
-    const next = /(^|\/)app\/.*route\.[jt]s$|(^|\/)pages\/api\//.test(file);
+    const fixSteps = STRIPE_FIX[stripeStack(file)];
     issues.push({
       id: 'stripe-webhook:' + file, kind: 'stripe-webhook', severity: 'high',
       title: `Anyone could fake a Stripe payment in ${nameOf(file)}`,
@@ -871,16 +987,11 @@ export function buildHealth({ graph, scan, arch, root }) {
       fix: [
         `Security fix in ${file}: verify Stripe webhook signatures before acting on any event. Do not print any secret values.`,
         ``,
-        `It handles ${x.events.join(', ')} (line ${x.line}) without calling ${py ? 'stripe.Webhook.construct_event' : 'stripe.webhooks.constructEvent'}.`,
+        `It handles ${x.events.join(', ')} (line ${x.line}) without calling ${fixSteps.verify}.`,
         ``,
-        py
-          ? `1. Read the raw request body as bytes (FastAPI: \`await request.body()\`; Flask: \`request.get_data()\`), not the parsed JSON.`
-          : next ? `1. Read the raw request body with \`await req.text()\` (App Router) or turn off the body parser for this route (Pages Router), not the parsed JSON.` : `1. Give this route the raw body: \`express.raw({ type: 'application/json' })\` on it, registered before \`express.json()\` runs for it.`,
-        py
-          ? `2. Call \`stripe.Webhook.construct_event(payload, request.headers["stripe-signature"], os.environ["STRIPE_WEBHOOK_SECRET"])\` and return 400 if it raises.`
-          : `2. Call \`stripe.webhooks.constructEvent(rawBody, signatureHeader, process.env.STRIPE_WEBHOOK_SECRET)\` (the \`stripe-signature\` header) and return 400 if it throws.`,
+        ...fixSteps.steps,
         `3. Use only the verified event from then on, and handle each event once even if Stripe sends it again.`,
-        `4. Add STRIPE_WEBHOOK_SECRET (empty) to .env.example and tell me where to get it: the Stripe dashboard (Developers → Webhooks → the endpoint → Signing secret), or \`stripe listen\` when testing locally.`,
+        fixSteps.secret,
       ].join('\n'),
     });
   }
@@ -917,13 +1028,15 @@ export function buildHealth({ graph, scan, arch, root }) {
 
   // ---------- endpoints anyone can call ----------
   const routeFinding = new Map(); // `${file}|${line}|${method}` -> finding
+  // an ASP.NET Core app-wide check covers its own project (the folder of its .csproj), not the whole repo
+  const csProjectOf = csProjects(scan.files.map((f) => f.path));
   const globalGuards = new Map(); // repo -> [{framework, name, file}]
   const guardDefs = new Map();    // name -> [{ file, wrapper }]
   for (const f of scan.files) for (const x of findings(f.path)) {
     if (x.k === 'route') routeFinding.set(`${f.path}|${x.line}|${x.method}`, x);
     // app-wide checks count only from the app itself, not from scripts or tests that spin up their own
     if (x.k === 'global-guard' && !TEST_FILE.test(f.path) && !/(^|\/)(scripts?|tools|bin|examples?)\//.test(f.path) && !(fileByPath.has(f.path) && kinds(fileByPath.get(f.path).n).some((k) => NOT_USED_KINDS.has(k)))) { const k = f.repo ?? ''; if (!globalGuards.has(k)) globalGuards.set(k, []); globalGuards.get(k).push({ ...x, file: f.path }); }
-    if (x.k === 'guard-def' && !TEST_FILE.test(f.path)) { if (!guardDefs.has(x.name)) guardDefs.set(x.name, []); guardDefs.get(x.name).push({ file: f.path, wrapper: !!x.wrapper }); }
+    if (x.k === 'guard-def' && !TEST_FILE.test(f.path)) { if (!guardDefs.has(x.name)) guardDefs.set(x.name, []); guardDefs.get(x.name).push({ file: f.path, wrapper: !!x.wrapper, ...(x.base ? { base: true } : {}) }); }
   }
   const aliasGuards = pyAliasGuards(scan.files.filter((f) => !TEST_FILE.test(f.path)), findings);
   for (const [repo, aliases] of aliasGuards) for (const [name, file] of aliases) {
@@ -937,13 +1050,14 @@ export function buildHealth({ graph, scan, arch, root }) {
   graph.routes.forEach((r, i) => {
     const fnd = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
     if (!fnd) return; // framework we don't analyse: say nothing
+    if (fnd.public) return; // [AllowAnonymous] / .AllowAnonymous(): public on purpose
     const gf = fileByPath.get(r.f);
     if (!gf || kinds(gf.n).some((k) => NOT_USED_KINDS.has(k)) || TEST_FILE.test(r.f)) return;
     const repo = gf.r ?? '';
     if (!perRepo.has(repo)) perRepo.set(repo, { guarded: 0, total: 0, open: [], misplaced: [], guardCounts: new Map(), fileGuards: new Map(), guardedIn: new Map() });
     const pr = perRepo.get(repo);
     pr.total++;
-    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m));
+    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m) || (g.framework === 'aspnet' && csProjectOf(g.file) === csProjectOf(r.f)));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);
@@ -974,12 +1088,14 @@ export function buildHealth({ graph, scan, arch, root }) {
     const top = (m) => m && [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
     // prefer what this file already uses, then the project's most common real (non-wrapper) check
     const guardHint = (file, lang) => {
-      const local = top(pr.fileGuards.get(file));
-      const name = local || top(new Map([...pr.guardCounts].filter(([n]) => !guardDefs.get(n)?.every((g) => g.wrapper))));
+      // a base controller or hub that carries [Authorize] isn't a check to copy onto an endpoint
+      const copyable = (m) => m && new Map([...m].filter(([n]) => !guardDefs.get(n)?.some((g) => g.base)));
+      const local = top(copyable(pr.fileGuards.get(file)));
+      const name = local || top(new Map([...copyable(pr.guardCounts)].filter(([n]) => !guardDefs.get(n)?.every((g) => g.wrapper))));
       if (!name) return `the project's existing login check (find how other protected endpoints verify the user; if there is none, ask me before adding one)`;
       const defs = guardDefs.get(name) || [];
       const where = defs.find((g) => g.file === file) ? 'defined in this file' : defs.length ? `defined in ${defs[0].file}` : '';
-      const how = defs.some((g) => g.alias) ? `a parameter typed ${name}` : `${lang === 'python' ? '@' : ''}${name}`;
+      const how = guardLabel(name, defs, lang);
       return `the same check ${local ? 'the other endpoints in this file' : 'the protected endpoints'} already use (${how}${where ? ', ' + where : ''})`;
     };
     const routeLine = (e) => `- ${e.r.m} ${e.r.p} — ${e.r.f}:${e.r.l}${e.fnd.fn && !/^[A-Z]+$/.test(e.fnd.fn) ? ` (${e.fnd.fn})` : ''}`;
