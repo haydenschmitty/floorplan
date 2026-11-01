@@ -44,6 +44,15 @@ test('FastAPI: Annotated dependency aliases count as sign-in checks (#4)', () =>
   assert.deepEqual(openEndpoints(graph), ['POST /comments', 'POST /feedback']);
 });
 
+test('FastAPI: public readiness and liveness endpoints are not security warnings (#7)', () => {
+  const graph = buildFixture('fastapi-annotated');
+  const paths = graph.routes.map((r) => r.p);
+  assert.ok(paths.includes('/readyz'));
+  assert.ok(paths.includes('/livez'));
+  assert.ok(!openEndpoints(graph).includes('GET /readyz'));
+  assert.ok(!openEndpoints(graph).includes('GET /livez'));
+});
+
 test('FastAPI: checks added where a router is included count as sign-in checks', () => {
   const graph = buildFixture('fastapi-include-router');
   assert.equal(graph.routes.length, 4, `expected the sample's 4 endpoints, found ${graph.routes.length}`);
