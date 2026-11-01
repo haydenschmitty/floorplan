@@ -255,6 +255,17 @@ function pyRoutes(src, f, out) {
       if (deps.length || types.length) out.push({ k: 'py-dep-fn', name: m[1], ...(deps.length ? { deps } : {}), ...(types.length ? { types } : {}) });
     }
   }
+  // Only treat a helper as a verifier if its body visibly checks the
+  // provider signature and rejects an invalid request. A helper name alone
+  // (validated_sender, for example) is not proof of authentication.
+  for (const m of src.matchAll(/^(?:async\s+)?def\s+(\w+)\s*\(/gm)) {
+    const idx = lineAt(m.index);
+    const body = blockAfter(lines, idx);
+    if (/\bRequestValidator\s*\(/.test(body) && /\.validate\s*\(/.test(body) &&
+        /raise\s+HTTPException\s*\(\s*status_code\s*=\s*40[13]\b/.test(body)) {
+      out.push({ k: 'py-verified-helper', name: m[1], line: idx + 1 });
+    }
+  }
   // Decorators defined here: auth-named ones, and project wrappers like `@endpoint(write=True)` whose
   // body applies an auth decorator itself. Repeat once so a wrapper of a wrapper counts too.
   const localGuards = new Set();
@@ -302,6 +313,7 @@ function pyRoutes(src, f, out) {
       const types = typesIn(sig);
       if (types.length) rec.types = types;
     }
+    if (body) rec.calls = [...new Set([...body.matchAll(/\b(?:await\s+)?([A-Za-z_]\w*)\s*\(/g)].map((m) => m[1]))];
     if (SIGNATURE_CHECK.test(body)) rec.signed = true;
     if (defIdx > 0) rec.fn = /def\s+(\w+)/.exec(lines[defIdx])[1];
     out.push(rec);
@@ -949,6 +961,31 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (x.k === 'global-guard' && !TEST_FILE.test(f.path) && !/(^|\/)(scripts?|tools|bin|examples?)\//.test(f.path) && !(fileByPath.has(f.path) && kinds(fileByPath.get(f.path).n).some((k) => NOT_USED_KINDS.has(k)))) { const k = f.repo ?? ''; if (!globalGuards.has(k)) globalGuards.set(k, []); globalGuards.get(k).push({ ...x, file: f.path }); }
     if (x.k === 'guard-def' && !TEST_FILE.test(f.path)) { if (!guardDefs.has(x.name)) guardDefs.set(x.name, []); guardDefs.get(x.name).push({ file: f.path, wrapper: !!x.wrapper }); }
   }
+  const verifiedHelpers = new Map();
+  for (const f of scan.files) {
+    if (TEST_FILE.test(f.path)) continue;
+    for (const x of findings(f.path)) {
+      if (x.k !== 'py-verified-helper') continue;
+      const repo = f.repo ?? '';
+      if (!verifiedHelpers.has(repo)) verifiedHelpers.set(repo, new Map());
+      const byName = verifiedHelpers.get(repo);
+      if (!byName.has(x.name)) byName.set(x.name, []);
+      byName.get(x.name).push(f.path);
+    }
+  }
+  const routeImports = new Map();
+  const helperImported = (file, helper, name) => {
+    if (file === helper) return true;
+    let src = routeImports.get(file);
+    if (src === undefined) {
+      try { src = fs.readFileSync(path.join(root, file), 'utf8'); }
+      catch { src = ''; }
+      routeImports.set(file, src);
+    }
+    const moduleName = helper.replace(/\.py$/, '').replace(/\//g, '.');
+    const mod = moduleName.replaceAll('.', '\\.');
+    return new RegExp('^\\s*from\\s+' + mod + '\\s+import\\s+[^\\n]*\\b' + name + '\\b', 'm').test(src);
+  };
   const aliasGuards = pyAliasGuards(scan.files.filter((f) => !TEST_FILE.test(f.path)), findings);
   for (const [repo, aliases] of aliasGuards) for (const [name, file] of aliases) {
     if (!guardDefs.has(name)) guardDefs.set(name, []);
@@ -973,7 +1010,9 @@ export function buildHealth({ graph, scan, arch, root }) {
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);
     // a parameter typed with a dependency alias that checks the caller: `user: AdminUser`
     const viaAlias = !fnd.via && fnd.types?.find((t) => aliasGuards.get(repo)?.has(t));
-    if (fnd.via || global || viaWrapper || mounted || viaAlias) {
+    const viaSignatureHelper = !fnd.via && fnd.calls?.find((name) =>
+      (verifiedHelpers.get(repo)?.get(name) || []).some((helper) => helperImported(r.f, helper, name)));
+    if (fnd.via || global || viaWrapper || mounted || viaAlias || viaSignatureHelper) {
       pr.guarded++; pr.guardedIn.set(r.f, (pr.guardedIn.get(r.f) || 0) + 1);
       const name = fnd.guard || viaWrapper || mounted || viaAlias;
       if (name) {

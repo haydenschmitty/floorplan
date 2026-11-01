@@ -44,6 +44,12 @@ test('FastAPI: Annotated dependency aliases count as sign-in checks (#4)', () =>
   assert.deepEqual(openEndpoints(graph), ['POST /comments', 'POST /feedback']);
 });
 
+test('FastAPI: a signature validator in an imported helper protects the route (#7)', () => {
+  const graph = buildFixture('fastapi-signature-helper');
+  assert.ok(graph.routes.some((r) => r.p === '/webhook/verified'));
+  assert.deepEqual(openEndpoints(graph), ['POST /webhook/unverified']);
+});
+
 test('FastAPI: checks added where a router is included count as sign-in checks', () => {
   const graph = buildFixture('fastapi-include-router');
   assert.equal(graph.routes.length, 4, `expected the sample's 4 endpoints, found ${graph.routes.length}`);
