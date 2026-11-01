@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Endpoints written as data.** Route tables (lists of `{ method, path, handle }`, with a plain path or a regular expression) and the routes of `Bun.serve({ routes })` are now on the map, and the website's requests are linked to them. Health doesn't judge their login checks, since those usually live in the code that dispatches the requests.
+
 ## 0.6.1 (2026-11-01)
 
 - **Fewer false alarms in Health** (thanks to the user who reported these):
