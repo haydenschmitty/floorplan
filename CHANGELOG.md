@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fastify endpoints get their full address.** A plugin mounted with `app.register(plugin, { prefix: '/api/tickets' })` now puts its endpoints under that prefix, including plugins registered inside other plugins and ones loaded with `import()` or `require()`. Before, every plugin's endpoints sat at the root (`GET /`, `GET /:id`), so the website's requests were often matched to the wrong part of the server.
+
 ## 0.6.2 (2026-11-02)
 
 - **Far fewer false alarms in Health** (thanks to @samuelpullen15-droid, who reported 13 of them from one site with the new **Not a problem** button):
