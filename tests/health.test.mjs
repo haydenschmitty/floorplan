@@ -44,6 +44,11 @@ test('FastAPI: Annotated dependency aliases count as sign-in checks (#4)', () =>
   assert.deepEqual(openEndpoints(graph), ['POST /comments', 'POST /feedback']);
 });
 
+test('FastAPI: a named guard dependency is not a public endpoint (#7)', () => {
+  const graph = buildFixture('fastapi-guard-name');
+  assert.deepEqual(openEndpoints(graph), ['POST /billing/open']);
+});
+
 test('FastAPI: checks added where a router is included count as sign-in checks', () => {
   const graph = buildFixture('fastapi-include-router');
   assert.equal(graph.routes.length, 4, `expected the sample's 4 endpoints, found ${graph.routes.length}`);
