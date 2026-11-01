@@ -36,21 +36,23 @@ test('register(plugin, { prefix }) is a mount: imported by name, by import() or 
     `});`,
     `app.register(import('./routes/health.js'), { prefix: '/health' });`,
     `app.register(require('./routes/legacy'), { prefix: '/legacy' });`,
+    `app.register(ticketRoutes);`,
     `app.register(local, { prefix: '/local' });`,
     `app.register(cors, { origin: true });`,
     'app.register(ticketRoutes, { prefix: `/v${n}` });',
   ].join('\n'), 'typescript', 'api/app.ts');
-  // a plugin defined in the same file, one with no prefix, and a prefix built at run time are left alone
+  // a plugin with no prefix sits under its parent's (an empty mount); a plugin defined in the same
+  // file, a register without a plugin of ours (cors) and a prefix built at run time are left alone
   assert.deepEqual(r.mounts.map((m) => `${m.prefix} ${m.var || m.spec}`), [
-    '/api/tickets ticketRoutes', '/api/invites invites', '/health ./routes/health.js', '/legacy ./routes/legacy',
+    '/api/tickets ticketRoutes', '/api/invites invites', '/health ./routes/health.js', '/legacy ./routes/legacy', ' ticketRoutes',
   ]);
   // and a prefix isn't mistaken for a request the file makes
   assert.deepEqual(r.calls, []);
 });
 
-test('endpoints get the prefix their plugin is registered under, through nested registers', () => {
+test('endpoints get the prefix their plugin is registered under, through nested registers with or without a prefix', () => {
   assert.deepEqual(routeKeys(graph), [
-    'GET /api/v1/buildings', 'GET /api/v1/buildings/:buildingId/faq', 'GET /api/v1/invites', 'GET /api/v1/tickets',
+    'GET /api/v1/buildings', 'GET /api/v1/buildings/:buildingId/faq', 'GET /api/v1/buildings/:buildingId/notes', 'GET /api/v1/invites', 'GET /api/v1/tickets',
     'GET /api/v1/tickets/:id', 'GET /health', 'POST /api/v1/invites/accept', 'POST /api/v1/tickets/:id/accept',
   ]);
 });

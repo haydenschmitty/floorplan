@@ -194,9 +194,11 @@ function extractJs(src, filePath) {
     if (args.length) mounts.push({ prefix: m[3], var: args[args.length - 1], line: at(m.index), ...(args.length > 1 ? { mw: args.slice(0, -1).map((s) => s.split('.').pop()) } : {}) });
   }
   // Fastify plugins: app.register(ticketRoutes, { prefix: '/api/tickets' }), or register(import('./x.js'), …).
+  // A plugin registered with no prefix still sits under its parent's, so it's a mount with an empty one.
   // Only an imported plugin counts: one defined in this file would put its prefix on every route here.
-  for (const m of all(/\.register\(\s*(?:await\s+)?(?:(?:import|require)\(\s*["']([^"'\n]+)["']\s*\)|([A-Za-z_$][\w$]*))\s*,\s*\{([^{}]*)\}/g, code)) {
-    const prefix = /\bprefix\s*:\s*["'`](\/[^"'`$]*)["'`]/.exec(m[3])?.[1];
+  for (const m of all(/\.register\(\s*(?:await\s+)?(?:(?:import|require)\(\s*["']([^"'\n]+)["']\s*\)|([A-Za-z_$][\w$]*))\s*(?:,\s*\{([^{}]*)\}\s*)?\)/g, code)) {
+    const opts = m[3] || '';
+    const prefix = /\bprefix\s*:\s*["'`](\/[^"'`$]*)["'`]/.exec(opts)?.[1] ?? (/\bprefix\s*:/.test(opts) ? null : '');
     if (prefix == null) continue;
     if (m[1]) mounts.push({ prefix, spec: m[1], line: at(m.index) });
     else if (imports.some((i) => i.locals && Object.hasOwn(i.locals, m[2]))) mounts.push({ prefix, var: m[2], line: at(m.index) });
