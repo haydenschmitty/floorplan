@@ -205,6 +205,15 @@ const isDbDep = (name) => DB_DEPENDENCY.test(snake(name));
 const isGuardDep = (name) => isGuardName(name) && !isDbDep(name);
 // A handler body that inspects the caller itself.
 const INLINE_CHECK = /request\.headers(?:\.get)?\(?\s*\[?\s*['"](authorization|x-api-key|x-[\w-]*(token|key|secret|signature)[\w-]*)['"]|req\.headers(?:\.|\[\s*['"])(authorization|x-api-key)|\b(verify|check|require|validate|authenticate|authorize)_?\w*(auth|token|session|user|key|signature|webhook|hmac|jwt|device|staff|admin|permission|role|request|caller)\w*\s*\(|\bcurrent_user\b|get_jwt_identity|verify_jwt_in_request|compare_digest|abort\(\s*40[13]\b|,\s*40[13]\s*\)?\s*$|status(?:Code)?\s*[:=(]\s*40[13]\b|\.status\(\s*40[13]\s*\)|req\.user\b|req\.session\.user|req\.auth\b|jwt\.verify|jwtVerify|getServerSession|auth\(\)|currentUser\(|getAuth\(|auth\.getUser|getSession\(|verifyIdToken|getToken\(/m;
+// A Header parameter alone is NOT authentication. Count it only when the
+// handler checks that token and rejects a bad value with HTTP 401/403.
+function pyValidatedHeader(sig, body) {
+  const names = [...sig.matchAll(/\b([A-Za-z_]\w*(?:token|key|signature)\w*)\s*:\s*[^,\n]*=\s*Header\s*\(/g)]
+    .map((m) => m[1]);
+  if (!names.length || !/raise\s+HTTPException\s*\(\s*status_code\s*=\s*40[13]\b/.test(body)) return false;
+  return names.some((name) => new RegExp('\\bif\\s+(?:not\\s+)?' + name + '\\b').test(body));
+}
+
 const FIREBASE_CHECK = /\b\w+\.auth\b(?!\s*\()|HttpsError\(\s*["'](unauthenticated|permission-denied)["']|enforceAppCheck\s*:\s*true|\b\w+\.app\b\s*(==|!=|===|!==)\s*(undefined|null)|!\s*\w+\.app\b/;
 const SIGNATURE_CHECK =/hmac|signature|verify_?webhook|construct_?event|x-hub-signature|compare_digest|svix|webhooks?\.verify|jwt\.decode|oidc|id_token|authenticated|verify_\w*(token|request|push)/i;
 const NEXT_GUARD = /getServerSession|\bauth\(\)|currentUser\(|getAuth\(|auth\.getUser|supabase\.auth\.get(User|Session)|getSession\(|verifyIdToken|jwt\.verify|jwtVerify|getToken\(|clerkClient|requireAuth|requireUser|withAuth|validateRequest|headers\(\)\.get\(\s*['"]authorization|status:\s*40[13]\b/;
@@ -292,6 +301,7 @@ function pyRoutes(src, f, out) {
     else if (guardedVars.has(r.var)) Object.assign(rec, { guard: guardedVars.get(r.var), via: 'blueprint' });
     else if (deps.some(isGuardDep)) Object.assign(rec, { guard: deps.find(isGuardDep), via: 'dependency' });
     else if (INLINE_CHECK.test(body)) Object.assign(rec, { via: 'inline' });
+    else if (pyValidatedHeader(sig, body)) Object.assign(rec, { via: 'inline' });
     else {
       const misplaced = above.find((d) => isGuardName(d) && !/^(route|get|post|put|patch|delete)$/.test(d));
       if (misplaced) rec.misplaced = misplaced;
