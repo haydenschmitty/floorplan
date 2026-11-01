@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Skill installation:** quote the YAML description so the skill installer can parse it (#25).
+
 ## 0.6.1 (2026-11-01)
 
 - **Fewer false alarms in Health** (thanks to the user who reported these):
