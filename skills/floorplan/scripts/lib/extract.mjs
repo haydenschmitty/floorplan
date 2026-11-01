@@ -1,5 +1,6 @@
 // Per-language, regex-based extraction of imports, exported symbols, HTTP routes and HTTP calls.
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
+import { dataRoutes } from './route-tables.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -201,6 +202,7 @@ function extractJs(src, filePath) {
     const methods = all(/export\s+(?:async\s+)?(?:function|const)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g, code).map((m) => m[1]);
     for (const method of methods.length ? methods : ['ANY']) routes.push({ method, path: p, var: null, line: 1, framework: 'next' });
   }
+  routes.push(...dataRoutes(code, at));
 
   const triggers = /firebase-functions/.test(code) ? firebaseFunctions(code, at, routes, mounts) : [];
 
@@ -583,6 +585,7 @@ function addDocs(src, lang, r) {
   const syms = (r.symbols || []).filter((s) => !fbNames.has(s.name)).sort((a, b) => a.line - b.line);
   for (const rt of r.routes || []) {
     if (rt.framework === 'next') { rt.handler = rt.method; continue; }
+    if (rt.framework === 'route-table' || rt.framework === 'bun') continue;
     if (rt.framework === 'firebase') { const d = r.symbols.find((s) => s.name === rt.handler)?.doc || commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     const h = syms.find((s) => s.line >= rt.line && s.line - rt.line <= 12);
     if (h) { rt.handler = h.name; if (h.doc) rt.doc = h.doc; }

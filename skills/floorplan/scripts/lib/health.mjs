@@ -309,7 +309,8 @@ function pyRoutes(src, f, out) {
 }
 
 function jsRoutes(src, f, out) {
-  const routes = f.routes || [];
+  // route tables and Bun.serve check logins in a dispatcher or wrapper this can't follow
+  const routes = (f.routes || []).filter((r) => r.framework !== 'route-table' && r.framework !== 'bun');
   if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path)) return;
   const lines = src.split('\n');
   // Next.js middleware.ts protecting the app
