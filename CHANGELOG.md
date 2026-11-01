@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fastify route objects:** detect static endpoint declarations written as app.route({ method, url }) (including multiple methods and nested schema options).
+
 ## 0.6.1 (2026-11-01)
 
 - **Fewer false alarms in Health** (thanks to the user who reported these):

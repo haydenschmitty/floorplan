@@ -194,6 +194,39 @@ function extractJs(src, filePath) {
     if (args.length) mounts.push({ prefix: m[3], var: args[args.length - 1], line: at(m.index), ...(args.length > 1 ? { mw: args.slice(0, -1).map((s) => s.split('.').pop()) } : {}) });
   }
 
+
+  // Fastify route({ method, url, handler, schema, ... }): only literal method(s) and URL.
+  // Flatten nested option objects so a schema's own keys cannot be mistaken for route options.
+  for (const m of all(/\b(app|server|fastify|instance|router|routes|[a-z]*Router)\.route\(\s*\{/g, code)) {
+    const start = m.index + m[0].length;
+    let depth = 0, quote = '', escaped = false, close = -1, top = '';
+    for (let i = start; i < Math.min(code.length, start + 4000); i++) {
+      const c = code[i];
+      if (quote) {
+        if (depth === 0) top += c;
+        if (escaped) escaped = false;
+        else if (c === '\\') escaped = true;
+        else if (c === quote) quote = '';
+        continue;
+      }
+      if (c === '"' || c === "'" || c === '\x60') { quote = c; if (depth === 0) top += c; continue; }
+      if (c === '{') { depth++; top += ' '; continue; }
+      if (c === '}') {
+        if (depth === 0) { close = i; break; }
+        depth--; top += ' '; continue;
+      }
+      top += depth === 0 ? c : ' ';
+    }
+    if (close < 0 || !/^\s*\)/.test(code.slice(close + 1))) continue;
+    const url = /(?:^|,)\s*(?:url|path)\s*:\s*(["'\x60])(\/[^"'\x60\n$]*)\1/.exec(top)?.[2];
+    if (url == null) continue;
+    const single = /(?:^|,)\s*method\s*:\s*(["'\x60])([A-Za-z-]+)\1/.exec(top)?.[2];
+    const list = /(?:^|,)\s*method\s*:\s*\[([^\]]*)\]/.exec(top)?.[1];
+    const methods = single ? [single] : list == null ? [] : [...list.matchAll(/(["'\x60])([A-Za-z-]+)\1/g)].map((x) => x[2]);
+    if (list != null && list.replace(/(["'\x60])[A-Za-z-]+\1/g, '').replace(/[\s,]/g, '') !== '') continue;
+    for (const method of methods) routes.push({ method: method.toUpperCase(), path: url, var: m[1], line: at(m.index) });
+  }
+
   // Next.js app/pages API routes, derived from the file path
   const next = /(?:^|\/)(?:src\/)?app\/(.*?)\/?route\.(?:t|j)sx?$/.exec(filePath) || /(?:^|\/)(?:src\/)?pages\/(api\/.*?)(?:\/index)?\.(?:t|j)sx?$/.exec(filePath);
   if (next) {
