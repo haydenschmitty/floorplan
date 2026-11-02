@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Skill installation:** quote the YAML description so the skill installer can parse it (#25).
+
 ## 0.6.2 (2026-11-02)
 
 - **Far fewer false alarms in Health** (thanks to @samuelpullen15-droid, who reported 13 of them from one site with the new **Not a problem** button):
