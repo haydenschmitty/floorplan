@@ -54,3 +54,11 @@ test('FastAPI: checks added where a router is included count as sign-in checks',
   // over several lines; a database session alone (orders) protects nothing
   assert.deepEqual(openEndpoints(graph), ['POST /orders']);
 });
+
+test('Express: a check before a named handler counts, and each route is judged on its own arguments', () => {
+  const graph = buildFixture('express-named-handlers');
+  assert.equal(graph.routes.length, 5, `expected the sample's 5 endpoints, found ${graph.routes.length}`);
+  // router.post('/books', requireAuth, createBook) is protected; a handler named like a check
+  // (updateUser) isn't a check, and a check on the next route doesn't protect the one before it
+  assert.deepEqual(openEndpoints(graph), ['GET /api/books', 'POST /api/notes', 'PUT /api/users/:id']);
+});
