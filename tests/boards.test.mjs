@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { shopApp, run, cleanup } from './helpers.mjs';
+import { shopApp, run, cleanup, scanAndBuild, readGraph, writeJson } from './helpers.mjs';
 
 let root, server, base, token;
 const boardsFile = () => path.join(root, 'floorplan', 'boards.json');
@@ -87,4 +87,44 @@ test("a board's text is trimmed to size, kept as written", async () => {
   assert.equal(b.answer.length, 8000);
   assert.equal(b.title, '</script><b>x');
   await call('DELETE', { id: 'long' });
+});
+
+// ---- build half: boards.json is folded into graph.json ----
+const buildBoards = (boards) => {
+  const r = shopApp();
+  scanAndBuild(r);
+  if (boards) writeJson(path.join(r, 'floorplan', 'boards.json'), { boards });
+  const out = run('build.mjs', r, '--no-claude-md');
+  return { r, out: String(out?.stdout ?? out ?? ''), graph: readGraph(r) };
+};
+const board = (over = {}) => ({ id: 'b1', title: 'T', question: 'Q?', answer: 'A.', items: [], steps: [], createdAt: 1, updatedAt: 1, ...over });
+
+test('kept boards are built into the map with live refs', () => {
+  const refund = 'POST /api/orders/:id/refund';
+  const { r, graph } = buildBoards([board({ items: [
+    { ref: 'f:shop-api/routes/orders.js', note: 'a' }, { ref: 'n:api', note: 'b' }, { ref: `route:${refund}`, note: 'c' }] })]);
+  try {
+    const i = graph.routes.findIndex((x) => `${x.m} ${x.p}` === refund);
+    assert.ok(i >= 0);
+    assert.deepEqual(graph.boards[0].items.map((x) => x.ref), ['f:shop-api/routes/orders.js', 'n:api', `r:${i}`]);
+    assert.equal(graph.boards[0].items[2].note, 'c');
+    assert.deepEqual(Object.keys(graph.boards[0]).sort(), ['answer', 'id', 'items', 'question', 'steps', 'title']);
+  } finally { cleanup(r); }
+});
+
+test('cards for code that is gone are dropped with a warning, and an empty board is dropped', () => {
+  const { r, out, graph } = buildBoards([
+    board({ id: 'a', items: [{ ref: 'f:shop-api/routes/orders.js', note: '' }, { ref: 'f:gone.js', note: '' }] }),
+    board({ id: 'b', items: [{ ref: 'f:gone.js', note: '' }] }),
+  ]);
+  try {
+    assert.equal(graph.boards.length, 1);
+    assert.equal(graph.boards[0].items.length, 1);
+    assert.match(out, /point at code that no longer exists/);
+  } finally { cleanup(r); }
+});
+
+test('a map with no kept boards has an empty list', () => {
+  const { r, graph } = buildBoards(null);
+  try { assert.deepEqual(graph.boards, []); } finally { cleanup(r); }
 });
