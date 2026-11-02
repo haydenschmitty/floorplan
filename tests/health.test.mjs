@@ -58,6 +58,12 @@ test('FastAPI: a named guard dependency is not a public endpoint (#7)', () => {
   assert.deepEqual(openEndpoints(graph), ['POST /billing/open']);
 });
 
+test('FastAPI: header tokens are guarded only when the handler validates them (#7)', () => {
+  const graph = buildFixture('fastapi-header-guard');
+  assert.ok(graph.routes.some((r) => r.p === '/invites/checked'));
+  assert.deepEqual(openEndpoints(graph), ['POST /invites/unchecked']);
+});
+
 test('FastAPI: checks added where a router is included count as sign-in checks', () => {
   const graph = buildFixture('fastapi-include-router');
   assert.equal(graph.routes.length, 4, `expected the sample's 4 endpoints, found ${graph.routes.length}`);
