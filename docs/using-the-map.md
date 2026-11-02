@@ -85,7 +85,8 @@ Saves a copy of the map to send to anyone, such as a teammate, a client, or some
 You choose what goes in:
 - **Flows and the tour**, and **notes pinned to files**, on by default;
 - **Recent work**, off by default;
-- **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust.
+- **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust;
+- **For a docs page**, off by default: a copy made to sit inside a page of your docs. Tick it to choose which part the map **Opens on** and whether to **Show project description**. Every part is still in the copy. See [Putting the map in your docs](embedding.md).
 
 Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan". To put the map inside your project's docs site, see [Putting the map in your docs](embedding.md).
 

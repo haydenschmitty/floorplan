@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Put the map in your docs:** `serve.mjs --export --embed` makes a copy to sit in an iframe on a Read the Docs, Sphinx, MkDocs or Docusaurus page. It hides the overview description by default (add `?description=show` to show it), starts with the details closed, lets the page scroll past it, leaves the page's back button alone, can open on one part (`#v=<part>`), takes its colours from `?theme=` or the docs site's own light/dark switch, and has a **Full screen** button that keeps its place and colours, with Esc or the same button to leave. See [Putting the map in your docs](docs/embedding.md).
+- **Put the map in your docs:** the Export dialog's **For a docs page** option (or `serve.mjs --export --embed`) makes a copy to sit in an iframe on a Read the Docs, Sphinx, MkDocs or Docusaurus page. In the dialog you choose which part it **Opens on** and whether to **Show project description** (hidden by default; `?description=show` shows it); the whole map stays in the copy. It starts with the details closed, lets the page scroll past it, leaves the page's back button alone, can be pointed at a part with `#v=<part>` (the bare id works too), takes its colours from `?theme=` or the docs site's own light/dark switch, and has a **Full screen** button that keeps its place and colours, with Esc or the same button to leave. See [Putting the map in your docs](docs/embedding.md).
 
 ## 0.6.3 (2026-11-02)
 

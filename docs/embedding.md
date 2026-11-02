@@ -4,23 +4,34 @@ You can put the map inside your project's documentation, such as a Read the Docs
 
 ## Make the copy
 
-Ask Claude or Codex to "export the floorplan for our docs", or run:
+The easiest way is the Export dialog. Open the map, press **Export**, and tick **For a docs page**. Two choices appear:
+- **Opens on:** where the copy starts. The list has **Overview**, then every part, nested as in the map (for example "Server › Orders"). Give each docs page its own copy, or its own link (see below), so each page shows the part of the code it talks about;
+- **Show project description:** the short summary of what the project is, at the top of the overview. Off by default, which leaves more room for the map.
+
+Press **Download** and save the file where your docs keep their static files. Ask Claude or Codex to "export the floorplan for our docs" and it uses the same copy.
+
+Every part stays in the file, whichever view you choose. **Opens on** only sets where the map starts; a reader can still click out to the overview or any other part, so choose a starting view for focus, not to hide anything.
+
+From the command line:
 
 ```bash
 node floorplan/serve.mjs --export docs/_static/map.html --embed
 ```
 
-This is the same copy as [Export](using-the-map.md#export): one HTML file with the whole map, search, screens, the tour and flows, but no Ask bar, no requests for Claude or Codex, and nothing about your computer. Health and recent work are left out unless you add `--include`. **Think twice before adding `health` to a public docs site**: it lists the endpoints anyone can use and where secrets sit in the code.
+The command line has no starting-view setting: the copy opens on the overview with the description hidden. Put the starting part in the iframe address instead (`map.html#v=api`, see [Open on one part](#open-on-one-part-or-one-box)), and add `?description=show` to show the description.
 
-`--embed` changes how the copy behaves inside a docs page:
-- the project description is hidden on the overview, leaving more room for the map; add `?description=show` to the iframe address to show it;
+Either way, this is the same copy as [Export](using-the-map.md#export): one HTML file with the whole map, search, screens, the tour and flows, but no Ask bar, no requests for Claude or Codex, and nothing about your computer. Health and recent work are left out unless you tick them in the dialog or add `--include`. **Think twice before adding `health` to a public docs site**: it lists the endpoints anyone can use and where secrets sit in the code.
+
+**For a docs page** (or `--embed`) changes how the copy behaves inside a docs page:
+- it opens on the starting view you chose. A `#v=` link in the iframe address wins over it (see below);
+- the project description is hidden on the overview, leaving more room for the map, unless you chose to show it or the iframe address has `?description=show`;
 - the details panel starts closed, and opens when a reader clicks a box;
 - the scroll wheel scrolls the docs page, not the map. Readers zoom by clicking the map first, pinching on a trackpad, or holding Ctrl (⌘ on a Mac) while scrolling;
 - on a touch screen, one finger scrolls the page until the reader taps the map;
-- clicking around the map doesn't fill the docs page's back button;
+- clicking around the map doesn't fill the docs page's back button, and a reload stays on the part the reader was looking at;
 - a **Full screen** button fills the screen with the map, keeping its place and colours; Esc or the same button brings it back. It needs `allowfullscreen` on the `<iframe>`, as in the snippets below; without it the button opens the map in a tab of its own instead.
 
-Opened on its own, the file is an ordinary exported copy.
+Opened on its own, rather than in an iframe, the file is an ordinary exported copy: it ignores the starting view and shows the description.
 
 ## Add it to a page
 
@@ -47,11 +58,13 @@ The path above works for a page at the root of the built site. For a nested page
 
 ## Open on one part, or one box
 
-Add `#v=` and the part's id from `floorplan/architecture.json` to open the map on that part:
+The starting view you chose in the dialog is the default. To override it for one page, or to choose it when you made the copy from the command line, add `#v=` and the part's id from `floorplan/architecture.json` to the iframe address:
 
 ```html
 <iframe src="_static/map.html#v=api" …></iframe>
 ```
+
+This wins over the saved starting view. The id works as written (`#v=api`), and also in the form the map's own address bar uses (`#v=n:api`). An id that doesn't exist opens the overview. So one copy can serve every page: give each page its own `#v=`.
 
 To open on a box with its details showing, open the map, go to that box and click it, then copy everything after `#` in the address bar (something like `#v=api&s=…`). Links that pick a box start with the details open.
 
