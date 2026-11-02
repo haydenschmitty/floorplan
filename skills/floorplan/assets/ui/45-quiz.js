@@ -24,7 +24,7 @@
     if (!q || choices.length < 2 || !choices.includes(answer) || !SC.exists(ref) || givesAway(q, answer)) return null;
     return { q, choices, answer, ref, explain: norm(x.explain) };
   }
-  /** "Which part shows the lockers?" → "Lockers": the answer is right there in the question. */
+  /** "Which part handles payments?" → "Payments": the answer is right there in the question. */
   const words = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   function givesAway(q, answer) {
     const a = words(answer);
