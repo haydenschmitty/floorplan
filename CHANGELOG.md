@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Quiz:** a new header button asks multiple-choice questions about the map, like "which part takes card payments?", and highlights the card that shows each answer, with a sentence on why. The starter questions are written with the map; with the Ask bar connected, **More questions** has Claude or Codex write new ones, and **Quiz me on this** asks about one card. Exports keep the starter questions along with flows and the tour.
+- **Quiz:** a new header button asks multiple-choice questions about the map, like "which part takes card payments?", and highlights the card that shows each answer, with a sentence on why. The starter questions are written with the map; with the Ask bar connected, **More questions** has Claude or Codex write new ones, and **Quiz me on this** asks about one card. Exports keep the starter questions along with flows and the tour. Suggested and built by @WilltheRanger in #56.
 
 ## 0.6.1 (2026-11-01)
 
