@@ -178,7 +178,7 @@ test('an embed hides the overview description unless requested, while other desc
     const code = embedded.slice(start, end) + '\nrenderContext();';
     vm.runInNewContext(code, { state, EMBED: embed, EXPORTED: exported, location: { search }, URLSearchParams,
       $: () => element, info: () => ({ name: 'Example', desc: 'Description', type: 'node', kind: 'service' }),
-      h: (s) => s, colorOf: () => '', icon: () => '', iconKey: () => '', foldContext: () => {} });
+      h: (s) => s, isBoard: () => false, colorOf: () => '', icon: () => '', iconKey: () => '', foldContext: () => {} });
     return element.innerHTML;
   }
   assert.doesNotMatch(context({ embed: true }), /Description/);
@@ -210,7 +210,7 @@ test('the description setting chosen at export decides whether the overview show
     const element = {};
     vm.runInNewContext(embedded.slice(start, end) + '\nrenderContext();', { state: { container: 'root', view: {} }, EMBED: embed, EXPORTED: exported, location: { search }, URLSearchParams,
       $: () => element, info: () => ({ name: 'Example', desc: 'Description', type: 'node', kind: 'service' }),
-      h: (s) => s, colorOf: () => '', icon: () => '', iconKey: () => '', foldContext: () => {} });
+      h: (s) => s, isBoard: () => false, colorOf: () => '', icon: () => '', iconKey: () => '', foldContext: () => {} });
     return element.innerHTML;
   };
   assert.doesNotMatch(context({ embed: true, exported: { embed: true, showDescription: false } }), /Description/, 'off by default');

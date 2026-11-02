@@ -266,6 +266,9 @@ svg.dim .edge:not(.hl) { opacity: .1; }
 #flowmenu .r .del { border: 0; background: none; color: var(--text-4); border-radius: 999px; width: 26px; height: 26px; display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .15s var(--ease), background .15s var(--ease); flex: none; }
 #flowmenu .r:hover .del { opacity: 1; }
 #flowmenu .r .del:hover { background: rgba(var(--ink), .1); color: var(--text); }
+#flowmenu .mh { padding: 8px 12px 4px; color: var(--text-3); font-size: 12px; font-weight: 500; }
+#modal input.bname { width: 100%; margin-top: 10px; background: rgba(var(--ink), .05); border: 0; border-radius: 12px; padding: 10px 13px; color: var(--text); outline: none; font: inherit; }
+#modal input.bname:focus { background: rgba(var(--ink), .07); box-shadow: 0 0 0 1px rgba(var(--ink), .14); }
 #flowmenu .yours { font-size: 11px; color: var(--text-3); background: rgba(var(--ink), .06); border-radius: 999px; padding: 1px 7px; margin-left: 6px; font-weight: 400; }
 #flowmenu .new { display: flex; align-items: center; gap: 10px; color: var(--text); }
 #flowmenu .new svg { color: var(--text-3); }
@@ -779,6 +782,7 @@ function humanize(s) { s = s.replace(/[_\-.]+/g, ' ').replace(/([a-z])([A-Z])/g,
 function info(item) {
   if (item === 'root') return { type: 'root', name: G.project.name, desc: G.project.summary || '', kind: 'root' };
   if (item === 'q:answer') return { type: 'answer', name: state.answer?.title || 'Answer', desc: state.answer?.question || '', kind: 'answer' };
+  if (item.startsWith('b:')) { const b = keptBoard(item.slice(2)); return { type: 'answer', name: b?.title || 'Board', desc: b?.question || '', kind: 'answer' }; }
   const t = item.slice(0, 2);
   if (t === 'n:') { const n = nodes.get(item.slice(2)); return { type: 'node', name: n.label, desc: n.summary, kind: n.kind, n }; }
   if (t === 'd:') { const d = dirs.get(item); return { type: 'dir', name: humanize(d.path.split('/').pop()), desc: `${plural(d.files.length, 'file')} in ${d.path}/`, kind: 'dir', d, path: d.path + '/' }; }
@@ -808,6 +812,12 @@ const nodePaths = (n) => n.paths?.length ? n.paths[0].replace(/\/\*\*$/, '') + (
 
 // ======================= view projection =======================
 const state = { container: 'root', selected: null, kinds: Object.fromEntries(KINDS.map((k) => [k, true])), t: { x: 0, y: 0, k: 1 }, layout: null, flow: null };
+// Boards: the answer you just got ('q:answer') and the ones people kept ('b:<id>', from G.boards, live refs). Both
+// are drawn the same way: just the cards on them, with no parent and no column brackets.
+const isBoard = (c) => c === 'q:answer' || c.startsWith('b:');
+const keptBoard = (id) => G.boards.find((b) => b.id === id);
+const boardAnswer = (b) => ({ title: b.title, question: b.question || '', answer: b.answer || '', kind: 'Board', items: b.items.map((x) => ({ id: x.ref, note: x.note || '' })), steps: (b.steps || []).map((x) => ({ id: x.ref, note: x.note || '' })), followups: [] });
+const boardOf = (c) => (c === 'q:answer' ? state.answer : c.startsWith('b:') && keptBoard(c.slice(2)) ? boardAnswer(keptBoard(c.slice(2))) : null);
 
 function project(item, ctx) {
   const ch = chain(item);
@@ -823,9 +833,9 @@ function enclosingSymbol(f, line) {
   return best && parentOf.has(best.id) ? best.id : null;
 }
 
-/** An answer's ad-hoc board: just the cards Claude picked, and every connection among them. */
-function buildAnswerView() {
-  const visible = state.answer.items.map((x) => x.id);
+/** An answer's ad-hoc board, or a kept one: just the cards Claude picked, and every connection among them. */
+function buildAnswerView(a = state.answer, container = 'q:answer') {
+  const visible = a.items.map((x) => x.id);
   const vis = new Set(visible);
   const up = (x) => { for (const y of chain(x)) if (vis.has(y)) return y; return null; };
   // a file that isn't on the board but some of its endpoints/exports are: route to those instead
@@ -865,16 +875,17 @@ function buildAnswerView() {
   // show containment (a file and its endpoint both on the board) as a faint line
   const containsLink = { k: 'contains', w: 1, a: '', b: '' };
   for (const v of visible) { const p = chain(v).slice(1).find((y) => vis.has(y)); if (p) add(p, v, containsLink, 1); }
-  return { container: 'q:answer', visible, connectors: [], edges: [...agg.values()], hidden: 0 };
+  return { container, visible, connectors: [], edges: [...agg.values()], hidden: 0 };
 }
 const answerNote = (item) => {
-  if (state.container !== 'q:answer' || !state.answer) return null;
-  const i = state.answer.items.findIndex((x) => x.id === item);
-  return i < 0 || !state.answer.items[i].note ? null : { n: i + 1, text: state.answer.items[i].note };
+  const a = isBoard(state.container) && boardOf(state.container);
+  if (!a) return null;
+  const i = a.items.findIndex((x) => x.id === item);
+  return i < 0 || !a.items[i].note ? null : { n: i + 1, text: a.items[i].note };
 };
 
 function buildView(container) {
-  if (container === 'q:answer') return buildAnswerView();
+  if (isBoard(container)) return buildAnswerView(boardOf(container), container);
   const isFile = container.startsWith('f:');
   const visible = visibleKids(container).slice();
   if (isFile) visible.unshift('m:' + container.slice(2));
@@ -1069,6 +1080,7 @@ function roundedPath(pts, r = 10) {
 let renderToken = 0;
 async function render(opts = {}) {
   const token = ++renderToken;
+  if (isBoard(state.container) && !boardOf(state.container)) state.container = 'root'; // a board deleted since the link was made
   const view = buildView(state.container);
   const loading = setTimeout(() => $('#loading').classList.add('on'), 160);
   let res;
@@ -1139,7 +1151,7 @@ function draw(view, res) {
 /** Brackets over the three columns of a view that has outside connections: what uses this part (left),
  *  what's inside it (middle), and what it uses (right). Drawn in map space so they pan and zoom with it. */
 function drawColumns(g, view, res) {
-  if (!view.connectors?.length || state.container === 'root' || state.container === 'q:answer') return;
+  if (!view.connectors?.length || state.container === 'root' || isBoard(state.container)) return;
   const span = (cs) => cs.length ? [Math.min(...cs.map((c) => c.x)), Math.max(...cs.map((c) => c.x + c.width))] : null;
   const ins = res.children.filter((c) => c.id.startsWith('x:in:'));
   const outs = res.children.filter((c) => c.id.startsWith('x:out:'));
@@ -1220,7 +1232,7 @@ function itemMenu(id) {
     { title: i.name },
     id.startsWith('x:') ? { label: `Go to ${i.name}`, icon: 'right', hint: '2×click', run: () => reveal(real) }
       : drillable(real) && state.container !== real ? { label: 'Open', icon: 'drill', hint: '2×click', run: () => open(real) } : null,
-    state.container === 'q:answer' && !id.startsWith('x:') ? { label: 'Show on the map', icon: 'external', run: () => reveal(real) } : null,
+    isBoard(state.container) && !id.startsWith('x:') ? { label: 'Show on the map', icon: 'external', run: () => reveal(real) } : null,
     EXPORTED ? null : { label: 'Ask about this', icon: 'spark', run: () => addAskContext(real) },
     { label: 'Show details', icon: 'panel', run: () => { setPanel(true); if (id.startsWith('x:')) reveal(real); else select(id); } },
     '-',
@@ -1247,7 +1259,7 @@ function canvasMenu() {
     state.container !== 'root' ? { label: 'Back to overview', icon: 'home', run: () => go('root') } : null,
     '-',
     { label: 'Search', icon: 'search', hint: '/', run: openPalette },
-    EXPORTED ? null : { label: 'Ask about this view', icon: 'spark', run: () => { if (state.container !== 'root' && state.container !== 'q:answer') addAskContext(state.container); askInput.focus(); } },
+    EXPORTED ? null : { label: 'Ask about this view', icon: 'spark', run: () => { if (state.container !== 'root' && !isBoard(state.container)) addAskContext(state.container); askInput.focus(); } },
   ];
 }
 svg.addEventListener('contextmenu', (ev) => { ev.preventDefault(); hideTip(); openMenu(ev, canvasMenu()); });
@@ -1373,19 +1385,23 @@ function setHash(container, sel) {
   if (container.startsWith('q:')) return; // answer views are transient
   const p = new URLSearchParams();
   // a docs copy that opens on a saved part writes v=root for the overview, so a reload stays on the overview
-  if (container !== 'root' || (EMBED && EXPORTED?.startView && EXPORTED.startView !== 'root')) p.set('v', container);
+  if (container.startsWith('b:')) p.set('b', container.slice(2)); // a kept board: #b=<id>
+  else if (container !== 'root' || (EMBED && EXPORTED?.startView && EXPORTED.startView !== 'root')) p.set('v', container);
   if (sel && typeof sel === 'string') p.set('s', sel);
   const s = p.toString();
   // in a docs page each click would be a step for the page's back button, so the address is updated in place
   try { if (location.hash.slice(1) !== s) history[EMBED ? 'replaceState' : 'pushState'](null, '', s ? '#' + s : location.pathname + location.search); } catch {}
 }
 function readHash() {
-  const p = new URLSearchParams(location.hash.slice(1));
+  const p = new URLSearchParams(location.hash.slice(1)), b = p.get('b');
   let v = p.get('v'), s = p.get('s');
-  // a docs copy opens on the part chosen at export when the address names none; an explicit #v= always wins
-  if (!v) v = EMBED && EXPORTED?.startView && parentOf.has(EXPORTED.startView) && drillable(EXPORTED.startView) ? EXPORTED.startView : 'root'; // a saved part that opens a blank board (an outside service, an empty part) falls back to the overview
-  // docs and the export hint say #v=<part id>; the viewer keys parts as n:<id>, so a bare id is promoted when it names a part
-  if (v !== 'root' && !parentOf.has(v)) v = parentOf.has('n:' + v) ? 'n:' + v : 'root';
+  if (b) v = G.boards.some((x) => x.id === b) ? 'b:' + b : 'root'; // a kept board: #b=<id>; one deleted since the build opens the overview
+  else {
+    // a docs copy opens on the part chosen at export when the address names none; an explicit #v= always wins
+    if (!v) v = EMBED && EXPORTED?.startView && parentOf.has(EXPORTED.startView) && drillable(EXPORTED.startView) ? EXPORTED.startView : 'root'; // a saved part that opens a blank board (an outside service, an empty part) falls back to the overview
+    // docs and the export hint say #v=<part id>; the viewer keys parts as n:<id>, so a bare id is promoted when it names a part
+    if (v !== 'root' && !parentOf.has(v)) v = parentOf.has('n:' + v) ? 'n:' + v : 'root';
+  }
   if (s && !parentOf.has(s) && !s.startsWith('x:') && !s.startsWith('m:')) s = null;
   return { v, s };
 }
@@ -1394,6 +1410,7 @@ window.addEventListener('popstate', () => { const { v, s } = readHash(); go(v, {
 async function go(container, { select: sel = null, push = true, zoomFrom = null, after, force = false } = {}) {
   hideTip();
   custom.panel = null;
+  if (container.startsWith('b:') && !keptBoard(container.slice(2))) container = 'root'; // deleted since
   const changed = container !== state.container;
   state.container = container; state.selected = sel;
   if (push) setHash(container, sel);
@@ -1412,7 +1429,7 @@ async function go(container, { select: sel = null, push = true, zoomFrom = null,
 function open(item) {
   if (item.startsWith('x:')) { reveal(connEntity(item)); return; }
   if (item.startsWith('m:')) return;
-  if (state.container === 'q:answer' && !drillable(item)) { reveal(item); return; }
+  if (isBoard(state.container) && !drillable(item)) { reveal(item); return; }
   if (!drillable(item)) { select(item); return; }
   closeSheet();
   go(item, { zoomFrom: item });
@@ -1469,8 +1486,9 @@ function applySelection() {
 
 // ======================= chrome: context, crumbs, legend =======================
 function renderContext() {
-  if (state.container === 'q:answer') {
-    $('#context').innerHTML = `<div class="k"><span class="ico" style="--c:var(--on)">${icon(state.answer.icon || 'spark')}</span>${h(state.answer.kind || 'Answer')} · ${plural(state.answer.items.length, 'card')}</div><h1>${h(state.answer.title)}</h1><p>${h(state.answer.question)}</p>`;
+  if (isBoard(state.container)) {
+    const a = boardOf(state.container);
+    $('#context').innerHTML = `<div class="k"><span class="ico" style="--c:var(--on)">${icon(a.icon || 'spark')}</span>${h(a.kind || 'Answer')} · ${plural(a.items.length, 'card')}</div><h1>${h(a.title)}</h1><p>${h(a.question)}</p>`;
     return;
   }
   const i = info(state.container);
@@ -1500,7 +1518,7 @@ function renderCrumbs() {
   path.forEach((item, idx) => {
     if (idx) { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '/'; c.appendChild(s); }
     const b = document.createElement('button');
-    b.textContent = item === 'root' ? 'Overview' : item === 'q:answer' ? `${state.answer.kind || 'Answer'}: ${state.answer.title}` : info(item).name;
+    b.textContent = item === 'root' ? 'Overview' : isBoard(item) ? `${boardOf(item).kind || 'Answer'}: ${boardOf(item).title}` : info(item).name;
     if (item === state.container) b.className = 'cur';
     b.onclick = () => go(item, { select: path[idx + 1] || null });
     c.appendChild(b);
@@ -1560,9 +1578,9 @@ function renderPanel() {
   else if (sel && sel.startsWith('x:')) html = itemPanel(connEntity(sel), true);
   else if (sel && sel.startsWith('m:')) html = itemPanel('f:' + sel.slice(2));
   else if (sel) html = itemPanel(sel);
-  else html = state.container === 'root' ? overviewPanel() : state.container === 'q:answer' ? answerPanel() : itemPanel(state.container);
+  else html = state.container === 'root' ? overviewPanel() : isBoard(state.container) ? answerPanel(boardOf(state.container)) : itemPanel(state.container);
   // extensions add sections: 'overview' on the codebase panel, 'item' on a selected/opened item
-  const where = sel && typeof sel === 'object' ? null : sel ? 'item' : state.container === 'root' ? 'overview' : state.container === 'q:answer' ? null : 'item';
+  const where = sel && typeof sel === 'object' ? null : sel ? 'item' : state.container === 'root' ? 'overview' : isBoard(state.container) ? null : 'item';
   const target = sel && typeof sel === 'string' ? (sel.startsWith('x:') ? connEntity(sel) : sel.startsWith('m:') ? 'f:' + sel.slice(2) : sel) : state.container;
   const extOut = [];
   if (custom.panel) { html = custom.panel.html; extOut.push(...(custom.panel.bind ? [{ bind: custom.panel.bind, whole: true }] : [])); }
@@ -1586,14 +1604,14 @@ function renderPanel() {
   panel.querySelectorAll('[data-flow]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); startFlow(a.dataset.flow); }));
   panel.querySelectorAll('[data-sel]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); select(a.dataset.sel); centerOn(a.dataset.sel); }));
   panel.querySelector('[data-goroot]')?.addEventListener('click', () => go('root'));
+  panel.querySelector('[data-walk]')?.addEventListener('click', () => walkBoard(boardOf(state.container), state.container));
   panel.querySelectorAll('[data-copy]').forEach((a) => a.addEventListener('click', () => { navigator.clipboard?.writeText(a.dataset.copy); a.textContent = '✓'; }));
   emit('panel', { selected: sel, container: state.container });
 }
 
-function answerPanel() {
-  const a = state.answer;
+function answerPanel(a = state.answer) {
   return `<div class="sec"><div class="ph"><span class="ico" style="--c:var(--accent)">${icon('feature')}</span><span class="kind">${h(a.kind || 'Answer')}</span></div><h2 class="pt">${h(a.title)}</h2><p class="pd">${h(a.question)}</p>${a.kind && a.answer ? `<div class="pd md">${md(a.answer)}</div>` : ''}
-      <div class="actions"><button class="btn soft" data-goroot>Back to map</button></div></div>
+      <div class="actions">${state.container.startsWith('b:') && a.steps?.length >= 2 ? `<button class="btn soft" data-walk>${iconI('right')}Walk through ${a.steps.length} steps</button>` : ''}<button class="btn soft" data-goroot>Back to map</button></div></div>
     ${listSec('On this board', a.items.map((x, i) => { const ii = info(x.id); return `<a class="row" data-sel="${h(x.id)}"><span class="anote" style="margin:0;padding:0;background:none;border:0"><b>${i + 1}</b></span><span class="rt"><div class="rn">${h(ii.name)}</div>${x.note ? `<div class="rd">${h(x.note)}</div>` : ''}${ii.path ? `<div class="rp">${h(ii.path)}</div>` : ''}</span></a>`; }))}
     ${a.steps?.length >= 2 ? `<div class="sec"><h3>Walkthrough <span class="c">${a.steps.length}</span></h3><div class="list">${a.steps.map((s, i) => `<a class="row" data-sel="${h(s.id)}"><span class="dot" style="background:var(--accent)"></span><span class="rt"><div class="rn">${i + 1}. ${h(info(s.id).name)}</div><div class="rd">${h(s.note)}</div></span></a>`).join('')}</div></div>` : ''}`;
 }
@@ -1786,9 +1804,13 @@ function renderFlowMenu() {
     ? `<div class="r custom" data-flow="${h(f.id)}"><div class="rt"><b>${h(f.title)}<span class="yours">yours</span></b><span>${f.steps.length} steps${f.description ? ' · ' + h(f.description) : ''}</span></div><button class="del" data-del="${h(f.id)}" title="Delete flow">${iconI('x')}</button></div>`
     : `<div class="r" data-flow="${h(f.id)}"><b>${h(f.title)}</b><span>${f.steps.length} steps${f.description ? ' · ' + h(f.description) : ''}</span></div>`).join('')
     + (EXPORTED ? (G.flows.length ? '' : '<div class="r" style="cursor:default"><span>No flows in this copy.</span></div>') : (G.flows.length ? '<div class="mi-sep"></div>' : '')
-    + `<div class="r new" data-new>${iconI('spark')}<b>Request a new flow…</b></div>`);
+    + `<div class="r new" data-new>${iconI('spark')}<b>Request a new flow…</b></div>`)
+    // boards kept from answers; a copy shows them but can't delete them
+    + (G.boards.length ? '<div class="mi-sep"></div><div class="mh">Saved boards</div>' + G.boards.map((b) => `<div class="r custom" data-board="${h(b.id)}"><div class="rt"><b>${h(b.title)}</b><span>${b.items.length} card${b.items.length === 1 ? '' : 's'}${b.question ? ' · ' + h(b.question) : ''}</span></div>${EXPORTED ? '' : `<button class="del" data-delboard="${h(b.id)}" title="Delete board">${iconI('x')}</button>`}</div>`).join('') : '');
   fm.querySelectorAll('[data-flow]').forEach((r) => r.onclick = () => { fm.classList.remove('open'); startFlow(r.dataset.flow); });
   fm.querySelectorAll('[data-del]').forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); deleteCustomFlow(b.dataset.del); });
+  fm.querySelectorAll('[data-board]').forEach((r) => r.onclick = () => { fm.classList.remove('open'); closeSheet(); go('b:' + r.dataset.board); });
+  fm.querySelectorAll('[data-delboard]').forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); deleteBoard(b.dataset.delboard); });
   const nf = fm.querySelector('[data-new]'); if (nf) nf.onclick = showFlowForm;
 }
 function showFlowForm() {
@@ -1836,6 +1858,66 @@ async function deleteCustomFlow(id) {
 async function loadCustomFlows() {
   for (const s of store.get(FLOWS_KEY, [])) addFlow(s);
   if (window.FLOORPLAN_SERVER) { try { for (const s of (await serverApi('GET')).flows || []) addFlow(s); } catch {} }
+  renderFlowMenu();
+}
+
+// Kept boards work the same way: boards.json next to the map when served, otherwise this browser. G.boards always
+// holds the built shape with live refs; the ones kept since the last build are marked `kept` so Export can send them.
+const BOARDS_KEY = `boards:${G.project.name}`;
+const boardsApi = (method, body) => fetch('/api/boards', { method, headers: { 'content-type': 'application/json', 'x-floorplan-token': window.FLOORPLAN_SERVER.token }, ...(body ? { body: JSON.stringify(body) } : {}) }).then((r) => r.json());
+const toStoredBoard = (b) => ({ id: b.id, title: b.title, question: b.question, answer: b.answer, items: b.items.map((x) => ({ ref: stableRef(x.ref), note: x.note })), steps: b.steps.map((x) => ({ ref: stableRef(x.ref), note: x.note })) });
+let keptLocally = false; // the last keep fell back to this browser although the map server is there
+const sameBoard = (a, b) => JSON.stringify(toStoredBoard(a)) === JSON.stringify(toStoredBoard(b));
+/** A board's id: its title as a-z, 0-9 and dashes (tags dropped), at most 60 characters, numbered when taken. */
+function boardId(title, taken) {
+  const base = String(title || '').replace(/<[^>]*>/g, ' ').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').slice(0, 60).replace(/^-+|-+$/g, '') || 'board';
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  return id;
+}
+function addBoard(stored) {
+  const live = (arr) => (Array.isArray(arr) ? arr : []).map((x) => ({ ref: liveRef(String(x?.ref || '')), note: String(x?.note || '') })).filter((x) => x.ref);
+  const b = { id: String(stored.id), title: String(stored.title || 'Board'), question: String(stored.question || ''), answer: String(stored.answer || ''), items: live(stored.items), steps: live(stored.steps), kept: true };
+  if (!b.items.length) return null;
+  // boards.json is what was built in, so the server's copy only differs when it was updated since the last build
+  const i = G.boards.findIndex((x) => x.id === b.id);
+  if (i < 0) G.boards.push(b); else if (!sameBoard(G.boards[i], b)) G.boards[i] = b; else return null;
+  return b;
+}
+/** Saves an answer as a board (or over `replaceId`, keeping its name) and returns its id. */
+async function keepBoard(a, { replaceId } = {}) {
+  const old = replaceId ? keptBoard(replaceId) : null;
+  const id = old ? old.id : boardId(a.title, new Set(G.boards.map((b) => b.id)));
+  const card = (x) => ({ ref: x.id, note: x.note || '' });
+  const b = { id, title: old?.title || a.title || 'Board', question: a.question || '', answer: a.answer || '', items: a.items.map(card), steps: (a.steps || []).map(card), kept: true };
+  G.boards = old ? G.boards.map((x) => (x.id === id ? b : x)) : [...G.boards, b];
+  let saved = false;
+  if (window.FLOORPLAN_SERVER) { try { saved = !!(await boardsApi('POST', { board: toStoredBoard(b) })).boards; } catch {} }
+  keptLocally = !saved && !!window.FLOORPLAN_SERVER;
+  if (!saved) { const list = store.get(BOARDS_KEY, []), at = list.findIndex((x) => x.id === id); if (at < 0) list.push(toStoredBoard(b)); else list[at] = toStoredBoard(b); store.set(BOARDS_KEY, list); } // in place, as the server does
+  renderFlowMenu();
+  return id;
+}
+async function deleteBoard(id) {
+  G.boards = G.boards.filter((x) => x.id !== id);
+  if (askState.fromBoard === id) askState.fromBoard = null;
+  if (state.container === 'b:' + id) go('root');
+  if (window.FLOORPLAN_SERVER) { try { await boardsApi('DELETE', { id }); } catch {} }
+  store.set(BOARDS_KEY, store.get(BOARDS_KEY, []).filter((x) => x.id !== id));
+  renderFlowMenu();
+}
+async function loadKeptBoards() {
+  if (window.FLOORPLAN_SERVER) {
+    try {
+      const list = (await boardsApi('GET')).boards;
+      // boards.json is the truth: one deleted since the last build is gone, one updated since replaces the built copy
+      if (Array.isArray(list)) { const ids = new Set(list.map((x) => x?.id)); G.boards = G.boards.filter((b) => ids.has(b.id)); list.forEach(addBoard); }
+      // the board on screen went with it (the first render is the boot's, which reads the address again)
+      if (state.layout && state.container.startsWith('b:') && !keptBoard(state.container.slice(2))) go('root');
+    } catch {}
+  }
+  for (const s of store.get(BOARDS_KEY, [])) addBoard(s);
   renderFlowMenu();
 }
 
@@ -1907,7 +1989,8 @@ function flowStep() {
   $('#fl-next').onclick = () => { if (state.flow.i >= f.steps.length - 1) stopFlow(); else { state.flow.i++; flowStep(); } };
   $('#fl-x').onclick = stopFlow;
   // an answer's walkthrough plays on the answer board itself
-  if (state.flow.inPlace) { if (state.container === 'q:answer') highlightFlow(a, b); else go('q:answer', { after: () => highlightFlow(a, b) }); }
+  const on = typeof state.flow.inPlace === 'string' ? state.flow.inPlace : 'q:answer'; // the board it plays on
+  if (state.flow.inPlace) { if (state.container === on) highlightFlow(a, b); else go(on, { after: () => highlightFlow(a, b) }); }
   else go(container, { after: () => highlightFlow(a, b) });
 }
 function highlightFlow(a, b) {
@@ -1935,7 +2018,7 @@ function highlightFlow(a, b) {
 
 // ======================= ask (Claude Code CLI or Codex via serve.mjs, or the Claude app) =======================
 const Q = createGraphQuery(G);
-const askState = { engine: null, sample: null, busy: false, ctl: null, session: null, turns: [], last: null };
+const askState = { engine: null, sample: null, busy: false, ctl: null, session: null, turns: [], last: null, fromBoard: null };
 const askInput = $('#ask-input'), askSend = $('#ask-send'), sheet = $('#ask-sheet'), warn = $('#ask-warn');
 const DOCS = 'https://docs.claude.com/en/docs/claude-code/overview'; // the Claude app's tip: install the CLI
 const WARNINGS = {
@@ -2009,30 +2092,54 @@ function sheetShell(question, body) {
   sheet.hidden = false;
   sheet.innerHTML = `<div class="sh"><span class="q" title="${h(question)}">${h(question)}</span>
     ${askState.last && state.container !== 'q:answer' ? '<button class="btn soft" data-act="board">Show answer board</button>' : ''}
-    ${state.container === 'q:answer' ? '<button class="btn soft" data-act="map">Back to map</button>' : ''}
+    ${isBoard(state.container) ? '<button class="btn soft" data-act="map">Back to map</button>' : ''}
     <button class="btn icon" data-act="close" title="Close">${iconI('x')}</button></div><div class="sb">${body}</div>`;
   sheet.querySelector('[data-act="close"]').onclick = () => { if (askState.busy) cancelAsk(); sheet.hidden = true; if (state.container === 'q:answer') go('root'); else fit(true); };
   sheet.querySelector('[data-act="map"]')?.addEventListener('click', () => go('root'));
   sheet.querySelector('[data-act="board"]')?.addEventListener('click', () => go('q:answer'));
   sheet.querySelectorAll('[data-ref]').forEach((r) => r.onclick = () => {
     const id = r.dataset.ref;
-    if (state.container === 'q:answer' && state.view.visible.includes(id)) { select(id); centerOn(id); } else reveal(id);
+    if (isBoard(state.container) && state.view.visible.includes(id)) { select(id); centerOn(id); } else reveal(id);
   });
   sheet.querySelectorAll('[data-follow]').forEach((b) => b.onclick = () => { askInput.value = b.dataset.follow; submitAsk(); });
-  sheet.querySelector('[data-act="steps"]')?.addEventListener('click', () => {
-    const a = askState.last;
-    state.flow = { f: { title: a.title, steps: a.steps.map((s) => ({ ref: s.id, note: s.note })) }, i: 0, inPlace: true };
-    flowStep();
-  });
+  sheet.querySelector('[data-act="steps"]')?.addEventListener('click', () => walkBoard(askState.last, 'q:answer'));
+}
+/** Plays a board's steps on the board itself. */
+function walkBoard(a, container) {
+  state.flow = { f: { title: a.title, steps: a.steps.map((s) => ({ ref: s.id, note: s.note })) }, i: 0, inPlace: container };
+  flowStep();
 }
 function showProgress(question, lines) {
   sheetShell(question, `<div class="progress">${lines.map((l, i) => `<div>${i === lines.length - 1 ? '<span class="spin"></span>' : '<span style="width:12px;display:inline-block;text-align:center">✓</span>'}${h(l)}</div>`).join('')}</div>`);
 }
 function renderAnswer(a) {
   const steps = a.steps?.length >= 2;
+  // keep the answer as a board, or, asked on a kept board, update that board (a copy is read-only)
+  const from = askState.fromBoard && keptBoard(askState.fromBoard);
+  const keep = EXPORTED || !a.items.length || a.keptAs ? '' // a.keptAs: just saved, so there's nothing new to keep
+    : from ? `<button class="btn soft" data-act="update">Update “${h(from.title)}”</button><button class="btn soft" data-act="keep">Keep as new board</button>`
+    : '<button class="btn soft" data-act="keep">Keep this board</button>';
   sheetShell(a.question, `${md(a.answer)}
-    <div class="sheet-actions">${steps ? `<button class="btn soft" data-act="steps">${iconI('right')}Walk through ${a.steps.length} steps</button>` : ''}</div>
+    <div class="sheet-actions">${steps ? `<button class="btn soft" data-act="steps">${iconI('right')}Walk through ${a.steps.length} steps</button>` : ''}${keep}</div>
     ${a.followups?.length ? `<div class="followups">${a.followups.slice(0, 3).map((f) => `<button data-follow="${h(f)}">${h(f)}</button>`).join('')}</div>` : ''}`);
+  sheet.querySelector('[data-act="keep"]')?.addEventListener('click', () => keepAnswer(a));
+  sheet.querySelector('[data-act="update"]')?.addEventListener('click', () => keepAnswer(a, from.id));
+}
+/** Keep: name the board first. Update: replace the board it was asked on. Then open the board. */
+function keepAnswer(a, replaceId) {
+  const save = async (named) => {
+    const id = await keepBoard(named, { replaceId });
+    askState.fromBoard = id; // asking again from here updates this board
+    a.keptAs = id;
+    toast(keptLocally ? 'Saved in this browser only' : replaceId ? 'Board updated' : 'Board kept');
+    go('b:' + id, { force: true, after: () => renderAnswer(a) });
+  };
+  if (replaceId) { save(a); return; }
+  const m = showModal({ title: 'Keep this board', html: `<label>Name it, so you can find it under Flows and link to it.<input class="bname" maxlength="200" value="${h(a.title)}"></label>`,
+    actions: [{ label: 'Keep', primary: true, onClick: () => { save({ ...a, title: input.value.trim() || a.title }); } }] });
+  const input = m.el.querySelector('input');
+  input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); m.el.querySelector('[data-mi="0"]').click(); } });
+  setTimeout(() => { input.focus(); input.select(); }, 30);
 }
 function showAnswer(raw, question) {
   const clean = (arr) => (Array.isArray(arr) ? arr : []).map((x) => typeof x === 'string' ? { id: x, note: '' } : x).filter((x) => x && Q.exists(String(x.id))).map((x) => ({ id: String(x.id), note: String(x.note || '') }));
@@ -2198,6 +2305,8 @@ async function submitAsk() {
   if (!question || !askState.engine) return;
   askInput.value = '';
   askState.context = []; renderChips();
+  // the kept board this was asked on, so the answer can update it (a follow-up on its answer still counts)
+  if (state.container !== 'q:answer') askState.fromBoard = state.container.startsWith('b:') ? state.container.slice(2) : null;
   if (askState.mode === 'change') return requestChange(ctxIds.length ? `${question}\n\nThis is about: ${ctxIds.map((id) => `${id} (${info(id).name})`).join(', ')}.` : question);
   const shown = question;
   // what Claude sees: the question plus the pinned items, by id, so it starts from them
@@ -2220,6 +2329,8 @@ askSend.addEventListener('click', (ev) => { if (askState.busy) { ev.preventDefau
 if (!EXPORTED) detectEngine();
 renderFlowMenu();
 if (!EXPORTED) loadCustomFlows();
+// a link to a board kept since the last build (#b=) waits for the list, briefly
+const boardsLoaded = EXPORTED ? Promise.resolve() : Promise.race([loadKeptBoards(), new Promise((ok) => setTimeout(ok, 1500))]);
 
 // ======================= boot =======================
 $('#proj-name').textContent = G.project.name;
@@ -2454,7 +2565,11 @@ const init = readHash();
 state.container = init.v; state.selected = init.s;
 if (init.s && isPhone()) { document.body.classList.remove('no-panel'); $('#btn-panel').setAttribute('aria-expanded', 'true'); } // a shared link to a box opens its details
 const fontsReady = document.fonts?.ready ? Promise.race([document.fonts.ready, new Promise((ok) => setTimeout(ok, 1500))]) : Promise.resolve();
-fontsReady.then(() => render({ after: () => { renderPanel(); emit('ready', {}); if (PLAN && window.FLOORPLAN_SERVER) showChangeResult(); } }));
+Promise.all([fontsReady, boardsLoaded]).then(() => {
+  // the address again, now the kept boards are in: one kept since the last build opens, one deleted since doesn't
+  if (state.container === init.v) state.container = readHash().v;
+  render({ after: () => { renderPanel(); emit('ready', {}); if (PLAN && window.FLOORPLAN_SERVER) showChangeResult(); } });
+});
 })();
 </script>
 <!--__UI_EXTENSIONS__-->
