@@ -4,6 +4,7 @@
 
 - **Skill installation:** quote the YAML description so the skill installer can parse it (#25).
 - **Blueprints in Codex:** the build report now says a blueprint is "planned, not built yet" in Codex too. Fixed by @owlahikit.
+- **Code after a `/*` inside a string is read again:** a string such as `'/api/*'` (as in Hono's `app.use('/api/*', cors())`) was taken for the start of a comment, so every endpoint, import and web request from there to the next comment's end was missing from the map. Fixed by @rudycelekli.
 
 ## 0.6.2 (2026-11-02)
 
