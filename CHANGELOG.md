@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Blueprints in Codex:** the build report now says a blueprint is "planned, not built yet" in Codex too. Fixed by @owlahikit.
+
 ## 0.6.2 (2026-11-02)
 
 - **Far fewer false alarms in Health** (thanks to @samuelpullen15-droid, who reported 13 of them from one site with the new **Not a problem** button):
