@@ -393,9 +393,14 @@ function extractPy(src) {
     for (const method of methods) routes.push({ method, path: m[3], var: m[1], line: at(m.index) });
   }
   // Django urls.py
-  for (const m of all(/\b(?:re_)?path\(\s*r?["']([^"']*)["']\s*,\s*(?!include)/g, code)) routes.push({ method: 'ANY', path: '/' + m[1].replace(/^\^|\$$/g, ''), var: null, line: at(m.index), framework: 'django' });
+  for (const m of all(/\b(?:re_)?path\(\s*r?["']([^"']*)["']\s*,(?!\s*include\()/g, code)) routes.push({ method: 'ANY', path: '/' + m[1].replace(/^\^|\$$/g, ''), var: null, line: at(m.index), framework: 'django' });
 
   const mounts = [];
+  // path('api/orders/', include('orders.urls')): that module's urls sit under the prefix, and this file uses it
+  for (const m of all(/\b(?:re_)?path\(\s*r?["']([^"']*)["']\s*,\s*include\(\s*\(?\s*["']([\w.]+)["']/g, code)) {
+    imports.push({ spec: m[2], names: [], line: at(m.index) });
+    mounts.push({ spec: m[2], prefix: m[1].replace(/^\^|\$$/g, ''), line: at(m.index) });
+  }
   for (const m of all(/\b(register_blueprint|include_router|mount)\(\s*([A-Za-z_][\w.]*)/g, code)) {
     // the call's arguments, up to its own closing bracket: dependencies=[Depends(x)] holds brackets of its own
     let depth = 1, j = m.index + m[0].length;

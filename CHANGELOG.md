@@ -5,6 +5,7 @@
 - **Skill installation:** quote the YAML description so the skill installer can parse it (#25).
 - **Blueprints in Codex:** the build report now says a blueprint is "planned, not built yet" in Codex too. Fixed by @owlahikit.
 - **Code after a `/*` inside a string is read again:** a string such as `'/api/*'` (as in Hono's `app.use('/api/*', cors())`) was taken for the start of a comment, so every endpoint, import and web request from there to the next comment's end was missing from the map. Fixed by @rudycelekli.
+- **Django endpoints get their full address:** an app's `urls.py` included by the project (`path("api/orders/", include("orders.urls"))`) now puts its endpoints under that prefix, as `/api/orders/<int:pk>` rather than `/<int:pk>`, so the website's requests link to them. The include line itself is no longer listed as an endpoint, and the project's `urls.py` links to the app's. Fixed by @rudycelekli.
 
 ## 0.6.2 (2026-11-02)
 
