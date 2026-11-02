@@ -14,7 +14,7 @@ For what the plugin itself can and can't do on your computer (no hooks, MCP serv
 | Asking questions (Codex) | a `codex exec` run on your computer, with your ChatGPT sign-in, not saved to your Codex history | your question, and the files Codex chooses to read |
 | Changing a blueprint from the map | the same as asking questions, with Claude Code or Codex; the map's server then writes only the plan's files in `floorplan/` | your request, and the files the AI chooses to read |
 | Asking questions (Claude app) | your claude.ai account | the map (names, descriptions, structure), never your source code. Claude asks before publishing it there |
-| Exporting a copy | your computer: the map's server writes one HTML file | nothing. You decide who gets the file. It holds the map, plus Health or recent work only if you tick them, and never your folder path, git remotes or source code |
+| Exporting a copy | your computer: the map's server writes one HTML file | nothing. You decide who gets the file. It holds the map and the answer boards you kept, text included, plus Health or recent work only if you tick them, and never your folder path, git remotes or source code |
 | Floorplan Cloud waitlist (only if you sign up) | the map's server, to Floorplan's waitlist service | the email you typed or chose, and "just me" or "with my team". See [below](#floorplan-cloud-waitlist) |
 
 Floorplan has no analytics or telemetry, no dependencies to install, and no install scripts. Its only outside connection is the opt-in waitlist below, and nothing reaches it unless you sign up. The map's few links to documentation open only when you click them.

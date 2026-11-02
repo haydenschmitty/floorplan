@@ -13,6 +13,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `plan.json` | Blueprints only: the planned files, endpoints and screens, who may use each endpoint, the stack, assumptions and open questions. Names and descriptions live here instead of `descriptions/` | **Yes** |
 | `recent-work.json` | What was just worked on, and why. Replaced on every update | Rarely. The AI writes it |
 | `custom-flows.json` | Flows requested from the map | Only to delete one |
+| `boards.json` | Answer boards you kept | Only to delete one |
 | `health-dismissed.json` | Health issues you marked **Not a problem**, with your reasons | Only to undo one. **Show again** on the map does it too |
 | `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI or Codex | No |
 | `query.mjs` | Looks things up in the map from the command line; Claude and Codex use it too | No |

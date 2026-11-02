@@ -94,6 +94,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `embed.test.mjs` | a copy made for a docs page (`--export --embed`): marked before anything is drawn, details closed, the docs page's back button and scroll wheel left alone, colours from `?theme=` or the page around it and never saved |
+| `boards.test.mjs` | kept boards: the server's API (saving, updating, deleting, `boards.json` written only by the server), build folding (gone cards dropped, empty boards dropped, warnings), the page's keep, update, open and `#b=` link, and booting with a board whose code is gone |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |

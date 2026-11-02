@@ -70,6 +70,19 @@ This wins over the saved starting view. The id works as written (`#v=api`), and 
 
 To open on a box with its details showing, open the map, go to that box and click it, then copy everything after `#` in the address bar (something like `#v=api&s=…`). Links that pick a box start with the details open.
 
+To open on a board you kept from an answer, use `#b=` and its id instead (see [Design the views by asking](#design-the-views-by-asking)).
+
+## Design the views by asking
+
+Each docs page can show its own view of the map instead of the same overview:
+
+1. Ask a question in the map, such as "how does an order become a refund?".
+2. Press **Keep this board** and name it. Its id is the name in lowercase with dashes, say `order-to-refund`.
+3. Make the copy with kept boards included: `node floorplan/serve.mjs --export docs/_static/map.html --embed` (kept boards are on by default), or use **For a docs page** in the map's Export dialog. After keeping or changing boards, run `build.mjs` first so the command export sees them.
+4. On each page, embed `map.html#b=order-to-refund`.
+
+Kept boards hold the answer's text, so it goes into the copy. In an embedded copy they're read-only.
+
 ## Colours
 
 By default the map follows the reader's device, light or dark. To fix it to your docs theme, add `?theme=light` or `?theme=dark` before the `#` (combine options with `&`, for example `?theme=light&description=show`):
