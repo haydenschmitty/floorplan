@@ -6,7 +6,7 @@
   // an exported copy without Health leaves the button out: an empty list would read as "all clear"
   if (!SC || (SC.exported && !SC.graph.health)) return;
   const { h } = SC;
-  const A = SC.agent || { name: 'Claude', app: 'Claude Code' };
+  const A = SC.agent?.fix || SC.agent || { name: 'Claude', app: 'Claude Code' };
   const issues = (SC.graph.health && SC.graph.health.issues) || [];
   // a blueprint (planned, not built) gets a design review of the plan instead of a code check
   const PLAN = !!SC.graph.meta.blueprint;
