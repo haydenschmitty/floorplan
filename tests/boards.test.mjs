@@ -223,22 +223,27 @@ test('opening a kept board updates the address in place inside a docs page', () 
 });
 
 /** The page's board-saving code, run with a pretend browser, server (or none) and the map's refs. */
-function boardCode({ server = null, built = [], saved = {} } = {}) {
+function boardCode({ server = null, built = [], saved = {}, hash = '', layout = null } = {}) {
   const html = page(), at = html.indexOf('const BOARDS_KEY');
   const end = html.indexOf('\n}\n', html.indexOf('async function loadKeptBoards(')) + 2;
-  const local = new Map(Object.entries(saved)), sent = [], went = [];
+  const local = new Map(Object.entries(saved)), sent = [], went = [], toasts = [];
   const routes = { 'r:3': 'route:POST /refund' };
   const ctx = {
     G: { project: { name: 'shop' }, boards: built.map((b) => ({ ...b })) },
     window: server ? { FLOORPLAN_SERVER: { token: 't' } } : {},
     store: { get: (k, d) => local.get(k) ?? d, set: (k, v) => local.set(k, v) },
     stableRef: (id) => routes[id] || id, liveRef: (ref) => Object.keys(routes).find((k) => routes[k] === ref) || (ref === 'f:gone.js' ? null : ref),
-    fetch: async (url, { method, body }) => { body = body && JSON.parse(body); sent.push({ method, body, url }); return { json: async () => server(method, body) }; },
+    fetch: async (url, { method, body }) => {
+      body = body && JSON.parse(body); sent.push({ method, body, url });
+      const out = server(method, body);
+      return out?.httpStatus ? { ok: false, status: out.httpStatus, json: async () => ({}) } : { ok: true, status: 200, json: async () => out };
+    },
+    toast: (t) => toasts.push(t), location: { hash }, URLSearchParams,
     renderFlowMenu() {}, keptBoard: (id) => ctx.G.boards.find((b) => b.id === id),
-    askState: { fromBoard: null }, state: { container: 'root' }, go: (c) => went.push(c),
+    askState: { fromBoard: null }, state: { container: 'root', layout }, go: (c) => went.push(c),
   };
   vm.runInNewContext(html.slice(at, end) + '; Object.assign(this, { keepBoard, deleteBoard, loadKeptBoards, addBoard, keptLocally: () => keptLocally });', ctx);
-  return { ctx, local, sent, went };
+  return { ctx, local, sent, went, toasts };
 }
 const plain = (x) => JSON.parse(JSON.stringify(x)); // values made inside vm have another realm's prototypes
 const refundAnswer = { title: 'How refunds work', question: 'How?', answer: 'Like so.', items: [{ id: 'r:3', note: 'here' }, { id: 'n:web', note: '' }], steps: [{ id: 'r:3', note: 'here' }] };
@@ -381,4 +386,80 @@ test('a character split across two pieces of the request arrives whole', async (
   });
   assert.equal(body.boards.find((b) => b.id === 'accents').answer, 'Les remboursements: été, café, 返金 ✓');
   await call('DELETE', { id: 'accents' });
+});
+
+// ---- review of the kept-boards PR ----
+test('a save that works replaces the copy a failed save left in this browser, so the older answer never comes back', async () => {
+  let up = false, onServer = [];
+  const server = (method, body) => {
+    if (!up) throw new Error('down');
+    if (method === 'POST') onServer = [...onServer.filter((b) => b.id !== body.board.id), { ...body.board, updatedAt: new Date().toISOString() }];
+    return { boards: onServer };
+  };
+  const { ctx, local } = boardCode({ server });
+  await ctx.keepBoard(refundAnswer); // the server is down: kept in this browser
+  assert.equal(local.get('boards:shop').length, 1);
+  up = true;
+  await ctx.keepBoard({ ...refundAnswer, answer: 'Newer.' }, { replaceId: 'how-refunds-work' });
+  assert.deepEqual(plain(local.get('boards:shop')), [], 'the browser copy is gone once the server has it');
+  const reload = boardCode({ server, saved: { 'boards:shop': local.get('boards:shop') } });
+  await reload.ctx.loadKeptBoards();
+  assert.equal(reload.ctx.G.boards.find((b) => b.id === 'how-refunds-work').answer, 'Newer.');
+});
+
+test('a copy kept in this browser while the server was down goes to the server once it answers, unless the server has a newer one', async () => {
+  const card = [{ ref: 'n:web', note: '' }];
+  const onServer = [{ id: 'b1', title: 'B', question: '', answer: 'Server, older', items: card, steps: [], updatedAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'b2', title: 'C', question: '', answer: 'Server, newer', items: card, steps: [], updatedAt: '2026-01-03T00:00:00.000Z' }];
+  const posted = [];
+  const server = (method, body) => { if (method === 'POST') { posted.push(body.board.id); const i = onServer.findIndex((b) => b.id === body.board.id); onServer[i] = { ...body.board, updatedAt: '2026-01-04T00:00:00.000Z' }; } return { boards: onServer }; };
+  const saved = { 'boards:shop': [
+    { id: 'b1', title: 'B', question: '', answer: 'Browser, newer', items: card, steps: [], updatedAt: '2026-01-02T00:00:00.000Z' },
+    { id: 'b2', title: 'C', question: '', answer: 'Browser, older', items: card, steps: [], updatedAt: '2026-01-02T00:00:00.000Z' }] };
+  const { ctx, local } = boardCode({ server, saved });
+  await ctx.loadKeptBoards();
+  const answer = (id) => ctx.G.boards.find((b) => b.id === id).answer;
+  assert.equal(answer('b1'), 'Browser, newer');
+  assert.equal(answer('b2'), 'Server, newer');
+  assert.deepEqual(posted, ['b1'], 'only the newer browser copy is sent');
+  assert.deepEqual(plain(local.get('boards:shop')), [], 'both browser copies are settled');
+});
+
+test('a deletion the map server does not confirm keeps the board, and says so', async () => {
+  const board = { id: 'keep-me', title: 'Keep me', question: '', answer: '', items: [{ ref: 'n:web', note: '' }], steps: [] };
+  for (const refuse of [() => { throw new Error('down'); }, () => ({ httpStatus: 403 })]) {
+    const { ctx, local, toasts } = boardCode({ server: (method) => (method === 'DELETE' ? refuse() : { boards: [board] }), built: [board], saved: { 'boards:shop': [board] } });
+    ctx.state.container = 'b:keep-me';
+    assert.equal(await ctx.deleteBoard('keep-me'), false);
+    assert.deepEqual(plain(ctx.G.boards.map((b) => b.id)), ['keep-me']);
+    assert.equal(local.get('boards:shop').length, 1);
+    assert.equal(ctx.state.container, 'b:keep-me');
+    assert.match(toasts[0], /Couldn’t delete “Keep me”/);
+  }
+});
+
+test('a #b= link to a board that arrives after the first render opens it then, unless the reader has moved on', async () => {
+  const late = { id: 'late', title: 'Late', question: '', answer: '', items: [{ ref: 'n:web', note: '' }], steps: [] };
+  const server = () => ({ boards: [late] });
+  const waiting = boardCode({ server, hash: '#b=late', layout: {} });
+  await waiting.ctx.loadKeptBoards();
+  assert.deepEqual(plain(waiting.went), ['b:late']);
+  const movedOn = boardCode({ server, hash: '#v=api', layout: {} });
+  await movedOn.ctx.loadKeptBoards();
+  assert.deepEqual(plain(movedOn.went), []);
+  const notDrawnYet = boardCode({ server, hash: '#b=late' }); // the boot reads the address itself
+  await notDrawnYet.ctx.loadKeptBoards();
+  assert.deepEqual(plain(notDrawnYet.went), []);
+});
+
+test('the map server takes as many boards as it keeps, and says so in plain words when a request is too big', async () => {
+  const many = Array.from({ length: 60 }, (_, i) => ({ id: `b${i}`, title: `Board ${i}`, question: '', answer: 'x'.repeat(8000), items: Array.from({ length: 30 }, () => ({ ref: 'n:api', note: 'n'.repeat(500) })), steps: [] }));
+  const r = await fetch(base + '/api/export', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': token }, body: JSON.stringify({ include: ['boards'], boards: many }) });
+  assert.equal(r.status, 200, 'well over the old 500 000-character limit');
+  assert.equal(JSON.parse(/<script>window\.FLOORPLAN = (.*?);<\/script>/s.exec(await r.text())[1]).boards.length, 60);
+  const before = fs.existsSync(boardsFile()) ? fs.readFileSync(boardsFile(), 'utf8') : null;
+  const big = await fetch(base + '/api/boards', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': token }, body: JSON.stringify({ board: { id: 'huge', items: [{ ref: 'n:api' }], answer: 'x'.repeat(300000) } }) });
+  assert.equal(big.status, 413);
+  assert.match((await big.json()).error, /too big/i);
+  assert.equal(fs.existsSync(boardsFile()) ? fs.readFileSync(boardsFile(), 'utf8') : null, before);
 });

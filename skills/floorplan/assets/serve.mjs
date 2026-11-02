@@ -89,8 +89,13 @@ function exportMap(include, extraFlows = [], { embed = false, startView = 'root'
   if (embed) page = page.replace(/<html\b/i, '<html data-embed');
   return { html: page, name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint, embed };
 }
+// The request limits follow from what cleanBoard and cleanFlows keep, so every collection they accept fits:
+// a board is at most ~84 000 characters as JSON (8 000 of answer, 2 000 of question, 90 cards and steps of up
+// to 800), a flow at most ~150 000 (60 steps with 2 000-character notes), and an export carries up to 200 boards and 50 flows.
+const MAX_BOARDS = 200, BOARD_BODY_MAX = 100000, FLOWS_BODY_MAX = 50 * 150000;
+const EXPORT_BODY_MAX = MAX_BOARDS * BOARD_BODY_MAX + FLOWS_BODY_MAX + 10000;
 /** The boards the page sends with an export (all it has now), as the page sends them: size-limited, built shape only. */
-const cleanBoards = (list) => (Array.isArray(list) ? list : []).slice(0, 200).map(cleanBoard).filter(Boolean)
+const cleanBoards = (list) => (Array.isArray(list) ? list : []).slice(0, MAX_BOARDS).map(cleanBoard).filter(Boolean)
   .map(({ id, title, question, answer, items, steps }) => ({ id, title, question, answer, items, steps }));
 /** Flows requested from the map since it was last built, as the page sends them: checked and trimmed. */
 const cleanFlows = (list) => (Array.isArray(list) ? list : []).slice(0, 50)
@@ -249,6 +254,17 @@ const flowsFile = path.join(here, 'custom-flows.json');
 const readFlows = () => { try { return JSON.parse(fs.readFileSync(flowsFile, 'utf8')).flows || []; } catch { return []; } };
 
 // Kept boards: answer boards saved from the Ask bar, stored next to the map (build.mjs folds them into the page).
+/** Collects a request's body as text up to `max` characters; over it, answers 413 in plain words instead of dropping the connection. */
+function readBody(req, res, max, done) {
+  let raw = '', big = false;
+  req.setEncoding('utf8'); // a character split across two pieces of the body still decodes
+  req.on('data', (d) => { if (big) return; raw += d; if (raw.length > max) { big = true; raw = ''; } });
+  req.on('end', () => {
+    if (!big) return done(raw);
+    res.writeHead(413, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'That’s too big for the map’s server to take in one go. Export with fewer kept boards, or delete some you no longer need.' }));
+  });
+}
 const boardsFile = path.join(here, 'boards.json');
 const readBoards = () => { try { const l = JSON.parse(fs.readFileSync(boardsFile, 'utf8')).boards; return Array.isArray(l) ? l : []; } catch { return []; } };
 const clip = (v, n) => (typeof v === 'string' ? v : '').slice(0, n);
@@ -589,11 +605,7 @@ const server = http.createServer((req, res) => {
       const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
       if (req.method === 'GET') return send(200, { boards: readBoards() });
       if (req.method === 'POST' || req.method === 'DELETE') {
-        let raw = '', big = false;
-        req.setEncoding('utf8'); // a character split across two pieces of the body still decodes
-        req.on('data', (d) => { raw += d; if (raw.length > 200000) { big = true; req.destroy(); } });
-        req.on('end', () => {
-          if (big) return;
+        readBody(req, res, BOARD_BODY_MAX, (raw) => {
           let body; try { body = JSON.parse(raw); } catch { return send(400, { error: 'Unreadable request.' }); }
           let boards = readBoards();
           if (req.method === 'DELETE') boards = boards.filter((x) => x.id !== body?.id);
@@ -668,10 +680,7 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/cancel') { for (const c of running.values()) c.kill(); res.writeHead(204); return res.end(); }
     if (req.method === 'POST' && url.pathname === '/api/export') {
-      let raw = '';
-      req.setEncoding('utf8');
-      req.on('data', (d) => { raw += d; if (raw.length > 500000) req.destroy(); });
-      req.on('end', () => {
+      readBody(req, res, EXPORT_BODY_MAX, (raw) => {
         let body = {}; try { body = JSON.parse(raw); } catch {}
         try {
           const docs = body.embed === true; // the docs-copy settings only count for a docs copy

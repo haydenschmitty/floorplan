@@ -371,6 +371,16 @@ test('--export warns when boards or flows were saved after the last build', () =
 });
 
 /** Runs the Export button's extension (ui/60-export.js) against a pretend page; returns the graph and the dialog opener. */
+test('the Export dialog sends boards only when Kept boards is ticked', async () => {
+  const g = shopGraph();
+  g.boards = [{ id: 'one', title: 'One', question: '', answer: 'x'.repeat(8000), items: [{ ref: 'n:api', note: '' }], steps: [] }];
+  const p = pretendPage(g);
+  assert.equal((await p.download(p.open())).boards.length, 1);
+  const m = p.open();
+  m.content.find((c) => c.dataset.xp === 'boards').checked = false;
+  assert.equal((await p.download(m)).boards, undefined, 'not sent when unticked');
+});
+
 test('kept boards added after the page loaded are offered when the dialog opens', () => {
   const g = shopGraph();
   g.boards = [];

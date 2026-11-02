@@ -1866,7 +1866,12 @@ async function loadCustomFlows() {
 // Kept boards work the same way: boards.json next to the map when served, otherwise this browser. G.boards always
 // holds the built shape with live refs (the ones kept since the last build are marked `kept`); Export sends all of them.
 const BOARDS_KEY = `boards:${G.project.name}`;
-const boardsApi = (method, body) => fetch('/api/boards', { method, headers: { 'content-type': 'application/json', 'x-floorplan-token': window.FLOORPLAN_SERVER.token }, ...(body ? { body: JSON.stringify(body) } : {}) }).then((r) => r.json());
+// a reply that isn't a success (a stale token after the server restarted, a refusal) counts as a failure
+const boardsApi = (method, body) => fetch('/api/boards', { method, headers: { 'content-type': 'application/json', 'x-floorplan-token': window.FLOORPLAN_SERVER.token }, ...(body ? { body: JSON.stringify(body) } : {}) })
+  .then((r) => { if (!r.ok) throw new Error(`the map's server answered ${r.status}`); return r.json(); });
+// copies kept in this browser because the server didn't take them; each carries when it was kept, to compare with the server's
+const putLocal = (stored) => { const list = store.get(BOARDS_KEY, []), at = list.findIndex((x) => x.id === stored.id); if (at < 0) list.push(stored); else list[at] = stored; store.set(BOARDS_KEY, list); }; // in place, as the server does
+const dropLocal = (id) => { const list = store.get(BOARDS_KEY, []); if (list.some((x) => x.id === id)) store.set(BOARDS_KEY, list.filter((x) => x.id !== id)); };
 const toStoredBoard = (b) => ({ id: b.id, title: b.title, question: b.question, answer: b.answer, items: b.items.map((x) => ({ ref: stableRef(x.ref), note: x.note })), steps: b.steps.map((x) => ({ ref: stableRef(x.ref), note: x.note })) });
 let keptLocally = false; // the last keep fell back to this browser although the map server is there
 const sameBoard = (a, b) => JSON.stringify(toStoredBoard(a)) === JSON.stringify(toStoredBoard(b));
@@ -1897,29 +1902,52 @@ async function keepBoard(a, { replaceId } = {}) {
   let saved = false;
   if (window.FLOORPLAN_SERVER) { try { saved = !!(await boardsApi('POST', { board: toStoredBoard(b) })).boards; } catch {} }
   keptLocally = !saved && !!window.FLOORPLAN_SERVER;
-  if (!saved) { const list = store.get(BOARDS_KEY, []), at = list.findIndex((x) => x.id === id); if (at < 0) list.push(toStoredBoard(b)); else list[at] = toStoredBoard(b); store.set(BOARDS_KEY, list); } // in place, as the server does
+  if (saved) dropLocal(id); // an older copy a failed save left here must not come back over this one
+  else putLocal({ ...toStoredBoard(b), updatedAt: new Date().toISOString() });
   renderFlowMenu();
   return id;
 }
+/** Deletes a kept board; when served, only once the server confirms it. Gives false (and says so) when it didn't. */
 async function deleteBoard(id) {
+  if (window.FLOORPLAN_SERVER) {
+    try { await boardsApi('DELETE', { id }); } catch {
+      toast(`Couldn’t delete “${keptBoard(id)?.title || 'that board'}”: the map’s server didn’t confirm it. Reload the page and try again.`);
+      return false;
+    }
+  }
   G.boards = G.boards.filter((x) => x.id !== id);
   if (askState.fromBoard === id) askState.fromBoard = null;
   if (state.container === 'b:' + id) go('root');
-  if (window.FLOORPLAN_SERVER) { try { await boardsApi('DELETE', { id }); } catch {} }
-  store.set(BOARDS_KEY, store.get(BOARDS_KEY, []).filter((x) => x.id !== id));
+  dropLocal(id);
   renderFlowMenu();
+  return true;
 }
 async function loadKeptBoards() {
+  let served = false;
   if (window.FLOORPLAN_SERVER) {
     try {
       const list = (await boardsApi('GET')).boards;
       // boards.json is the truth: one deleted since the last build is gone, one updated since replaces the built copy
-      if (Array.isArray(list)) { const ids = new Set(list.map((x) => x?.id)); G.boards = G.boards.filter((b) => ids.has(b.id)); list.forEach(addBoard); }
-      // the board on screen went with it (the first render is the boot's, which reads the address again)
-      if (state.layout && state.container.startsWith('b:') && !keptBoard(state.container.slice(2))) go('root');
+      if (Array.isArray(list)) {
+        const ids = new Set(list.map((x) => x?.id)); G.boards = G.boards.filter((b) => ids.has(b.id)); list.forEach(addBoard); served = true;
+        // a copy kept here while the server didn't take it: send it now if it's newer than the server's, then let it go
+        for (const s of store.get(BOARDS_KEY, [])) {
+          const theirs = list.find((x) => x?.id === s.id);
+          if (theirs && !(String(s.updatedAt || '') > String(theirs.updatedAt || ''))) { dropLocal(s.id); continue; }
+          try { await boardsApi('POST', { board: s }); dropLocal(s.id); } catch {}
+          addBoard(s);
+        }
+      }
     } catch {}
   }
-  for (const s of store.get(BOARDS_KEY, [])) addBoard(s);
+  if (!served) for (const s of store.get(BOARDS_KEY, [])) addBoard(s);
+  if (state.layout) {
+    // the board on screen went with it (the first render is the boot's, which reads the address again)
+    if (state.container.startsWith('b:') && !keptBoard(state.container.slice(2))) go('root');
+    // a #b= link that came in before its board did: open it now, if the reader is still where the link left them
+    const want = new URLSearchParams(location.hash.slice(1)).get('b');
+    if (want && state.container === 'root' && keptBoard(want)) go('b:' + want, { push: false });
+  }
   renderFlowMenu();
 }
 
