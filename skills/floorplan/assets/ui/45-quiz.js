@@ -21,7 +21,8 @@
     if (!q || choices.length < 2 || !choices.includes(answer) || !SC.exists(ref)) return null;
     return { q, choices, answer, ref, explain: norm(x.explain) };
   }
-  const key = (x) => x.q.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // the same question asked twice, whatever its punctuation, in any language
+  const key = (x) => x.q.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const pool = [];
   /** Adds the questions that are new and askable, and returns them. */
   function add(list) {
@@ -81,6 +82,7 @@
   card.hidden = true;
   card.setAttribute('role', 'dialog');
   card.setAttribute('aria-label', 'Quiz');
+  card.dataset.floats = ''; // the map centers what it highlights beside or above this card, not under it
   document.body.appendChild(card);
   // what the card shows: a round of questions, the agent writing more, or why it couldn't
   let round = null, loading = null, failed = null;
@@ -98,12 +100,8 @@
     ? 'Couldn’t reach the map’s server, which may have stopped. Start it again with <code>node floorplan/serve.mjs</code> in the codebase, then reload this page.'
     : h(e?.message || 'Something went wrong.'));
 
-  /** The card that shows an answer: highlighted where it sits, like a tour stop. */
-  function show(ref) {
-    const parent = SC.parentOf(ref) || 'root';
-    if (parent === 'root') SC.go('root', { select: ref });
-    else SC.reveal(ref);
-  }
+  /** The card that shows an answer: highlighted where it sits, and moved into view clear of the quiz. */
+  const show = (ref) => SC.reveal(ref);
   const score = () => round.list.filter((x) => x.picked === x.answer).length;
   const dots = () => `<div class="dots">${round.list.map((x) => `<i class="${x.picked == null ? '' : x.picked === x.answer ? 'ok' : 'no'}"></i>`).join('')}</div>`;
   const closeBtn = `<button class="btn icon qx" data-x title="Close (Esc)">${SC.iconI('x')}</button>`;
@@ -198,26 +196,30 @@
 
   /** Has the agent write new questions, about the whole map or one card, then asks them. */
   async function more(focus) {
+    if (loading) return; // one request at a time: the card offers Stop meanwhile
     if (!canAsk()) return fail('New questions need the Ask bar', WHY[window.FLOORPLAN_SERVER ? 'cli_missing' : 'no_engine'], focus, false);
     const name = focus ? SC.info(focus)?.name || focus : '';
     window.FloorplanTour?.end();
     round = null; failed = null;
-    loading = { label: focus ? `Writing questions about ${name}` : 'Writing new questions', lines: ['Thinking…'] };
+    const mine = loading = { label: focus ? `Writing questions about ${name}` : 'Writing new questions', lines: ['Thinking…'] };
     card.hidden = false;
     render();
+    // the most recent questions are enough to steer clear of repeats, and keep the request short
+    const have = pool.slice(-30).map((x) => `- ${x.q}`).join('\n');
     const prompt = [
       focus ? `Write 3-5 questions about ${name} (${focus}): what it is for, what it uses and what uses it.` : `Write 4-6 new questions about ${G.project.name}, covering parts of the app the questions below leave out.`,
       SC.technical() ? 'This person has the map\'s developer detail on, so technical terms and file names are fine.' : '',
-      pool.length ? `Questions the person already has:\n${pool.map((x) => `- ${x.q}`).join('\n')}` : '',
+      have ? `Questions the person already has:\n${have}` : '',
     ].filter(Boolean).join('\n\n');
     try {
-      const raw = await SC.requestAgent('quiz', prompt, (t) => { if (loading) { loading.lines.push(t); render(); } });
-      if (!loading) return; // closed meanwhile
+      const raw = await SC.requestAgent('quiz', prompt, (t) => { if (loading === mine) { mine.lines.push(t); render(); } });
+      if (loading !== mine) return; // closed meanwhile
       const added = add(Array.isArray(raw?.questions) ? raw.questions : []);
       if (!added.length) throw { code: 'quiz_empty' };
+      SC.refreshPanel(); // a selected card's question count
       start(added, focus ? name : 'New questions');
     } catch (e) {
-      if (!loading) return;
+      if (loading !== mine) return;
       if (e?.name === 'AbortError') { loading = null; close(); return; }
       fail('Couldn’t write new questions', failure(e), focus);
     }

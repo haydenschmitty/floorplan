@@ -255,19 +255,22 @@ if (arch.tour !== undefined) {
   });
 }
 // Quiz: multiple-choice questions written by Claude in architecture.json, each pointing at the card
-// (node id or file path) that shows the answer
+// (node id or file path) that shows the answer. A broken question is left out with a warning, never an
+// error: a file it points at can be renamed or deleted later, and that mustn't stop the map rebuilding.
 const outQuiz = [];
 if (arch.quiz !== undefined) {
-  if (!Array.isArray(arch.quiz)) err('quiz must be an array of { question, choices, answer, node, explain }');
+  if (!Array.isArray(arch.quiz)) warn('quiz must be an array of { question, choices, answer, node, explain }; it was left out');
   else arch.quiz.forEach((x, i) => {
-    const where = `quiz[${i}]`;
-    if (!isStr(x?.question)) return err(`${where}.question must be a string`);
+    const skip = (why) => warn(`quiz[${i}] was left out: ${why}`);
+    if (!isStr(x?.question)) return skip('its question must be a string');
     const choices = x.choices;
-    if (!Array.isArray(choices) || choices.length < 2 || choices.length > 4 || !choices.every(isStr)) return err(`${where}.choices must be 2-4 strings`);
-    if (new Set(choices).size !== choices.length) return err(`${where}.choices has the same choice twice`);
-    if (!choices.includes(x.answer)) return err(`${where}.answer must be one of its choices, copied exactly`);
-    const ref = resolveEndpoint(x.node, `${where}.node`);
-    if (ref) outQuiz.push({ q: x.question, choices, answer: x.answer, ref, explain: isStr(x.explain) ? x.explain : '' });
+    if (!Array.isArray(choices) || choices.length < 2 || choices.length > 4 || !choices.every(isStr)) return skip('choices must be 2-4 strings');
+    if (new Set(choices).size !== choices.length) return skip('choices has the same choice twice');
+    if (!choices.includes(x.answer)) return skip('answer must be one of its choices, copied exactly');
+    const p = isStr(x.node) ? x.node.replace(/^file:/, '') : '';
+    const ref = byId.has(x.node) ? `n:${x.node}` : includedSet.has(p) ? `f:${p}` : null;
+    if (!ref) return skip(`node "${x.node ?? ''}" is neither a node id nor an included file${isStr(x.node) ? didYouMean(x.node, ids) : ''}`);
+    outQuiz.push({ q: x.question, choices, answer: x.answer, ref, explain: isStr(x.explain) ? x.explain : '' });
   });
 }
 // "Recent work": what Claude just changed, per task, framed against what the user asked for

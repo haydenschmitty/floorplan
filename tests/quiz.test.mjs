@@ -46,21 +46,24 @@ test('a map without a quiz still builds, with an empty one', () => {
   assert.deepEqual(readGraph(root).quiz, []);
 });
 
-test('the build names each broken question so it can be fixed', () => {
+test('the build leaves out each broken question and says why, without failing the map', () => {
   const r = buildWith([
     { ...QUIZ[0], answer: 'Database' },
     { ...QUIZ[0], choices: ['Server', 'Server'] },
     { ...QUIZ[0], choices: ['Server'] },
-    { ...QUIZ[0], node: 'payments' },
+    { ...QUIZ[0], node: 'shop-api/routes/gone.js' }, // a file renamed or deleted since the quiz was written
     { ...QUIZ[0], question: '' },
+    QUIZ[1],
   ]);
-  assert.equal(r.ok, false);
-  assert.match(r.out, /quiz\[0\]\.answer must be one of its choices/);
-  assert.match(r.out, /quiz\[1\]\.choices has the same choice twice/);
-  assert.match(r.out, /quiz\[2\]\.choices must be 2-4 strings/);
-  assert.match(r.out, /quiz\[3\]\.node "payments" is neither a node id nor a scanned file/);
-  assert.match(r.out, /quiz\[4\]\.question must be a string/);
-  assert.equal(buildWith({ question: 'x' }).ok, false, 'quiz must be an array');
+  assert.ok(r.ok, r.out);
+  assert.match(r.out, /quiz\[0\] was left out: answer must be one of its choices/);
+  assert.match(r.out, /quiz\[1\] was left out: choices has the same choice twice/);
+  assert.match(r.out, /quiz\[2\] was left out: choices must be 2-4 strings/);
+  assert.match(r.out, /quiz\[3\] was left out: node "shop-api\/routes\/gone\.js" is neither a node id nor an included file/);
+  assert.match(r.out, /quiz\[4\] was left out: its question must be a string/);
+  assert.deepEqual(readGraph(root).quiz.map((x) => x.q), [QUIZ[1].question]);
+  const notList = buildWith({ question: 'x' });
+  assert.ok(notList.ok && /quiz must be an array/.test(notList.out));
 });
 
 test('an export keeps the starter questions along with flows and the tour, and drops them without', () => {

@@ -1255,8 +1255,16 @@ function freeArea() {
   const sheet = isPhone(); // on a phone the details panel is a sheet at the bottom, not a column at the side
   const panelW = open && !sheet ? $('#panel').offsetWidth + 32 : 0;
   const top = ($('header').offsetHeight || 64) + 8 + Math.min(130, $('#context').offsetHeight);
-  const bottom = open && sheet ? $('#panel').offsetHeight + 24 : $('#ask').offsetHeight + 36;
-  return { x: 16, y: top, w: Math.max(200, r.width - panelW - 32), h: Math.max(140, r.height - top - bottom) };
+  let bottom = open && sheet ? $('#panel').offsetHeight + 24 : $('#ask').offsetHeight + 36;
+  let x = 16, w = r.width - panelW - 32;
+  // a card an extension keeps open over the map (data-floats, like the quiz): what it points at stays
+  // out from under it, beside it when there's room and otherwise above it (a phone)
+  const fl = [...document.querySelectorAll('[data-floats]')].find((e) => !e.hidden)?.getBoundingClientRect();
+  if (fl?.width) {
+    if (r.width - panelW - fl.right >= 320) { x = fl.right + 16; w = r.width - panelW - fl.right - 32; }
+    else bottom = Math.max(bottom, r.height - fl.top + 8);
+  }
+  return { x, y: top, w: Math.max(200, w), h: Math.max(140, r.height - top - bottom) };
 }
 function fit(animate) {
   const b = state.bounds; if (!b) return;
