@@ -2302,7 +2302,7 @@ const setPanel = (on) => {
     else if (!on && sheetReturn) { if (panel.contains(document.activeElement) || document.activeElement === document.body) sheetReturn.focus?.({ preventScroll: true }); sheetReturn = null; }
   }
 };
-document.body.classList.toggle('no-panel', isPhone() || !store.get('panel', true));
+document.body.classList.toggle('no-panel', EMBED ? document.body.classList.contains('no-panel') : isPhone() || !store.get('panel', true)); // in a docs page keep what the early script chose (closed, or open for a link to a box), not the saved preference
 $('#btn-panel').setAttribute('aria-expanded', String(!document.body.classList.contains('no-panel')));
 // the top bar can be one or two rows tall: everything under it follows its real height
 const headerEl = document.querySelector('header');

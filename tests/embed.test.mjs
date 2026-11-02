@@ -265,3 +265,18 @@ test('the overview of a docs copy with a saved start view is written as v=root, 
   assert.equal(written('root', { startView: 'root' }), '/p');
   assert.equal(written('root', { embed: false, startView: 'n:api' }), '/p', 'ordinary page: unchanged');
 });
+
+test('inside a docs page the saved panel preference does not reopen the details', () => {
+  const start = embedded.indexOf("\ndocument.body.classList.toggle('no-panel', ") + 1;
+  const end = embedded.indexOf('\n', start);
+  const panelClosed = ({ embed, closedEarly, saved }) => {
+    const classes = new Set(closedEarly ? ['no-panel'] : []);
+    const body = { classList: { contains: (c) => classes.has(c), toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); } } };
+    vm.runInNewContext(embedded.slice(start, end), { document: { body }, EMBED: embed, isPhone: () => false, store: { get: (k, d) => saved } });
+    return classes.has('no-panel');
+  };
+  assert.equal(panelClosed({ embed: true, closedEarly: true, saved: true }), true, 'embed, no s=: stays closed');
+  assert.equal(panelClosed({ embed: true, closedEarly: false, saved: true }), false, 'embed with s=: open');
+  assert.equal(panelClosed({ embed: false, closedEarly: false, saved: true }), false, 'ordinary page: saved open');
+  assert.equal(panelClosed({ embed: false, closedEarly: false, saved: false }), true, 'ordinary page: saved closed');
+});
