@@ -53,6 +53,11 @@ test('FastAPI: public readiness and liveness endpoints are not security warnings
   assert.ok(!openEndpoints(graph).includes('GET /livez'));
 });
 
+test('FastAPI: a named guard dependency is not a public endpoint (#7)', () => {
+  const graph = buildFixture('fastapi-guard-name');
+  assert.deepEqual(openEndpoints(graph), ['POST /billing/open']);
+});
+
 test('FastAPI: checks added where a router is included count as sign-in checks', () => {
   const graph = buildFixture('fastapi-include-router');
   assert.equal(graph.routes.length, 4, `expected the sample's 4 endpoints, found ${graph.routes.length}`);
