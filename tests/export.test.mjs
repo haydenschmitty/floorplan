@@ -369,3 +369,29 @@ test('--export warns when boards or flows were saved after the last build', () =
     assert.match(out, /run build\.mjs, then export again/);
   } finally { const now = new Date(Date.now() - 120000); fs.utimesSync(f, now, now); }
 });
+
+/** Runs the Export button's extension (ui/60-export.js) against a pretend page; returns the graph and the dialog opener. */
+test('kept boards added after the page loaded are offered when the dialog opens', () => {
+  const g = shopGraph();
+  g.boards = [];
+  const p = pretendPage(g);
+  assert.doesNotMatch(p.open().opts.html, /data-xp="boards"/, 'nothing to list yet');
+  g.boards.push({ id: 'kept-later', title: 'Kept later', items: [{ ref: 'n:api', note: '' }], steps: [] });
+  assert.match(p.open().opts.html, /data-xp="boards" checked/);
+});
+
+test('the Export button’s request keeps a character split across two pieces whole', async () => {
+  const { request } = await import('node:http');
+  const answer = 'Remboursé: été ✓';
+  const bytes = Buffer.from(JSON.stringify({ include: ['boards'], boards: [{ id: 'accents', title: 'T', question: 'Q', answer, items: [{ ref: 'n:api', note: '' }], steps: [] }] }));
+  const cut = bytes.indexOf(Buffer.from('é')) + 1;
+  const html = await new Promise((resolve, reject) => {
+    const req = request(base + '/api/export', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': token, 'content-length': bytes.length } }, (res) => {
+      let s = ''; res.setEncoding('utf8'); res.on('data', (d) => { s += d; }); res.on('end', () => resolve(s));
+    });
+    req.on('error', reject);
+    req.write(bytes.subarray(0, cut));
+    setTimeout(() => req.end(bytes.subarray(cut)), 50);
+  });
+  assert.equal(dataOf(html).boards[0].answer, answer);
+});

@@ -631,6 +631,7 @@ if ((matchMedia('(max-width: 700px)').matches || document.body.classList.contain
 (() => {
 'use strict';
 const G = window.FLOORPLAN;
+G.boards ||= []; // a map built before kept boards has none
 // who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map
 const AGENT = (window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent) === 'codex'
   ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
@@ -1434,7 +1435,8 @@ function open(item) {
   closeSheet();
   go(item, { zoomFrom: item });
 }
-function up() { if (state.container === 'root') return; closeSheet(); const from = state.container; go(parentOf.get(from) || 'root', { select: from }); }
+// a kept board isn't on the overview, so up from one selects nothing there
+function up() { if (state.container === 'root') return; closeSheet(); const from = state.container; if (from.startsWith('b:')) return go('root'); go(parentOf.get(from) || 'root', { select: from }); }
 function reveal(item) {
   if (item === 'root') return go('root');
   const container = parentOf.get(item) || 'root';
@@ -1862,7 +1864,7 @@ async function loadCustomFlows() {
 }
 
 // Kept boards work the same way: boards.json next to the map when served, otherwise this browser. G.boards always
-// holds the built shape with live refs; the ones kept since the last build are marked `kept` so Export can send them.
+// holds the built shape with live refs (the ones kept since the last build are marked `kept`); Export sends all of them.
 const BOARDS_KEY = `boards:${G.project.name}`;
 const boardsApi = (method, body) => fetch('/api/boards', { method, headers: { 'content-type': 'application/json', 'x-floorplan-token': window.FLOORPLAN_SERVER.token }, ...(body ? { body: JSON.stringify(body) } : {}) }).then((r) => r.json());
 const toStoredBoard = (b) => ({ id: b.id, title: b.title, question: b.question, answer: b.answer, items: b.items.map((x) => ({ ref: stableRef(x.ref), note: x.note })), steps: b.steps.map((x) => ({ ref: stableRef(x.ref), note: x.note })) });

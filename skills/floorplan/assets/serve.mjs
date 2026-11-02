@@ -82,7 +82,8 @@ function exportMap(include, extraFlows = [], { embed = false, startView = 'root'
   if (!on.includes('health')) delete out.health;
   // dismissals made since the last build travel with the copy (the page applies them; no reasons, which are notes to self)
   else if (out.health) { const list = readDismissed().map(({ reason, ...d }) => d); if (list.length) out.health = { ...out.health, dismissed: list }; else delete out.health.dismissed; }
-  const json = JSON.stringify(out).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  // every < as \u003c (still valid JSON): text like `<!-- <script>` in an answer can't end or derail the script
+  const json = JSON.stringify(out).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   const slug = String(g.project?.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'floorplan';
   let page = html.slice(0, a + DATA_START.length) + json + html.slice(b);
   if (embed) page = page.replace(/<html\b/i, '<html data-embed');
@@ -112,7 +113,7 @@ if (has('export')) {
     if (stale) console.log('Boards or flows were saved after the map was last built, so they are not in this copy: run build.mjs, then export again.');
     const label = { flows: 'flows and the tour', boards: 'kept boards', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
     console.log(`Includes: the map${x.include.map((p) => ', ' + label[p]).join('')}. One file that opens in any browser, with no Ask bar.`);
-    if (x.embed) console.log(`Made for an iframe in your docs, e.g. <iframe src="${path.basename(file)}" style="width:100%;height:600px;border:0" title="Architecture map" loading="lazy" allowfullscreen></iframe>. The overview description is hidden to leave room for the map; add ?description=show to show it. Add #v=<part id> to open on one part, ?theme=light or dark to fix the colours.`);
+    if (x.embed) console.log(`Made for an iframe in your docs, e.g. <iframe src="${path.basename(file)}" style="width:100%;height:600px;border:0" title="Architecture map" loading="lazy" allowfullscreen></iframe>. The overview description is hidden to leave room for the map; add ?description=show to show it. Add #v=<part id> to open on one part, #b=<board id> to open on a kept board, ?theme=light or dark to fix the colours.`);
     if (x.include.includes('health') && !x.plan) console.log('It includes the health check: which endpoints are open and where secrets sit in the code (never their values). Share it only with people you trust.');
     process.exit(0);
   } catch (e) { console.error(`✗ Couldn't export the map: ${e.message}`); process.exit(1); }
@@ -251,16 +252,19 @@ const readFlows = () => { try { return JSON.parse(fs.readFileSync(flowsFile, 'ut
 const boardsFile = path.join(here, 'boards.json');
 const readBoards = () => { try { const l = JSON.parse(fs.readFileSync(boardsFile, 'utf8')).boards; return Array.isArray(l) ? l : []; } catch { return []; } };
 const clip = (v, n) => (typeof v === 'string' ? v : '').slice(0, n);
-const cleanRefs = (list, max) => list.slice(0, max).map((i) => ({ ref: clip(i?.ref, 300), note: clip(i?.note, 500) }));
+// cards and steps without a usable ref are dropped
+const cleanRefs = (list, max) => list.slice(0, max).map((i) => ({ ref: clip(i?.ref, 300), note: clip(i?.note, 500) })).filter((i) => i.ref);
 /** A board as the page sends it, checked and trimmed (text is kept as written; the page escapes it). null if it has no usable id or items.
  *  createdAt/updatedAt aren't needed: the server stamps them when it saves. */
 function cleanBoard(b) {
   if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
   if (typeof b.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(b.id)) return null;
   if (!Array.isArray(b.items) || (b.steps !== undefined && !Array.isArray(b.steps))) return null;
+  const items = cleanRefs(b.items, 30);
+  if (!items.length) return null;
   return {
     id: b.id, title: clip(b.title, 200), question: clip(b.question, 2000), answer: clip(b.answer, 8000),
-    items: cleanRefs(b.items, 30), steps: cleanRefs(b.steps || [], 60),
+    items, steps: cleanRefs(b.steps || [], 60),
     createdAt: clip(b.createdAt, 40), updatedAt: clip(b.updatedAt, 40),
   };
 }
@@ -586,6 +590,7 @@ const server = http.createServer((req, res) => {
       if (req.method === 'GET') return send(200, { boards: readBoards() });
       if (req.method === 'POST' || req.method === 'DELETE') {
         let raw = '', big = false;
+        req.setEncoding('utf8'); // a character split across two pieces of the body still decodes
         req.on('data', (d) => { raw += d; if (raw.length > 200000) { big = true; req.destroy(); } });
         req.on('end', () => {
           if (big) return;
@@ -664,6 +669,7 @@ const server = http.createServer((req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/cancel') { for (const c of running.values()) c.kill(); res.writeHead(204); return res.end(); }
     if (req.method === 'POST' && url.pathname === '/api/export') {
       let raw = '';
+      req.setEncoding('utf8');
       req.on('data', (d) => { raw += d; if (raw.length > 500000) req.destroy(); });
       req.on('end', () => {
         let body = {}; try { body = JSON.parse(raw); } catch {}

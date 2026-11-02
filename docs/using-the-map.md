@@ -88,9 +88,9 @@ You choose what goes in:
 - **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust;
 - **For a docs page**, off by default: a copy made to sit inside a page of your docs. Tick it to choose which part the map **Opens on** and whether to **Show project description**. Every part is still in the copy. See [Putting the map in your docs](embedding.md).
 
-The button exports your kept boards as the page has them, including any you updated or deleted since the last build. Kept boards in an exported copy open read-only, with no Keep, Update or delete.
+Kept boards carry their answer text into the copy. The button exports your kept boards as the page has them, including any you updated or deleted since the last build. Kept boards in an exported copy open read-only, with no Keep, Update or delete.
 
-Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan". To put the map inside your project's docs site, see [Putting the map in your docs](embedding.md).
+Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), plus the answers you kept, which can quote the code they explain, but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan". To put the map inside your project's docs site, see [Putting the map in your docs](embedding.md).
 
 ### Start here
 Replays the one-minute tour that runs the first time you open a map.

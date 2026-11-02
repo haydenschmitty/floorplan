@@ -77,6 +77,8 @@ test('a bad board changes nothing', async () => {
     await call('POST', { board: sample({ id: undefined }) }),
     await call('POST', { board: sample({ id: '../x' }) }),
     await call('POST', { board: sample({ items: 'nope' }) }),
+    await call('POST', { board: sample({ items: [] }) }),
+    await call('POST', { board: sample({ items: ['x'] }) }),
   ]) assert.equal(r.status, 400);
   assert.equal(fs.readFileSync(boardsFile(), 'utf8'), before);
   await call('DELETE', { id: 'how-refunds-work' });
@@ -350,4 +352,33 @@ test('a board on screen that loading finds deleted sends you to the overview', a
   early.ctx.state.container = 'b:gone'; // not drawn yet: the boot reads the address again instead
   await early.ctx.loadKeptBoards();
   assert.deepEqual(plain(early.went), []);
+});
+
+test('up from a kept board goes to the overview, selecting nothing', () => {
+  const html = page(), at = html.indexOf('\nfunction up() {') + 1;
+  const code = html.slice(at, html.indexOf('\n', at));
+  const calls = [];
+  const upFrom = (container) => {
+    calls.length = 0;
+    vm.runInNewContext(`${code}\nup();`, { state: { container }, closeSheet() {}, parentOf: new Map([['n:api', 'root']]), go: (...a) => calls.push(a) });
+    return calls;
+  };
+  assert.deepEqual(plain(upFrom('b:refunds')), [['root']]);
+  assert.deepEqual(plain(upFrom('n:api')), [['root', { select: 'n:api' }]], 'elsewhere up still selects where you came from');
+});
+
+test('a character split across two pieces of the request arrives whole', async () => {
+  const { request } = await import('node:http');
+  const bytes = Buffer.from(JSON.stringify({ board: sample({ id: 'accents', answer: 'Les remboursements: été, café, 返金 ✓' }) }));
+  const cut = bytes.indexOf(Buffer.from('é')) + 1; // inside the two bytes of é
+  const body = await new Promise((resolve, reject) => {
+    const req = request(base + '/api/boards', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': token, 'content-length': bytes.length } }, (res) => {
+      let s = ''; res.setEncoding('utf8'); res.on('data', (d) => { s += d; }); res.on('end', () => resolve(JSON.parse(s)));
+    });
+    req.on('error', reject);
+    req.write(bytes.subarray(0, cut));
+    setTimeout(() => req.end(bytes.subarray(cut)), 50);
+  });
+  assert.equal(body.boards.find((b) => b.id === 'accents').answer, 'Les remboursements: été, café, 返金 ✓');
+  await call('DELETE', { id: 'accents' });
 });

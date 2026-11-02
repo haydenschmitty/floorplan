@@ -41,6 +41,7 @@ test('--embed marks the copy, before anything is drawn, and keeps what an export
 test('--embed says how to put it in a docs page', () => {
   assert.match(printed, /<iframe src="docs-map\.html"[^>]*title="Architecture map" loading="lazy" allowfullscreen><\/iframe>/);
   assert.match(printed, /#v=<part id>/);
+  assert.match(printed, /#b=<board id>/);
   assert.match(printed, /\?theme=light or dark/);
 });
 
@@ -367,4 +368,28 @@ test('a board title with </script> still leaves a page that parses', () => {
   assert.ok(scripts.length >= 2);
   for (const code of scripts) assert.doesNotThrow(() => new Function(code));
   assert.equal(dataOf(embedded).boards[0].title, '</script><b>x');
+});
+
+test('an answer with <!-- <script> can’t blank the page: the data script holds no < at all', () => {
+  const r = shopApp();
+  try {
+    const answer = 'Look: <!-- <script> and </script> -->';
+    writeJson(path.join(r, 'floorplan', 'boards.json'), { boards: [{ id: 'html-ish', title: '<!--', question: 'Q', answer, items: [{ ref: 'n:api', note: '<script>' }], steps: [] }] });
+    scanAndBuild(r);
+    const out = execFileSync(process.execPath, [path.join(r, 'floorplan', 'serve.mjs'), '--export', path.join(r, 'copy.html')], { cwd: r, encoding: 'utf8' });
+    const served = fs.readFileSync(path.join(r, 'floorplan', 'index.html'), 'utf8');
+    const exported = fs.readFileSync(/Exported the map to (.+)/.exec(out)[1].trim(), 'utf8');
+    for (const html of [served, exported]) {
+      const at = html.indexOf('<script>window.FLOORPLAN = ');
+      const data = html.slice(at + 8, html.indexOf(';</script>', at));
+      assert.doesNotMatch(data, /<!--|<script/i);
+      assert.ok(!data.includes('<'), 'every < in the data is written as \\u003c');
+      for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) assert.doesNotThrow(() => new Function(m[1]));
+      const b = dataOf(html).boards[0];
+      assert.equal(b.answer, answer);
+      assert.equal(b.title, '<!--');
+      assert.equal(b.items[0].note, '<script>');
+    }
+    assert.equal(JSON.parse(fs.readFileSync(path.join(r, 'floorplan', 'graph.json'), 'utf8')).boards[0].answer, answer);
+  } finally { cleanup(r); }
 });

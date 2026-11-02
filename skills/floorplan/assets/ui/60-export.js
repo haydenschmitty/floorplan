@@ -116,7 +116,7 @@
             <label class="xp-opt"><input type="checkbox" data-xp-desc><div><b>Show project description</b><span>The short summary of what ${h(G.project.name)} is, at the top of the map.</span></div></label>
           </div>
         </div>
-        <p class="xp-note">It shows how ${h(G.project.name)} is put together: every part, file and endpoint, and the names of the functions inside, but not the code itself.</p>
+        <p class="xp-note">It shows how ${h(G.project.name)} is put together: every part, file and endpoint, and the names of the functions inside, plus the answers you kept, which can quote the code they explain. Otherwise it leaves the code itself out.</p>
         <div class="xp-err" hidden></div>`,
       actions: [{ label: 'Download', primary: true, icon: 'export', keepOpen: true, onClick: (close) => { download(m.el, close); } }],
     });
