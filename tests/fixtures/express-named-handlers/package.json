@@ -1,0 +1,1 @@
+{ "name": "express-named-handlers", "private": true, "type": "module", "dependencies": { "express": "^4.19.0" } }

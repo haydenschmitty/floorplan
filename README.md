@@ -14,10 +14,12 @@ Claude or Codex reads your codebase and draws an interactive map of it. Every pa
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/haydenschmitty/floorplan/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/haydenschmitty/floorplan/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.6.1-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.2-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Node 18+](https://img.shields.io/badge/node-%E2%89%A518-111?style=flat-square)](https://nodejs.org)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-111?style=flat-square)](#how-it-works)
+
+<a href="https://trendshift.io/repositories/322616"><img src="https://trendshift.io/api/badge/trendshift/repositories/322616/daily?language=JavaScript" alt="Floorplan on Trendshift" width="250" height="55"></a>
 
 **[Try the live demo](https://haydenschmitty.github.io/floorplan-demo/)** · [Watch the video](https://youtu.be/NTUUzC7L_NQ) · [Install](#install) · [Quick start](#quick-start) · [Compared](#floorplan-archify-or-understand-anything) · [Features](#features) · [See it in action](#see-it-in-action) · [How it works](#how-it-works) · [Docs](docs/README.md) · [FAQ](#faq)
 
@@ -329,6 +331,15 @@ Yes. Point it at a monorepo, a subfolder of one, or a plain folder that holds se
 
 Archify draws diagrams of anything, and Understand Anything builds a developer's knowledge graph of a codebase. Floorplan maps the app you built, in plain English, and tells you what's risky and what your AI just changed. See [Floorplan, Archify or Understand Anything?](#floorplan-archify-or-understand-anything)
 </details>
+
+## Star history
+
+<a href="https://star-history.com/#haydenschmitty/floorplan&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=haydenschmitty/floorplan&type=Date&theme=dark">
+    <img src="https://api.star-history.com/svg?repos=haydenschmitty/floorplan&type=Date" alt="Floorplan's GitHub stars over time" width="100%">
+  </picture>
+</a>
 
 ## Contributing
 

@@ -1,11 +1,11 @@
-# Floorplan 0.6.1: SHA-256 of every file the plugin runs from.
+# Floorplan 0.6.2: SHA-256 of every file the plugin runs from.
 # Check an installed copy: clone this release, then run node tools/checksums.mjs --check <installed folder>.
 43adc6c187150c4b0a4841f0e7448381401be93ee65e2d212be4e7eeb67bb3e4  .agents/plugins/marketplace.json
 fdce61be9c420fd16b8cbbff629baa37e8d1096094b3e90bc5ecc0fe1ffc3a78  .claude-plugin/icon.png
 98cd297588a52fc7715d29ad10636f3224ee7a99bfbb94230315493dabc7147c  .claude-plugin/marketplace.json
-7b27aee4483228ba9b90ef8a7e190b104edaca9a701892f4bfedb811816d1d1a  .claude-plugin/plugin.json
+a4fa6ea3141aca9ddd38d9f8d3d025a8975b8d2e27795449e2c3929df27026fc  .claude-plugin/plugin.json
 7bdb74d57875b25ca9dcd367f79f92b9089f5f4b873bffec898cc6c3f0a84a68  .codex-plugin/icon.png
-c18146dd7995ecb76bba35338e6a833ed6ad1b54090a3f74692f851d650a44ac  .codex-plugin/plugin.json
+c19b75d44d0030338e509f43d634fc0bcb6b828c8a3e140fafac5c9936e65ef5  .codex-plugin/plugin.json
 e1cdfc2a2f1ae41796c8eae54eed099f95d09d25f2ec521742d3ab7a8aba1337  package.json
 034dfc584f4b94bf767e7b9d2df6c16e454bfd1af445f20c0b815b5def9d5049  skills/floorplan/SKILL.md
 4dde86cace299094c246604badb73b605a10f47e01a72cc6746680788a7e20f9  skills/floorplan/agents/openai.yaml
@@ -43,7 +43,7 @@ bb02ef4b60dafb05a74eb2561f22a530b5b17935783bd88731c5bea5b6d57609  skills/floorpl
 2db69e2bc682c69ea2e1e760bb35badeb7fc035d3d788ee174d183e3128a2056  skills/floorplan/scripts/lib/claudemd.mjs
 2baec756cdc47fffa34d945eae7c5027c1c5b9d4cb300d38970f0247ebc4800b  skills/floorplan/scripts/lib/common.mjs
 47e7db0180395a95e2ec9a075d970f0e03c6210b0bd88b76ae067c9ccfcec7c9  skills/floorplan/scripts/lib/extract.mjs
-aa38a39b0acca7352da8a4425b40e5953b858d72b4980f3c1192c09f6614bb6f  skills/floorplan/scripts/lib/health.mjs
+42a40674db1fd06c0da4a1607ebbb1387bd851463942bbe6b607bb89b0e970f6  skills/floorplan/scripts/lib/health.mjs
 7076868899b30564d1754e708b9e1907137bd06804f573cf44468e43c4a76964  skills/floorplan/scripts/lib/names.mjs
 97837769b2eeebf4c39de2393822c76ab96666bc319d819dd025a0a426084d05  skills/floorplan/scripts/lib/resolve.mjs
 088406c7b94ebcdaf047e25b0357c4313be6692b9391299c5f31e53a0968a8d2  skills/floorplan/scripts/lib/routes.mjs
