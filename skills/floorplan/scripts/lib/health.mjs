@@ -345,9 +345,18 @@ function jsRoutes(src, f, out) {
       out.push(rec);
       return;
     }
-    // the route call's own arguments: router.post('/x', requireAuth, async (req, res) => …)
+    // the route call's own arguments before its handler: router.post('/x', requireAuth, async (req, res) => …),
+    // or router.post('/x', requireAuth, createOrder) where the last one is the handler
     const head = lines.slice(r.line - 1, r.line + 4).join('\n');
-    const args = (/\.\w+\(\s*["'`][^"'`]*["'`]\s*,([\s\S]*?)(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(head)?.[1] || '');
+    const call = /\.\w+\(\s*["'`][^"'`]*["'`]\s*,/.exec(head);
+    let args = '';
+    if (call) {
+      let depth = 1, j = call.index + call[0].length;
+      for (; j < head.length && depth; j++) { if (head[j] === '(') depth++; else if (head[j] === ')') depth--; }
+      const own = head.slice(call.index + call[0].length, depth ? j : j - 1);
+      const fn = /(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(own);
+      args = fn ? own.slice(0, fn.index) : own.slice(0, Math.max(0, own.lastIndexOf(',')));
+    }
     const mw = (args.match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isGuardName);
     const next = routes[idx + 1]?.line || r.line + 60;
     const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
