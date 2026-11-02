@@ -1,7 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.6.2 (2026-11-02)
 
+- **Far fewer false alarms in Health** (thanks to @samuelpullen15-droid, who reported 13 of them from one site with the new **Not a problem** button):
+  - **Feeds and files meant for everyone:** reading `rss.xml`, `atom.xml`, `llms.txt`, `ads.txt` and similar no longer counts as an open endpoint.
+  - **Addresses you publish yourself:** an endpoint listed in your `llms.txt`, or allowed in your `robots.txt`, is public on purpose. A catch-all route counts when something under it is listed, and a blocked or merely nearby address doesn't.
+  - **Responses marked for everyone:** a `Cache-Control: public` response is public on purpose, including when a helper it imports sets the header. So is a Next.js route with `force-static` or `revalidate`.
+  - **Nothing private to give:** a Next.js `GET` that reads no database, session, cookie or server secret, directly or through what it imports, is no longer reported. A rate limiter's Redis doesn't count, an import Floorplan can't follow does, and so does reading files on a route whose address the caller chooses.
+  - **Payload CMS:** the API routes Payload generates apply its own access rules, so they no longer read as "anyone could change data".
+  - **A "POST only" reply:** a handler that only answers 405 isn't an open endpoint or a way to send fake events.
+  - **Webhooks locked with a shared secret:** comparing against a secret from the environment, `timingSafeEqual`, and helpers like `isAuthorized()` or `verifyWebhookSecret()` now count as checks on Next.js routes.
+  - **A browser tracker's site token:** a token handed to a tracker's `<script>` tag is one every visitor already has. Names like `ACCESS_TOKEN` or `AUTH_TOKEN`, and real key formats, are still reported.
+  - **Files a tool opens by name:** a file whose comment says a tool reads it, or that it's generated, no longer looks unused.
+  - Endpoints that change data are still always checked, and "Not a problem" is still there for anything Health can't work out.
+- **FastAPI checks Health missed** (#7), fixed by @Bl0ck154: dependencies named like `metrics_guard`, a token in a `Header` parameter when the handler rejects a bad one, a Twilio-style signature check inside a helper, and `/readyz` and `/livez` as public health checks.
 - **Health reads each Express route's own checks:** a sign-in check in front of a handler defined elsewhere (`router.post('/books', requireAuth, createBook)`) was missed, so the endpoint was reported as open to anyone. The other way round, a route could borrow the check of the route below it, and a handler whose name sounds like a check (`updateUser`) was taken for one, so some open endpoints weren't reported. Fixed by @rudycelekli.
 
 ## 0.6.1 (2026-11-01)
