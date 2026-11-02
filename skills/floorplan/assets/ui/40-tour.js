@@ -161,6 +161,7 @@
   const maybeAuto = () => {
     if (auto) return;
     auto = true;
+    if (document.body.classList.contains('embedded')) return; // in a docs page the map must not move on its own as a reader scrolls to it; Start here still works
     if (SC.store.get(SEEN, false) || location.hash.length > 1) return;
     setTimeout(() => { if (!active() && !SC.state.flow && SC.state.container === 'root') start(); }, 700);
   };

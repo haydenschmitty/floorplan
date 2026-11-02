@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { shopApp, scanAndBuild, cleanup } from './helpers.mjs';
 
@@ -37,7 +38,7 @@ test('--embed marks the copy, before anything is drawn, and keeps what an export
 });
 
 test('--embed says how to put it in a docs page', () => {
-  assert.match(printed, /<iframe src="docs-map\.html"[^>]*title="Architecture map" allowfullscreen><\/iframe>/);
+  assert.match(printed, /<iframe src="docs-map\.html"[^>]*title="Architecture map" loading="lazy" allowfullscreen><\/iframe>/);
   assert.match(printed, /#v=<part id>/);
   assert.match(printed, /\?theme=light or dark/);
 });
@@ -192,7 +193,7 @@ test('#v= opens the part named by its id as written, with or without the n: pref
   const file = dataOf(embedded).files[0].p;
   const read = (hash) => {
     const parentOf = new Map([['n:api', 'root'], ['n:web', 'root'], ['f:' + file, 'n:api']]);
-    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf, EMBED: false, EXPORTED: null });
+    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf, drillable: () => true, EMBED: false, EXPORTED: null });
   };
   assert.equal(read('#v=api').v, 'n:api');
   assert.equal(read('#v=n:api').v, 'n:api');
@@ -224,7 +225,7 @@ test('a docs copy opens on the part chosen at export unless the address says oth
   const read = (hash, { embed = true, startView } = {}) => {
     const parentOf = new Map([['n:api', 'root'], ['n:web', 'root']]);
     const exported = startView === undefined ? { embed: true } : { embed: true, startView };
-    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf, EMBED: embed, EXPORTED: exported }).v;
+    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf, drillable: () => true, EMBED: embed, EXPORTED: exported }).v;
   };
   assert.equal(read('', { startView: 'n:api' }), 'n:api', 'no v: the saved part');
   assert.equal(read('#s=n:web', { startView: 'n:api' }), 'n:api');
@@ -258,7 +259,7 @@ test('the overview of a docs copy with a saved start view is written as v=root, 
   };
   const back = written('root', { startView: 'n:api' });
   assert.equal(back, '#v=root');
-  const read = (hash) => vm.runInNewContext(embedded.slice(rstart, rend) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf: new Map([['n:api', 'root']]), EMBED: true, EXPORTED: { embed: true, startView: 'n:api' } }).v;
+  const read = (hash) => vm.runInNewContext(embedded.slice(rstart, rend) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf: new Map([['n:api', 'root']]), drillable: () => true, EMBED: true, EXPORTED: { embed: true, startView: 'n:api' } }).v;
   assert.equal(read(back), 'root');
   assert.equal(written('n:api', { startView: 'n:api' }), '#v=n%3Aapi');
   assert.equal(written('root', {}), '/p', 'no saved start view: unchanged');
@@ -279,4 +280,83 @@ test('inside a docs page the saved panel preference does not reopen the details'
   assert.equal(panelClosed({ embed: true, closedEarly: false, saved: true }), false, 'embed with s=: open');
   assert.equal(panelClosed({ embed: false, closedEarly: false, saved: true }), false, 'ordinary page: saved open');
   assert.equal(panelClosed({ embed: false, closedEarly: false, saved: false }), true, 'ordinary page: saved closed');
+});
+
+// ---- final review fixes ----
+const tourSrc = fs.readFileSync(fileURLToPath(new URL('../skills/floorplan/assets/ui/40-tour.js', import.meta.url)), 'utf8');
+
+test('the first-visit tour does not start on its own inside a docs page, but does on an ordinary page', () => {
+  const code = tourSrc.slice(tourSrc.indexOf('let auto = false;'), tourSrc.indexOf('window.FloorplanTour'));
+  const run = (embedded) => {
+    let started = 0, timers = 0;
+    const ctx = {
+      SC: { store: { get: () => false, set() {} }, state: { layout: {}, container: 'root', flow: null }, on() {} },
+      SEEN: 'k', location: { hash: '' }, active: () => false, start: () => { started++; },
+      document: { body: { classList: { contains: (c) => embedded && c === 'embedded' } } },
+      setTimeout: (f) => { timers++; f(); },
+    };
+    vm.runInNewContext(code, ctx);
+    return started;
+  };
+  assert.equal(run(false), 1, 'an ordinary page still starts the tour');
+  assert.equal(run(true), 0, 'a docs page does not');
+});
+
+test('the Start here button still starts the tour in a docs page', () => {
+  assert.match(tourSrc, /onClick: \(\) => \(active\(\) \? end\(\) : start\(\)\)/);
+});
+
+test('a saved start view that cannot be opened falls back to the overview, but an explicit #v= keeps its behaviour', () => {
+  const start = embedded.indexOf('function readHash() {');
+  const end = embedded.indexOf('window.addEventListener', start);
+  const read = (hash) => {
+    const parentOf = new Map([['n:api', 'root'], ['n:svc', 'root']]);
+    const drillable = (id) => id === 'n:api';
+    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf, drillable, EMBED: true, EXPORTED: { embed: true, startView: 'n:svc' } }).v;
+  };
+  assert.equal(read(''), 'root', 'a saved external service or empty part opens the overview');
+  assert.equal(read('#v=svc'), 'n:svc', 'an explicit address is left alone');
+  const ok = vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash: '' }, URLSearchParams, parentOf: new Map([['n:api', 'root']]), drillable: () => true, EMBED: true, EXPORTED: { embed: true, startView: 'n:api' } }).v;
+  assert.equal(ok, 'n:api');
+});
+
+test('the full-screen new-tab fallback keeps the current view and selection', () => {
+  const at = embedded.indexOf('const openTab = () => {');
+  const code = embedded.slice(at, embedded.indexOf('\n  };', at) + 5);
+  const opened = (state) => {
+    let url;
+    vm.runInNewContext(code + '\nopenTab();', { state, URL, URLSearchParams, location: { href: 'https://docs.example/map.html' }, window: { floorplanTheme: { get: () => 'dark' }, open: (u) => { url = new URL(u); } } });
+    return url;
+  };
+  const a = opened({ container: 'n:api', selected: 'n:api.orders' });
+  assert.equal(new URLSearchParams(a.hash.slice(1)).get('v'), 'n:api');
+  assert.equal(new URLSearchParams(a.hash.slice(1)).get('s'), 'n:api.orders');
+  assert.equal(a.searchParams.get('theme'), 'dark');
+  const b = opened({ container: 'root', selected: null });
+  assert.equal(new URLSearchParams(b.hash.slice(1)).get('v'), 'root', 'v is always written, the new tab is not an embed');
+  assert.equal(new URLSearchParams(b.hash.slice(1)).get('s'), null);
+  const c = opened({ container: 'q:answer', selected: null });
+  assert.equal(new URLSearchParams(c.hash.slice(1)).get('v'), 'root', 'a transient answer view is not carried over');
+});
+
+test('inside a docs page the panel preference is not written to the docs site storage', () => {
+  const start = embedded.indexOf('const setPanel = (on) => {');
+  const end = embedded.indexOf('\n};', start) + 3;
+  const writes = (embed, phone) => {
+    const set = [];
+    const el = { setAttribute() {} };
+    const ctx = { document: { body: { classList: { contains: () => false, toggle() {} } } }, $: () => el, isPhone: () => phone, store: { set: (k, v) => set.push(k) },
+      fit() {}, keyboardUser: false, sheetReturn: null, panel: { focus() {}, contains: () => false }, EMBED: embed };
+    vm.runInNewContext(embedded.slice(start, end) + '\nsetPanel(true);', ctx);
+    return set;
+  };
+  assert.deepEqual(writes(true, false), []);
+  assert.deepEqual(writes(false, false), ['panel']);
+  assert.deepEqual(writes(false, true), []);
+});
+
+test('the CLI hint says the overview description is hidden and how to show it, with a lazy iframe', () => {
+  assert.match(printed, /loading="lazy"/);
+  assert.match(printed, /\?description=show/);
+  assert.match(printed, /description.*hidden|hidden.*description/i);
 });

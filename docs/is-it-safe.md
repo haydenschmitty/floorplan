@@ -8,7 +8,7 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **No MCP servers.** Floorplan has none, so it never starts a server that downloads its newest version with `npx`.
 - **No dependencies, no install scripts.** Nothing comes from npm, at install time or ever. Its `package.json` exists only to run the tests.
 - **Never downloads anything, and never runs code from the internet.** No `eval`, no loading code at run time, no encoded payloads.
-- **Never changes your code.** It writes only its own `floorplan/` folder and, in Claude Code and only if you say yes, a marked section of `CLAUDE.local.md`. See [What's in your project](project-files.md).
+- **Never changes your code.** It writes only its own `floorplan/` folder and, in Claude Code and only if you say yes, a marked section of `CLAUDE.local.md`. (An export is the one exception: it writes only the file you name, and its folder if needed.) See [What's in your project](project-files.md).
 - **No analytics or tracking.**
 
 ## Everything it does

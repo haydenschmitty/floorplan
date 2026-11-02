@@ -1383,7 +1383,7 @@ function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   let v = p.get('v'), s = p.get('s');
   // a docs copy opens on the part chosen at export when the address names none; an explicit #v= always wins
-  if (!v) v = EMBED && EXPORTED?.startView && parentOf.has(EXPORTED.startView) ? EXPORTED.startView : 'root';
+  if (!v) v = EMBED && EXPORTED?.startView && parentOf.has(EXPORTED.startView) && drillable(EXPORTED.startView) ? EXPORTED.startView : 'root'; // a saved part that opens a blank board (an outside service, an empty part) falls back to the overview
   // docs and the export hint say #v=<part id>; the viewer keys parts as n:<id>, so a bare id is promoted when it names a part
   if (v !== 'root' && !parentOf.has(v)) v = parentOf.has('n:' + v) ? 'n:' + v : 'root';
   if (s && !parentOf.has(s) && !s.startsWith('x:') && !s.startsWith('m:')) s = null;
@@ -2295,7 +2295,7 @@ const sheetRole = () => { if (isPhone()) { panel.setAttribute('role', 'dialog');
 phoneQuery.addEventListener('change', sheetRole); sheetRole();
 const setPanel = (on) => {
   const was = !document.body.classList.contains('no-panel'); document.body.classList.toggle('no-panel', !on); $('#btn-panel').setAttribute('aria-expanded', String(on));
-  if (!isPhone()) store.set('panel', on);
+  if (!isPhone() && !EMBED) store.set('panel', on); // in a docs page the iframe shares storage with the docs site
   if (was !== on && !isPhone()) fit(true);
   if (was !== on && isPhone()) {
     if (on && keyboardUser) { sheetReturn = document.activeElement; panel.focus({ preventScroll: true }); }
@@ -2423,6 +2423,11 @@ if (EMBED) {
   const openTab = () => {
     const u = new URL(location.href);
     u.searchParams.set('theme', window.floorplanTheme?.get() || 'auto');
+    // the saved start view isn't in the address, so say where this copy is now (v is always written: the new tab isn't an embed)
+    const hp = new URLSearchParams();
+    hp.set('v', state.container.startsWith('q:') ? 'root' : state.container);
+    if (typeof state.selected === 'string' && !state.container.startsWith('q:')) hp.set('s', state.selected);
+    u.hash = hp.toString();
     window.open(u.href, '_blank', 'noopener');
   };
   const btn = window.Floorplan.addHeaderButton({ id: 'btn-full', title: 'Full screen', svg: ENTER, onClick: () => {

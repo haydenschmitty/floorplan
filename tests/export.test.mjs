@@ -191,7 +191,7 @@ function pretendPage(graph) {
   const toasts = [];
   const win = { FLOORPLAN_SERVER: { token: 'tok' } };
   win.Floorplan = {
-    graph, h: escapeHtml, icons: {}, copy() {}, toast: (t) => toasts.push(t),
+    graph, h: escapeHtml, children: (id) => (graph.nodes.some((n) => 'n:' + n.id === id && n.kind === 'external') ? [] : [...graph.nodes.filter((n) => n.parent && 'n:' + n.parent === id).map((n) => 'n:' + n.id), ...(id === 'n:empty' ? [] : ['f:x'])]), icons: {}, copy() {}, toast: (t) => toasts.push(t),
     addHeaderButton: (b) => buttons.push(b),
     modal(opts) {
       // the controls the script looks up, found in the html it gave the dialog
@@ -200,7 +200,9 @@ function pretendPage(graph) {
       opts2.hidden = /data-xp-docs-opts[^>]*hidden/.test(opts.html);
       err.hidden = true;
       const content = [...opts.html.matchAll(/<input type="checkbox" data-xp="(\w+)"( checked)?>/g)].map((x) => ({ ...stub(!!x[2]), dataset: { xp: x[1] } }));
-      const by = { '[data-xp-docs]': docs, '[data-xp-start]': start, '[data-xp-desc]': desc, '[data-xp-docs-opts]': opts2, '.xp-err': err };
+      // a control exists only if the dialog's html really has it, so renaming an attribute breaks the test
+      const by = Object.fromEntries(Object.entries({ '[data-xp-docs]': docs, '[data-xp-start]': start, '[data-xp-desc]': desc, '[data-xp-docs-opts]': opts2, '.xp-err': err })
+        .filter(([sel]) => sel === '.xp-err' || opts.html.includes(sel.slice(1, -1))));
       const el = {
         querySelector: (sel) => by[sel] || null,
         querySelectorAll: (sel) => (sel === '[data-xp]' ? content : []),
@@ -235,6 +237,9 @@ const shopGraph = () => ({
     { id: 'api.orders.refunds', parent: 'api.orders', label: 'Refunds' },
     { id: 'api.x', parent: 'api', label: 'A <b>&"quoted"' },
     { id: 'jobs', parent: null, label: 'Orders' },
+    { id: 'pay', parent: null, label: 'Payments', kind: 'external' },
+    { id: 'empty', parent: null, label: 'Empty part' },
+    { id: 'pay.hook', parent: 'pay', label: 'Hook' },
   ],
 });
 const options = (html) => [...html.matchAll(/<option value="([^"]*)"( selected)?>(.*?)<\/option>/g)].map((x) => ({ value: x[1], selected: !!x[2], label: x[3] }));
@@ -254,7 +259,7 @@ test('the dialog hides the docs controls until “For a docs page” is ticked',
   assert.doesNotMatch(m.opts.html, /data-xp="docs"/, 'the docs box isn’t one of the content choices');
 });
 
-test('the starting-view list is Overview, then every part in tree order, labelled with where it sits and escaped', () => {
+test('the starting-view list is Overview, then every part that opens, in tree order, labelled with where it sits and escaped', () => {
   const m = pretendPage(shopGraph()).open();
   assert.deepEqual(options(m.opts.html), [
     { value: 'root', selected: true, label: 'Overview' },
@@ -264,6 +269,7 @@ test('the starting-view list is Overview, then every part in tree order, labelle
     { value: 'n:api.orders.refunds', selected: false, label: 'Server › Orders › Refunds' },
     { value: 'n:api.x', selected: false, label: 'Server › A &lt;b&gt;&amp;&quot;quoted&quot;' },
     { value: 'n:jobs', selected: false, label: 'Orders' },
+    { value: 'n:pay.hook', selected: false, label: 'Payments › Hook' }, // Payments itself is an outside service and Empty part has nothing in it: neither is offered
   ]);
   assert.doesNotMatch(m.opts.html, /<b>&"/);
 });

@@ -54,7 +54,9 @@ The path above works for a page at the root of the built site. For a nested page
 <iframe src="../map.html" style="width:100%;height:600px;border:0" title="Architecture map" loading="lazy" allowfullscreen></iframe>
 ```
 
-**Docusaurus.** Put the file in `static/`, and use `src="/map.html"` in an MDX page.
+The path above is for a page one folder down, such as `guide.md` (built as `guide/index.html`). Adjust it for the page's depth: a page at the top of the site uses `map.html`, and a nested page adds another `../`.
+
+**Docusaurus.** Put the file in `static/`, and use `src="/map.html"` in an MDX page. If the site has a `baseUrl` such as `/repo/`, the address must include it: write `src="/repo/map.html"`, or use `useBaseUrl('/map.html')` in MDX so it follows the setting.
 
 ## Open on one part, or one box
 

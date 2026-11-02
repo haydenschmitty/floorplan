@@ -104,7 +104,7 @@ if (has('export')) {
     console.log(`Exported the map to ${file}`);
     const label = { flows: 'flows and the tour', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
     console.log(`Includes: the map${x.include.map((p) => ', ' + label[p]).join('')}. One file that opens in any browser, with no Ask bar.`);
-    if (x.embed) console.log(`Made for an iframe in your docs, e.g. <iframe src="${path.basename(file)}" style="width:100%;height:600px;border:0" title="Architecture map" allowfullscreen></iframe>. Add #v=<part id> to open on one part, ?theme=light or dark to fix the colours.`);
+    if (x.embed) console.log(`Made for an iframe in your docs, e.g. <iframe src="${path.basename(file)}" style="width:100%;height:600px;border:0" title="Architecture map" loading="lazy" allowfullscreen></iframe>. The overview description is hidden to leave room for the map; add ?description=show to show it. Add #v=<part id> to open on one part, ?theme=light or dark to fix the colours.`);
     if (x.include.includes('health') && !x.plan) console.log('It includes the health check: which endpoints are open and where secrets sit in the code (never their values). Share it only with people you trust.');
     process.exit(0);
   } catch (e) { console.error(`✗ Couldn't export the map: ${e.message}`); process.exit(1); }

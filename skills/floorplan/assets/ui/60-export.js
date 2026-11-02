@@ -41,7 +41,7 @@
       : { id: 'health', label: 'Health check', hint: 'Lists the endpoints anyone can use and where secrets sit in the code (never their values). Only include it for people you trust.', on: false, warn: true, has: !!G.health?.issues?.length },
   ].filter((p) => p.has);
 
-  // where a docs copy can open: the overview, then every part (parents before their children), named by where it sits
+  // where a docs copy can open: the overview, then every part that opens (parents before their children), named by where it sits
   function startViews() {
     const kids = new Map();
     const ids = new Set(G.nodes.map((n) => n.id));
@@ -54,7 +54,8 @@
     const walk = (key, trail) => {
       for (const n of kids.get(key) || []) {
         const path = [...trail, n.label];
-        out.push({ value: 'n:' + n.id, label: path.join(' › ') });
+        // outside services and parts with nothing inside open a blank board, so they aren't offered; their openable children still are
+        if (SC.children('n:' + n.id).length > 0) out.push({ value: 'n:' + n.id, label: path.join(' › ') });
         walk(n.id, path);
       }
     };
@@ -95,7 +96,7 @@
     if (!S) {
       SC.modal({
         title: 'Export a copy',
-        html: `<p>Exporting needs the map’s server. Ask Claude or Codex to “export the floorplan”, or run this in the project folder:</p><pre>${h(CMD)}</pre>`,
+        html: `<p>Exporting needs the map’s server. Ask Claude or Codex to “export the floorplan”, or run this in the project folder:</p><pre>${h(CMD)}</pre><p>Add <code>--embed</code> to make a copy for a page of your docs.</p>`,
         actions: [{ label: 'Copy command', primary: true, icon: 'copy', onClick: () => { SC.copy(CMD); SC.toast('Copied'); } }],
       });
       return;
@@ -106,7 +107,7 @@
       html: `<p>One HTML file with the whole map, to send to anyone. It opens in any browser with nothing to install, and has no Ask bar.</p>
         ${parts.length ? `<div class="xp-opts">${parts.map((p) => `<label class="xp-opt${p.warn ? ' warn' : ''}"><input type="checkbox" data-xp="${p.id}"${p.on ? ' checked' : ''}><div><b>${h(p.label)}</b><span>${h(p.hint)}</span></div></label>`).join('')}</div>` : ''}
         <div class="xp-opts">
-          <label class="xp-opt"><input type="checkbox" data-xp-docs><div><b>For a docs page</b><span>Made to sit inside a page of your docs: it won’t take over the page’s back button or scrolling. The same copy as <code>--export --embed</code>.</span></div></label>
+          <label class="xp-opt"><input type="checkbox" data-xp-docs><div><b>For a docs page</b><span>Made to sit inside a page of your docs: it won’t take over the page’s back button or scrolling. Like <code>--export --embed</code>.</span></div></label>
           <div class="xp-docs" data-xp-docs-opts hidden>
             <label class="xp-field"><b>Opens on</b><select data-xp-start>${startViews().map((v) => `<option value="${h(v.value)}"${v.value === 'root' ? ' selected' : ''}>${h(v.label)}</option>`).join('')}</select></label>
             <label class="xp-opt"><input type="checkbox" data-xp-desc><div><b>Show project description</b><span>The short summary of what ${h(G.project.name)} is, at the top of the map.</span></div></label>
