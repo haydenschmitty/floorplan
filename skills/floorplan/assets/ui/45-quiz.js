@@ -141,9 +141,25 @@
 #quiz .ql button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
 #quiz .ql.n button { font-variant-numeric: tabular-nums; }
 #quiz .qlab { display: block; margin-top: 12px; font-size: 11.5px; color: var(--text-3); }
-#quiz .qlab + .ql, #quiz .qlab + select { margin-top: 4px; }
-#quiz select, #quiz .qa input { width: 100%; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: rgba(var(--ink), .05); color: var(--text); font: inherit; font-size: 13px; }
-#quiz select option { background: var(--surface); color: var(--text); }
+#quiz .qlab + .ql { margin-top: 4px; }
+#quiz .qa input { width: 100%; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: rgba(var(--ink), .05); color: var(--text); font: inherit; font-size: 13px; }
+#quiz .qpick { width: 100%; min-height: 44px; margin-top: 4px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; border: 0; border-radius: 12px; background: rgba(var(--ink), .05); color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: background .15s var(--ease); }
+#quiz .qpick:hover, #quiz .qpick[aria-expanded="true"] { background: rgba(var(--ink), .09); }
+#quiz .qpick span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#quiz .qpick svg { color: var(--text-3); flex: none; transition: transform .2s var(--ease); }
+#quiz .qpick[aria-expanded="true"] svg { transform: rotate(180deg); }
+/* solid, not see-through like menus over the canvas: it opens over the quiz's own buttons */
+#quiz-parts { position: fixed; z-index: 40; overflow: auto; overscroll-behavior: contain; min-width: 0; background: linear-gradient(var(--menu-solid), var(--menu-solid)), var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+#quiz-parts .mi { min-height: 44px; }
+#quiz-parts .mi .pn { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#quiz-parts .mi.top { font-weight: 600; }
+#quiz-parts .mi.sub { color: var(--text-2); }
+#quiz-parts .mi.d1 { padding-left: 26px; }
+#quiz-parts .mi.d2 { padding-left: 40px; }
+#quiz-parts .mi.d3 { padding-left: 54px; }
+#quiz-parts .mi.on { background: rgba(var(--ink), .08); color: var(--text); }
+#quiz-parts .mi.on .pn::after { content: " ✓"; color: var(--text-3); font-weight: 400; }
+#quiz-parts .mi:focus-visible { outline: none; background: rgba(var(--ink), .11); }
 #quiz .qgo { width: 100%; height: 44px; margin-top: 14px; justify-content: center; }
 #quiz .qor { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; font-size: 11.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; }
 #quiz .qor::before, #quiz .qor::after { content: ""; flex: 1; height: 1px; background: rgba(var(--ink), .12); }
@@ -215,20 +231,10 @@
     const counts = [...COUNTS.filter((c) => c && c < list.length), 0];
     const count = counts.includes(prefs.count) ? prefs.count : 0;
     const ask = canAsk(), n = count || list.length;
-    // a part is listed when it has questions, when new ones can be written, or when it's the one in use
-    const listed = (p) => ask || p.id === part || chosen('all', p.id).length;
-    const tally = (id) => { const c = chosen('all', id).length; return c ? ` · ${c}` : ''; };
-    const opt = (id, name) => `<option value="${h(id)}" ${id === part ? 'selected' : ''}>${h(name)}${id ? tally(id) : ''}</option>`;
-    // each main part is a group: the part as a whole first, then the parts inside it
-    const options = PARTS.map((p) => {
-      const sub = p.inside.filter(listed);
-      if (!sub.length) return listed(p) ? opt(p.id, p.name) : '';
-      return `<optgroup label="${h(p.name)}">${opt(p.id, `All of ${p.name}`)}${sub.map((s) => opt(s.id, s.name)).join('')}</optgroup>`;
-    }).join('');
     card.innerHTML = `${closeBtn}${kicker()}
       <div class="qt">Test yourself on ${h(part ? partName(part) : PROJECT)}</div>
-      <label class="qlab" for="quiz-part">Part of the app</label>
-      <select id="quiz-part" data-part>${opt('', 'The whole app')}${options}</select>
+      <span class="qlab" id="quiz-part-label">Part of the app</span>
+      <button type="button" class="qpick" data-part aria-haspopup="listbox" aria-expanded="false" aria-labelledby="quiz-part-label quiz-part-now"><span id="quiz-part-now">${h(part ? partName(part) : 'The whole app')}</span><svg class="i" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
       <span class="qlab">How deep</span>
       <div class="ql" role="radiogroup" aria-label="How deep">${LEVELS.map((l) => `<button role="radio" aria-checked="${l.id === level}" class="${l.id === level ? 'on' : ''}" data-level="${l.id}" title="${h(l.hint)}">${h(l.label)}</button>`).join('')}</div>
       ${counts.length > 1 ? `<span class="qlab">Questions</span>
@@ -238,7 +244,9 @@
       ${ask ? `<div class="qor">or</div>
       <form class="qa" data-topic><input name="t" maxlength="300" autocomplete="off" value="${h(draft)}" placeholder="Your own topic, e.g. sign-in" aria-label="Topic for new questions"><button class="btn soft" type="submit" title="${h(A.name)} writes new questions on this topic, or on the part and depth above if it's empty">${SC.iconI('spark')}Write</button></form>
       ${recent ? `<div class="qh">Or <button class="lnk" data-recent>quiz me on recent work</button>, to check you can explain what just changed.</div>` : ''}` : ''}`;
-    card.querySelector('[data-part]').onchange = (ev) => { picked = ev.target.value; render(); card.querySelector('[data-part]')?.focus(); };
+    const trigger = card.querySelector('[data-part]');
+    trigger.onclick = () => (partsOpen() ? closeParts() : openParts());
+    trigger.onkeydown = (ev) => { if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); openParts(); } };
     card.querySelectorAll('[data-level]').forEach((b) => b.onclick = () => { prefs.level = b.dataset.level; render(); });
     card.querySelectorAll('[data-count]').forEach((b) => b.onclick = () => { prefs.count = b.dataset.count; render(); });
     card.querySelector('[data-go]')?.addEventListener('click', startChosen);
@@ -255,7 +263,79 @@
     });
   }
 
+  // ---------- the part list: the map's own menu (glass, rows like the right-click menu), not the browser's ----------
+  const pop = document.createElement('div');
+  pop.id = 'quiz-parts';
+  pop.className = 'menu glass';
+  pop.setAttribute('role', 'listbox');
+  pop.setAttribute('aria-label', 'Part of the app');
+  document.body.appendChild(pop);
+  const partsOpen = () => pop.classList.contains('open');
+  const rows = () => [...pop.querySelectorAll('.mi')];
+  function closeParts(refocus = true) {
+    if (!partsOpen()) return;
+    pop.classList.remove('open');
+    const trigger = card.querySelector('[data-part]');
+    trigger?.setAttribute('aria-expanded', 'false');
+    if (refocus) trigger?.focus();
+  }
+  function openParts() {
+    const trigger = card.querySelector('[data-part]');
+    if (!trigger) return;
+    const part = scope(), ask = canAsk();
+    // a part is listed when it has questions, when new ones can be written, or when it's the one in use
+    const listed = (p) => ask || p.id === part || chosen('all', p.id).length;
+    const row = (id, name, cls) => {
+      const c = id ? chosen('all', id).length : pool.length;
+      return `<button type="button" class="mi ${cls}${id === part ? ' on' : ''}" role="option" aria-selected="${id === part}" data-id="${h(id)}"><span class="pn">${h(name)}</span>${c ? `<span class="hint">${c}</span>` : ''}</button>`;
+    };
+    // each main part, then the parts inside it, indented by how deep they sit
+    pop.innerHTML = row('', 'The whole app', 'top') + PARTS.map((p) => {
+      const sub = p.inside.filter(listed);
+      if (!listed(p) && !sub.length) return '';
+      return `<div class="mi-sep"></div>${row(p.id, p.name, 'top')}${sub.map((s) => {
+        const trail = s.name.split(' › ');
+        return row(s.id, trail[trail.length - 1], `sub d${Math.min(trail.length, 3)}`);
+      }).join('')}`;
+    }).join('');
+    // under the button, or over it when there's more room above; never off screen
+    const r = trigger.getBoundingClientRect(), below = innerHeight - r.bottom - 12, above = r.top - 12;
+    const up = below < 320 && above > below;
+    pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - Math.max(r.width, 260) - 8))}px`;
+    pop.style.width = `${Math.max(r.width, 260)}px`;
+    pop.style.maxHeight = `${Math.max(160, Math.min(420, up ? above : below))}px`;
+    pop.style.top = up ? '' : `${r.bottom + 6}px`;
+    pop.style.bottom = up ? `${innerHeight - r.top + 6}px` : '';
+    pop.style.transformOrigin = up ? 'bottom left' : 'top left';
+    pop.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+    const on = pop.querySelector('.mi.on') || rows()[0];
+    on?.focus();
+    on?.scrollIntoView({ block: 'nearest' });
+  }
+  pop.addEventListener('click', (ev) => {
+    const b = ev.target.closest('.mi');
+    if (!b) return;
+    picked = b.dataset.id;
+    closeParts(false);
+    render();
+    card.querySelector('[data-part]')?.focus();
+  });
+  pop.addEventListener('keydown', (ev) => {
+    const all = rows(), i = all.indexOf(document.activeElement);
+    const go = (k) => { ev.preventDefault(); all[Math.max(0, Math.min(all.length - 1, k))]?.focus(); };
+    if (ev.key === 'ArrowDown') go(i + 1);
+    else if (ev.key === 'ArrowUp') go(i - 1);
+    else if (ev.key === 'Home') go(0);
+    else if (ev.key === 'End') go(all.length - 1);
+    else if (ev.key === 'Escape' || ev.key === 'Tab') { ev.preventDefault(); ev.stopPropagation(); closeParts(); }
+  });
+  // a click anywhere else, or the window changing size, puts it away
+  document.addEventListener('pointerdown', (ev) => { if (partsOpen() && !pop.contains(ev.target) && !ev.target.closest?.('[data-part]')) closeParts(false); }, true);
+  window.addEventListener('resize', () => closeParts(false));
+
   function render() {
+    if (partsOpen()) closeParts(false);
     if (loading) {
       card.innerHTML = `${closeBtn}${kicker()}<div class="qt">${h(loading.label)}</div>
         <div class="qp"><span class="spin"></span><span>${h(loading.lines[loading.lines.length - 1])}</span></div>
@@ -357,6 +437,7 @@
     const wasLoading = !!loading;
     home = false; round = null; loading = null; failed = null;
     picked = null; draft = ''; // next time, start from what's in view again
+    closeParts(false);
     card.hidden = true;
     if (wasLoading) SC.cancelAgent();
     if (SC.state.container === 'root') SC.select(null);
@@ -448,11 +529,11 @@
   });
 
   // a menu the map has open (right-click, Flows, Filters) gets Esc first
-  const menuOpen = () => document.getElementById('ctxmenu')?.hidden === false || !!document.querySelector('#flowmenu.open, #legend.open');
+  const menuOpen = () => document.getElementById('ctxmenu')?.hidden === false || !!document.querySelector('#flowmenu.open, #legend.open, #quiz-parts.open');
   window.addEventListener('keydown', (ev) => {
     if (!active() || ['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName) || ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const stop = () => { ev.stopPropagation(); ev.preventDefault(); };
-    if (ev.key === 'Escape') { if (menuOpen()) return; stop(); close(); return; }
+    if (ev.key === 'Escape') { if (partsOpen()) { stop(); closeParts(); return; } if (menuOpen()) return; stop(); close(); return; }
     // Enter on a focused button or link is that control's own click, not "start" or "next"
     if (ev.key === 'Enter' && ev.target?.closest?.('button, a, [role="button"], [contenteditable="true"]')) return;
     if (home && ev.key === 'Enter' && chosen(prefs.level, scope()).length) { stop(); startChosen(); return; }
@@ -463,8 +544,9 @@
   }, true);
   // a guided flow or the tour takes over the canvas: step aside. On the start screen, moving around the
   // map or selecting a card changes what the quiz is about.
-  SC.on('render', () => { if (active() && (SC.state.flow || window.FloorplanTour?.active())) close(); else if (active() && home) render(); });
-  SC.on('panel', () => { if (active() && home) render(); });
+  // (not while the part list is open: it would snap shut under the person browsing it)
+  SC.on('render', () => { if (active() && (SC.state.flow || window.FloorplanTour?.active())) close(); else if (active() && home && !partsOpen()) render(); });
+  SC.on('panel', () => { if (active() && home && !partsOpen()) render(); });
 
   window.FloorplanQuiz = { open: openHome, start: startChosen, more, close, active, questions: pool, levelOf };
 })();
