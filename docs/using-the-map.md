@@ -87,7 +87,7 @@ You choose what goes in:
 - **Recent work**, off by default;
 - **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust.
 
-Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan".
+Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan". To put the map inside your project's docs site, see [Putting the map in your docs](embedding.md).
 
 ### Start here
 Replays the one-minute tour that runs the first time you open a map.

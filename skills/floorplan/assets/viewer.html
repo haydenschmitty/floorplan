@@ -9,7 +9,11 @@
   const KEY = 'floorplan-theme', root = document.documentElement, mq = matchMedia('(prefers-color-scheme: light)');
   let mem = 'auto';
   const valid = (v) => v === 'auto' || v === 'light' || v === 'dark';
-  const get = () => { try { const v = localStorage.getItem(KEY); if (valid(v)) return v; } catch (e) {} return mem; };
+  // ?theme=light|dark|auto in the address (a docs site embedding the map picks its colours) wins over the saved
+  // choice and is never saved: an iframe shares storage with the docs site and every other map embedded there
+  let fixed = null;
+  try { const t = new URLSearchParams(location.search).get('theme'); if (valid(t)) fixed = t; } catch (e) {}
+  const get = () => { if (fixed) return fixed; try { const v = localStorage.getItem(KEY); if (valid(v)) return v; } catch (e) {} return mem; };
   const apply = () => {
     const c = get();
     root.setAttribute('data-theme', c === 'auto' ? (mq.matches ? 'light' : 'dark') : c);
@@ -18,9 +22,16 @@
   apply();
   if (mq.addEventListener) mq.addEventListener('change', apply); else if (mq.addListener) mq.addListener(apply);
   addEventListener('storage', (e) => { if (e.key === KEY || e.key === null) apply(); }); // changed in another tab
+  // embedded in a docs page: the page around it can switch the colours live with
+  // iframe.contentWindow.postMessage({ floorplan: 'theme', theme: 'dark' }, '*')
+  addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== window.parent || e.source === window || !d || d.floorplan !== 'theme' || !valid(d.theme)) return;
+    fixed = d.theme; apply();
+  });
   window.floorplanTheme = { get, set: (c) => {
     if (!valid(c)) return;
-    mem = c; try { localStorage.setItem(KEY, c); } catch (e) {}
+    if (fixed) fixed = c; else { mem = c; try { localStorage.setItem(KEY, c); } catch (e) {} }
     root.classList.add('theme-switching'); apply();
     requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')));
   } };
@@ -323,6 +334,8 @@ body.resizing #panel-resize::after { background: rgba(var(--ink), .4); }
 body.resizing, body.resizing * { cursor: ew-resize !important; user-select: none; }
 body.resizing #panel, body.resizing #ask, body.resizing #flowbar { transition: none; }
 body.exported #ask { display: none; }
+body.embedded:not(.map-active) #svg { touch-action: pan-x pan-y; } /* in a docs page one finger scrolls the page until the map is tapped */
+body.embedded .xtag, body.embedded #madewith .x { display: none; }
 #madewith { position: absolute; left: calc((100% - var(--pw)) / 2); bottom: 20px; transform: translateX(-50%); z-index: 4; display: inline-flex; align-items: center; gap: 8px; padding: 8px 15px 8px 12px; border-radius: 999px; font-size: 12.5px; color: var(--text-3); text-decoration: none; white-space: nowrap; transition: left .45s var(--ease), color .15s var(--ease); }
 #madewith .mark { height: 13px; }
 #madewith b { color: var(--text); font-weight: 600; }
@@ -554,7 +567,8 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
 </style>
 </head>
 <body>
-<script>if (matchMedia('(max-width: 700px)').matches && !/[#&]s=/.test(location.hash)) document.body.classList.add('no-panel'); // a phone starts with the details closed, so the panel doesn't flash open and shut</script>
+<script>if (document.documentElement.hasAttribute('data-embed') && window.self !== window.top) document.body.classList.add('embedded'); // a copy made for a docs page (serve.mjs --export --embed), shown inside one; opened on its own it's an ordinary exported copy
+if ((matchMedia('(max-width: 700px)').matches || document.body.classList.contains('embedded')) && !/[#&]s=/.test(location.hash)) document.body.classList.add('no-panel'); // a phone, or a map inside a docs page, starts with the details closed, so the panel doesn't flash open and shut</script>
 <div id="stage">
   <svg id="svg" xmlns="http://www.w3.org/2000/svg"><g id="viewport"></g></svg>
   <div id="context"></div>
@@ -625,6 +639,9 @@ if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.
 const PLAN = !!G.meta.blueprint;
 // an exported copy (serve.mjs --export, or the Export button): read-only, for people without Claude or Codex
 const EXPORTED = G.meta.exported || null;
+// that copy, made with --embed and shown in an iframe in someone's docs: it mustn't take over the docs page's
+// back button or scroll wheel, and starts with the details closed (set before anything is drawn, under <body>)
+const EMBED = document.body.classList.contains('embedded');
 if (typeof ELK === 'undefined') { document.body.innerHTML = '<p style="padding:2rem">Could not load the ELK layout engine. Rebuild the map with build.mjs.</p>'; return; }
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -1271,7 +1288,22 @@ function zoomBy(f, cx, cy) {
   setT({ k, x: cx - (cx - state.t.x) * (k / state.t.k), y: cy - (cy - state.t.y) * (k / state.t.k) }, false);
 }
 // wheel/pinch zooms around the cursor; two-finger trackpad scroll pans
+// in a docs page the scroll wheel belongs to the page, so readers can scroll past the map: it zooms with a pinch or
+// Ctrl/⌘ + scroll, or with any scroll once it's been clicked, until the mouse leaves it. One finger on a touch
+// screen scrolls the page (touch-action in the CSS) until the map is tapped.
+let mapActive = !EMBED, hintAt = 0;
+const activateMap = (on) => { if (!EMBED) return; mapActive = on; document.body.classList.toggle('map-active', on); };
+if (EMBED) {
+  svg.addEventListener('pointerdown', (ev) => { if (ev.pointerType !== 'touch') activateMap(true); }, true);
+  svg.addEventListener('click', () => activateMap(true), true); // a tap: the next gesture moves the map
+  document.documentElement.addEventListener('mouseleave', () => activateMap(false));
+  window.addEventListener('blur', () => activateMap(false));
+}
 svg.addEventListener('wheel', (ev) => {
+  if (!mapActive && !ev.ctrlKey && !ev.metaKey) {
+    if (Date.now() - hintAt > 4000) { hintAt = Date.now(); toast(`Click the map, or hold ${/Mac|iP(hone|ad)/.test(navigator.platform) ? '⌘' : 'Ctrl'} while scrolling, to zoom`); }
+    return; // not preventDefault: the page around the map scrolls
+  }
   ev.preventDefault();
   const r = stageRect();
   const trackpadPan = !ev.ctrlKey && ev.deltaMode === 0 && (Math.abs(ev.deltaX) > 0 || Math.abs(ev.deltaY) < 40);
@@ -1342,7 +1374,8 @@ function setHash(container, sel) {
   if (container !== 'root') p.set('v', container);
   if (sel && typeof sel === 'string') p.set('s', sel);
   const s = p.toString();
-  try { if (location.hash.slice(1) !== s) history.pushState(null, '', s ? '#' + s : location.pathname + location.search); } catch {}
+  // in a docs page each click would be a step for the page's back button, so the address is updated in place
+  try { if (location.hash.slice(1) !== s) history[EMBED ? 'replaceState' : 'pushState'](null, '', s ? '#' + s : location.pathname + location.search); } catch {}
 }
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
@@ -1409,6 +1442,7 @@ function select(sel) {
   custom.panel = null; state.selected = sel; if (typeof sel === 'string' || sel === null) setHash(state.container, sel); applySelection(); renderPanel();
   // on a phone, tapping a box shows its details: open the sheet, then bring the box into the part of the screen the sheet leaves free
   if (sel && isPhone() && document.body.classList.contains('no-panel')) { setPanel(true); if (typeof sel === 'string') bringIntoView(sel); }
+  else if (sel && EMBED && document.body.classList.contains('no-panel')) setPanel(true); // in a docs page the details start closed; clicking a box opens them
 }
 function applySelection() {
   const sel = state.selected;
@@ -2374,6 +2408,36 @@ window.Floorplan = Object.freeze({
   on(event, fn) { (ext.listeners[event] ||= []).push(fn); },
 });
 technicalFlag = !!store.get('technical', false);
+// in a docs page the map is small. Full screen fills the screen with this same page, so the view and the colours
+// stay, and Esc or the same button brings it back (the docs page's iframe needs allowfullscreen). Where full screen
+// isn't allowed, the copy opens in a tab of its own, at the same place and in the same colours.
+if (EMBED) {
+  const ENTER = '<path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/>', EXIT = '<path d="M20 10h-6V4M14 10l7-7M4 14h6v6M10 14l-7 7"/>';
+  const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const openTab = () => {
+    const u = new URL(location.href);
+    u.searchParams.set('theme', window.floorplanTheme?.get() || 'auto');
+    window.open(u.href, '_blank', 'noopener');
+  };
+  const btn = window.Floorplan.addHeaderButton({ id: 'btn-full', title: 'Full screen', svg: ENTER, onClick: () => {
+    if (isFull()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+    const el = document.documentElement, enter = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled) || !enter) { openTab(); return; }
+    try { Promise.resolve(enter.call(el)).catch(openTab); } catch { openTab(); }
+  } });
+  btn.setAttribute('aria-label', 'Full screen');
+  const onFull = () => {
+    const on = isFull();
+    btn.title = on ? 'Exit full screen (Esc)' : 'Full screen';
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.querySelector('svg').innerHTML = on ? EXIT : ENTER;
+    document.body.classList.toggle('fullscreen', on);
+    activateMap(on); // full screen, the map has the whole screen: the scroll wheel zooms it
+  };
+  document.addEventListener('fullscreenchange', onFull);
+  document.addEventListener('webkitfullscreenchange', onFull);
+}
 
 const init = readHash();
 state.container = init.v; state.selected = init.s;

@@ -100,7 +100,8 @@ function startUp({ phone, hash = '' }) {
   vm.runInNewContext(script, {
     matchMedia: (q) => ({ matches: phone && q.includes('max-width: 700px') }),
     location: { hash },
-    document: { body: { classList: { add: (c) => classes.add(c) } } },
+    window: { self: 1, top: 1 },
+    document: { documentElement: { hasAttribute: () => false }, body: { classList: { add: (c) => classes.add(c), contains: (c) => classes.has(c) } } },
   });
   return classes;
 }

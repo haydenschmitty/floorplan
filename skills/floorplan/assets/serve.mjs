@@ -6,6 +6,7 @@
 //                                 [--no-open] [--idle-exit <minutes>]
 //        node floorplan/serve.mjs --stop
 //        node floorplan/serve.mjs --export [<file>] [--include flows,notes,recent,health]   (a copy to share; default flows,notes)
+//                                 [--embed]   (made to sit in an iframe in a docs site: see docs/embedding.md)
 //
 // The server listens on 127.0.0.1 only. Each question runs in the codebase root, on your own account:
 // `claude -p` with read-only tools (Read, Grep, Glob, and Bash limited to floorplan/query.mjs), or
@@ -48,10 +49,12 @@ const cleanDismissal = (d) => ({
 // ---------- export: a copy of the map to share ----------
 // The same self-contained page, marked as exported: no Ask bar, no requests for Claude or Codex, no links into
 // this computer, and only the extras asked for. Used by the map's Export button and by --export.
+// `embed` marks it for an iframe in someone's docs (<html data-embed>, read before anything is drawn): the
+// details start closed, the page's scroll wheel isn't taken over, and clicks don't fill the docs' back button.
 const EXPORT_PARTS = ['flows', 'notes', 'recent', 'health'];
 const EXPORT_DEFAULT = ['flows', 'notes'];
 const DATA_START = '<script>window.FLOORPLAN = ';
-function exportMap(include, extraFlows = []) {
+function exportMap(include, extraFlows = [], { embed = false } = {}) {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
   const a = html.indexOf(DATA_START), b = html.indexOf(';</script>', a);
   if (a < 0 || b < 0) throw Object.assign(new Error('This map is too old to export. Ask Claude or Codex to update the floorplan first.'), { plain: true });
@@ -60,7 +63,7 @@ function exportMap(include, extraFlows = []) {
   const out = {
     ...g,
     // the remote can carry a sign-in token; the folder path is this computer's
-    meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on } },
+    meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on, ...(embed ? { embed: true } : {}) } },
     flows: on.includes('flows') ? [...g.flows, ...extraFlows.filter((f) => !g.flows.some((x) => x.id === f.id))] : [],
     tour: on.includes('flows') ? g.tour : [],
     files: on.includes('notes') ? g.files : g.files.map(({ note, ...f }) => f),
@@ -71,7 +74,9 @@ function exportMap(include, extraFlows = []) {
   else if (out.health) { const list = readDismissed().map(({ reason, ...d }) => d); if (list.length) out.health = { ...out.health, dismissed: list }; else delete out.health.dismissed; }
   const json = JSON.stringify(out).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   const slug = String(g.project?.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'floorplan';
-  return { html: html.slice(0, a + DATA_START.length) + json + html.slice(b), name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint };
+  let page = html.slice(0, a + DATA_START.length) + json + html.slice(b);
+  if (embed) page = page.replace(/<html\b/i, '<html data-embed');
+  return { html: page, name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint, embed };
 }
 /** Flows requested from the map since it was last built, as the page sends them: checked and trimmed. */
 const cleanFlows = (list) => (Array.isArray(list) ? list : []).slice(0, 50)
@@ -85,12 +90,14 @@ if (has('export')) {
   const dest = opt('export');
   const include = String(opt('include', EXPORT_DEFAULT.join(','))).split(',').map((s) => s.trim().toLowerCase());
   try {
-    const x = exportMap(include);
+    const x = exportMap(include, [], { embed: has('embed') });
     const file = path.resolve(dest && !dest.startsWith('--') ? dest : path.join(here, x.name));
+    fs.mkdirSync(path.dirname(file), { recursive: true }); // e.g. docs/_static/ in a docs site that has none yet
     fs.writeFileSync(file, x.html);
     console.log(`Exported the map to ${file}`);
     const label = { flows: 'flows and the tour', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
     console.log(`Includes: the map${x.include.map((p) => ', ' + label[p]).join('')}. One file that opens in any browser, with no Ask bar.`);
+    if (x.embed) console.log(`Made for an iframe in your docs, e.g. <iframe src="${path.basename(file)}" style="width:100%;height:600px;border:0" title="Architecture map" allowfullscreen></iframe>. Add #v=<part id> to open on one part, ?theme=light or dark to fix the colours.`);
     if (x.include.includes('health') && !x.plan) console.log('It includes the health check: which endpoints are open and where secrets sit in the code (never their values). Share it only with people you trust.');
     process.exit(0);
   } catch (e) { console.error(`✗ Couldn't export the map: ${e.message}`); process.exit(1); }

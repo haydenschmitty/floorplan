@@ -153,6 +153,8 @@ node floorplan/serve.mjs --export [<file>] [--include flows,notes,recent,health]
 
 It writes `floorplan/<project>-map.html` unless given a file. `--include` defaults to `flows,notes` (flows and the tour, notes pinned to files); `recent` adds recent work and `health` adds the health check, or the design review on a blueprint. Leave health out unless the user asks for it, and if they do, say that it lists the endpoints anyone can use and where secrets sit in the code (never their values), so they should only send it to people they trust. Any export shows how the app fits together (every part, file and endpoint, with names and descriptions), but not the source code.
 
+When the map is going into the project's documentation (Read the Docs, Sphinx, MkDocs, Docusaurus, a docs folder), add `--embed` and write the file where the docs keep static files (e.g. `docs/_static/map.html`). An embedded copy sits in an `<iframe>`: it starts with the details closed, leaves the page's scroll wheel and back button alone, and has a **Full screen** button (Esc leaves it), which needs `allowfullscreen` on the `<iframe>`. The command prints an `<iframe>` line to paste into the page; `#v=<part id>` opens it on one part, and `?theme=light` or `?theme=dark` fixes its colours. Docs sites are often public, so be firmer about leaving health out. [docs/embedding.md](https://github.com/haydenschmitty/floorplan/blob/main/docs/embedding.md) has the snippets for each docs tool.
+
 ### What else the map gives them (automatic)
 
 - **Health.** A header button, with a count of important issues, opens a plain-language list of problems the scan found:
