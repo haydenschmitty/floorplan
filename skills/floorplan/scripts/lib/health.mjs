@@ -125,6 +125,20 @@ function valueLooksReal(v, name) {
 // beacon (data-cf-beacon='{"token":"…"}') and Mapbox public tokens (pk.…)
 const PUBLIC_TOKEN_LINE = /data-cf-beacon|cloudflareinsights\.com/i;
 const PUBLIC_TOKEN_VALUE = /^pk\.[\w-]{20,}\.[\w-]{10,}$/;
+// A site token handed to a browser tracker's script: the script reads it from the page, so every visitor has it.
+// Names that say more than "token" (access, auth, secret…) and real key formats are never excused this way.
+const SCRIPT_TAG = /<script\b|createElement\(\s*['"]script['"]\s*\)/i;
+const TRACKER_FILE = /analytics|tracker|tracking|beacon|pixel|telemetry/i;
+const NOT_SITE_TOKEN = /secret|passw|private|access|refresh|auth|bearer|api_?key|signing/i;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function trackerToken(name, value, src, file) {
+  const n = snake(name);
+  if (!/token$/.test(n) || NOT_SITE_TOKEN.test(n) || !SCRIPT_TAG.test(src)) return false;
+  if (TRACKER_FILE.test(file.split('/').pop())) return true;
+  const id = escapeRe(name), val = escapeRe(value);
+  return new RegExp('<script\\b[^>]*\\bdata-[\\w-]+\\s*=\\s*(?:\\{\\s*' + id + '\\s*\\}|["\'`]' + val + ')', 'i').test(src)
+    || new RegExp('dataset\\.\\w+\\s*=\\s*' + id + '\\b|setAttribute\\(\\s*[\'"]data-[\\w-]+[\'"]\\s*,\\s*' + id + '\\b').test(src);
+}
 
 /** 1-based line numbers inside docstrings or block comments (examples there aren't real config). */
 function docLines(src, lang) {
@@ -186,6 +200,7 @@ function findSecrets(src, f, out) {
     for (const [name, value] of pairs) {
       const n = snake(name.split('.').pop());
       if (!SECRET_NAME.test(n) || PUBLIC_NAME.test(n) || PUBLIC_TOKEN_VALUE.test(value) || !valueLooksReal(value, n)) continue;
+      if (trackerToken(name.split('.').pop(), value, src, f.path)) continue;
       if (throwawayDb && /^(postgres|mysql|mariadb|mongo(_initdb_root)?|redis|pg|rabbitmq_default|db|database)_(root_)?(password|pass|pwd)$/.test(n)) continue;
       add(i + 1, { what: kindFromName(name), name: name.split('.').pop(), sev: 'high', hint: mask(value, PASSWORD_NAME.test(n)), generic: true });
     }
@@ -195,7 +210,7 @@ function findSecrets(src, f, out) {
 // ---------- 2. who may call each endpoint ----------
 
 // Decorators / middleware / dependencies whose names say "check who is calling".
-const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
+const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^guard(?:_|$)|_guard$|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
 const isGuardName = (name) => !!name && !NOT_GUARD.test(name) && GUARD_NAME.test(snake(name));
 // FastAPI dependencies that hand over a database session rather than check the caller
@@ -204,10 +219,39 @@ const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_ses
 const isDbDep = (name) => DB_DEPENDENCY.test(snake(name));
 const isGuardDep = (name) => isGuardName(name) && !isDbDep(name);
 // A handler body that inspects the caller itself.
-const INLINE_CHECK = /request\.headers(?:\.get)?\(?\s*\[?\s*['"](authorization|x-api-key|x-[\w-]*(token|key|secret|signature)[\w-]*)['"]|req\.headers(?:\.|\[\s*['"])(authorization|x-api-key)|\b(verify|check|require|validate|authenticate|authorize)_?\w*(auth|token|session|user|key|signature|webhook|hmac|jwt|device|staff|admin|permission|role|request|caller)\w*\s*\(|\bcurrent_user\b|get_jwt_identity|verify_jwt_in_request|compare_digest|abort\(\s*40[13]\b|,\s*40[13]\s*\)?\s*$|status(?:Code)?\s*[:=(]\s*40[13]\b|\.status\(\s*40[13]\s*\)|req\.user\b|req\.session\.user|req\.auth\b|jwt\.verify|jwtVerify|getServerSession|auth\(\)|currentUser\(|getAuth\(|auth\.getUser|getSession\(|verifyIdToken|getToken\(/m;
+const INLINE_CHECK = /request\.headers(?:\.get)?\(?\s*\[?\s*['"](authorization|x-api-key|x-[\w-]*(token|key|secret|signature)[\w-]*)['"]|req\.headers(?:\.|\[\s*['"])(authorization|x-api-key)|\b(verify|check|require|validate|authenticate|authorize)_?\w*(auth|token|session|user|key|signature|webhook|hmac|jwt|device|staff|admin|permission|role|request|caller)\w*\s*\(|\bcurrent_user\b|get_jwt_identity|verify_jwt_in_request|compare_digest|abort\(\s*40[13]\b|,\s*40[13]\s*\)?\s*$|status(?:Code)?\s*[:=(]\s*40[13]\b|\.status\(\s*40[13]\s*\)|req\.user\b|req\.session\.user|req\.auth\b|jwt\.verify|jwtVerify|getServerSession|auth\(\)|currentUser\(|getAuth\(|auth\.getUser|getSession\(|verifyIdToken|getToken\(|\b(?:verify|check|require|validate|authenticate|authorize)\w*(?:Auth|Token|Session|Signature|Webhook|Hmac|Jwt|Secret|Permission|Role)\w*\s*\(|\bis_?(?:[Vv]alid_?)?(?:[Aa]uthorized|[Aa]uthenticated|[Ss]ignature|[Tt]oken|[Ss]ecret|[Aa]pi_?[Kk]ey)\w*\s*\(|timingSafeEqual|safeCompare|[!=]==?\s*(?:[`'"]Bearer\s+\$\{\s*)?process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)|process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)\w*\s*[!=]==?/m;
+// A Header parameter alone is NOT authentication. Count it only when the
+// handler checks that token and rejects a bad value with HTTP 401/403.
+function pyValidatedHeader(sig, body) {
+  const names = [...sig.matchAll(/\b([A-Za-z_]\w*(?:token|key|signature)\w*)\s*:\s*[^,\n]*=\s*Header\s*\(/g)]
+    .map((m) => m[1]);
+  if (!names.length || !/raise\s+HTTPException\s*\(\s*status_code\s*=\s*40[13]\b/.test(body)) return false;
+  return names.some((name) => new RegExp('\\bif\\s+(?:not\\s+)?' + name + '\\b').test(body));
+}
+
 const FIREBASE_CHECK = /\b\w+\.auth\b(?!\s*\()|HttpsError\(\s*["'](unauthenticated|permission-denied)["']|enforceAppCheck\s*:\s*true|\b\w+\.app\b\s*(==|!=|===|!==)\s*(undefined|null)|!\s*\w+\.app\b/;
 const SIGNATURE_CHECK =/hmac|signature|verify_?webhook|construct_?event|x-hub-signature|compare_digest|svix|webhooks?\.verify|jwt\.decode|oidc|id_token|authenticated|verify_\w*(token|request|push)/i;
 const NEXT_GUARD = /getServerSession|\bauth\(\)|currentUser\(|getAuth\(|auth\.getUser|supabase\.auth\.get(User|Session)|getSession\(|verifyIdToken|jwt\.verify|jwtVerify|getToken\(|clerkClient|requireAuth|requireUser|withAuth|validateRequest|headers\(\)\.get\(\s*['"]authorization|status:\s*40[13]\b/;
+// A response marked to be stored and served to everyone can't hold one caller's data.
+const PUBLIC_RESPONSE = /cache-control['"]?\]?\s*[:,=]\s*[`'"f]*[^`'"\n]*\b(?:public|s-maxage)\b/i;
+const PRIVATE_RESPONSE = /cache-control['"]?\]?\s*[:,=]\s*[`'"f]*[^`'"\n]*\b(?:private|no-store)\b/i;
+const NEXT_STATIC = /\bdynamic\s*=\s*['"]force-static['"]|export\s+const\s+revalidate\s*=\s*[1-9]/;
+// API routes from a library that checks access itself: Payload CMS generates these and applies its collections' access rules
+const SELF_CHECKING_ROUTES = /from\s+['"]@payloadcms\/next\/routes['"]/;
+// Where a Next.js GET could get something worth protecting from: a data store, the caller's session, or a server-side secret
+const READS_PRIVATE = /\b(?:prisma\w*|drizzle\w*|mongoose|mongodb|sequelize|typeorm|knex|kysely|supabase|firestore|firebase-admin|firebase\/\w+|dynamodb|redis|upstash|postgres|pg|mysql2?|sqlite3?|payload\w*|neon|turso|libsql)\b|\bdb\s*[.(]|\bdatabase\s*\.|\.(?:findMany|findUnique|findFirst|findOne|findAll|query|execute)\s*\(|\bcookies\s*\(|\bgetServerSession\b|\.session\b|\breq(?:uest)?\.(?:user|auth)\b|process\.env\.(?!NEXT_PUBLIC_|NODE_ENV\b|VERCEL|PUBLIC_|SITE_URL\b|BASE_URL\b|APP_URL\b)\w+/i;
+const READS_FILES = /\b(?:readFile(?:Sync)?|createReadStream|readdir(?:Sync)?)\b/;
+// Helpers around a route that don't feed what it returns
+const NOT_ITS_DATA = /(^|\/)[^/]*(rate-?limit|limiter|logger|logging|metrics|telemetry|sentry|analytics)[^/]*$/i;
+const METHOD_NOT_ALLOWED = /status(?:Code)?\s*[:=(]\s*405\b|\.status\(\s*405\b|\bmethodNotAllowed\b/i;
+/** The code of one exported handler in a Next.js route file. */
+function nextHandler(src, method) {
+  const m = new RegExp('^[ \\t]*export\\s+(?:async\\s+)?(?:function|const)\\s+' + method + '\\b', 'm').exec(src);
+  if (!m) return '';
+  const rest = src.slice(m.index + m[0].length);
+  const end = rest.search(/^[ \t]*export\s/m);
+  return end < 0 ? rest : rest.slice(0, end);
+}
 const NEXT_MIDDLEWARE_GUARD = /getToken|withAuth|clerkMiddleware|authMiddleware|auth\(|supabase|getSession|jwtVerify|jwt\.verify|cookies\.get\([^)]*(session|token|auth)|redirect\([^)]*login/i;
 
 function blockAfter(lines, defIdx) {
@@ -255,6 +299,17 @@ function pyRoutes(src, f, out) {
       if (deps.length || types.length) out.push({ k: 'py-dep-fn', name: m[1], ...(deps.length ? { deps } : {}), ...(types.length ? { types } : {}) });
     }
   }
+  // Only treat a helper as a verifier if its body visibly checks the
+  // provider signature and rejects an invalid request. A helper name alone
+  // (validated_sender, for example) is not proof of authentication.
+  for (const m of src.matchAll(/^(?:async\s+)?def\s+(\w+)\s*\(/gm)) {
+    const idx = lineAt(m.index);
+    const body = blockAfter(lines, idx);
+    if (/\bRequestValidator\s*\(/.test(body) && /\.validate\s*\(/.test(body) &&
+        /raise\s+HTTPException\s*\(\s*status_code\s*=\s*40[13]\b/.test(body)) {
+      out.push({ k: 'py-verified-helper', name: m[1], line: idx + 1 });
+    }
+  }
   // Decorators defined here: auth-named ones, and project wrappers like `@endpoint(write=True)` whose
   // body applies an auth decorator itself. Repeat once so a wrapper of a wrapper counts too.
   const localGuards = new Set();
@@ -292,6 +347,7 @@ function pyRoutes(src, f, out) {
     else if (guardedVars.has(r.var)) Object.assign(rec, { guard: guardedVars.get(r.var), via: 'blueprint' });
     else if (deps.some(isGuardDep)) Object.assign(rec, { guard: deps.find(isGuardDep), via: 'dependency' });
     else if (INLINE_CHECK.test(body)) Object.assign(rec, { via: 'inline' });
+    else if (pyValidatedHeader(sig, body)) Object.assign(rec, { via: 'inline' });
     else {
       const misplaced = above.find((d) => isGuardName(d) && !/^(route|get|post|put|patch|delete)$/.test(d));
       if (misplaced) rec.misplaced = misplaced;
@@ -302,7 +358,9 @@ function pyRoutes(src, f, out) {
       const types = typesIn(sig);
       if (types.length) rec.types = types;
     }
+    if (body) rec.calls = [...new Set([...body.matchAll(/\b(?:await\s+)?([A-Za-z_]\w*)\s*\(/g)].map((m) => m[1]))];
     if (SIGNATURE_CHECK.test(body)) rec.signed = true;
+    if (PUBLIC_RESPONSE.test(body)) rec.publicResponse = true;
     if (defIdx > 0) rec.fn = /def\s+(\w+)/.exec(lines[defIdx])[1];
     out.push(rec);
   }
@@ -339,15 +397,28 @@ function jsRoutes(src, f, out) {
       return;
     }
     if (r.framework === 'next') {
-      if (NEXT_GUARD.test(src)) rec.via = 'inline';
+      if (SELF_CHECKING_ROUTES.test(src)) rec.via = 'library';
+      else if (NEXT_GUARD.test(src) || INLINE_CHECK.test(src)) rec.via = 'inline';
       if (SIGNATURE_CHECK.test(src)) rec.signed = true;
+      const handler = nextHandler(src, r.method);
+      if (METHOD_NOT_ALLOWED.test(handler) && !READS_PRIVATE.test(handler)) rec.notAllowed = true;
+      if (r.method === 'GET') rec.nextGet = true;
       rec.fn = r.method;
       out.push(rec);
       return;
     }
-    // the route call's own arguments: router.post('/x', requireAuth, async (req, res) => …)
+    // the route call's own arguments before its handler: router.post('/x', requireAuth, async (req, res) => …),
+    // or router.post('/x', requireAuth, createOrder) where the last one is the handler
     const head = lines.slice(r.line - 1, r.line + 4).join('\n');
-    const args = (/\.\w+\(\s*["'`][^"'`]*["'`]\s*,([\s\S]*?)(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(head)?.[1] || '');
+    const call = /\.\w+\(\s*["'`][^"'`]*["'`]\s*,/.exec(head);
+    let args = '';
+    if (call) {
+      let depth = 1, j = call.index + call[0].length;
+      for (; j < head.length && depth; j++) { if (head[j] === '(') depth++; else if (head[j] === ')') depth--; }
+      const own = head.slice(call.index + call[0].length, depth ? j : j - 1);
+      const fn = /(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(own);
+      args = fn ? own.slice(0, fn.index) : own.slice(0, Math.max(0, own.lastIndexOf(',')));
+    }
     const mw = (args.match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isGuardName);
     const next = routes[idx + 1]?.line || r.line + 60;
     const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
@@ -356,6 +427,7 @@ function jsRoutes(src, f, out) {
     else if (prior) Object.assign(rec, { guard: prior.name, via: 'router' });
     else if (INLINE_CHECK.test(body)) rec.via = 'inline';
     if (SIGNATURE_CHECK.test(body)) rec.signed = true;
+    if (PUBLIC_RESPONSE.test(body)) rec.publicResponse = true;
     out.push(rec);
   });
 }
@@ -546,12 +618,22 @@ export function findIssues(src, f) {
 // ======================= build: turn findings into issues =======================
 
 const SEV_ORDER = { high: 0, medium: 1, low: 2 };
-const PUBLIC_PATH = /(^|\/)(health|healthz|healthcheck|ping|status|ready|readiness|live|liveness|version|metrics|robots\.txt|sitemap[\w.]*|favicon[\w.]*|\.well-known|login|logout|signin|pair|sign-in|signout|signup|sign-up|register|forgot[\w-]*|reset[\w-]*|verify[\w-]*|oauth\w*|callback|auth|token|refresh|static|assets|public|newsletter|contact|waitlist|unsubscribe|openapi\.json|docs|swagger[\w.]*|i|images?)(\/|$)/i;
+const PUBLIC_PATH = /(^|\/)(health|healthz|healthcheck|ping|status|ready|readyz|readiness|live|livez|liveness|version|metrics|robots\.txt|sitemap[\w.]*|favicon[\w.]*|\.well-known|login|logout|signin|pair|sign-in|signout|signup|sign-up|register|forgot[\w-]*|reset[\w-]*|verify[\w-]*|oauth\w*|callback|auth|token|refresh|static|assets|public|newsletter|contact|waitlist|unsubscribe|openapi\.json|docs|swagger[\w.]*|i|images?)(\/|$)/i;
+// Files and feeds that exist to be read by crawlers, feed readers and AI tools. Only for reading: see publicByDesign.
+const PUBLIC_FILE_PATH = /(^|\/)(llms(-full)?\.txt|ai\.txt|humans\.txt|(app-)?ads\.txt|security\.txt|rss(\.xml)?|atom(\.xml)?|feed\.(xml|rss|atom|json)|index\.xml|opensearch\.xml|site\.webmanifest|manifest\.(json|webmanifest)|openapi\.ya?ml)$/i;
+const LISTING_FILE = /(^|\/)(llms(-full)?\.txt|robots\.txt)$/i;
+/** The addresses a project publishes in its llms.txt, or explicitly allows in its robots.txt. */
+function listedPaths(file, src) {
+  const found = /robots\.txt$/i.test(file) ? [...src.matchAll(/^\s*Allow:\s*(\/\S*)/gim)] : [...src.matchAll(/(?:https?:\/\/[^\s/)\]"'<>]+|(?<![\w./-]))(\/[^\s)\]"'<>#?*]+)/g)];
+  return found.map((m) => m[1].replace(/[.,;:]+$/, '').replace(/\/$/, '')).filter((p) => p.length > 1 && !p.includes('*'));
+}
 const WEBHOOK_PATH = /webhook|\/hooks?\//i;
 // endpoints under a webhook URL that manage the webhooks (create, list, test…) rather than receive them
 const WEBHOOK_ADMIN = /\/(manage|admin|setup|settings|config|list|create|register|delete|test[\w-]*)(\/|$)/i;
 const NOT_USED_KINDS = new Set(['test', 'script', 'infra', 'config', 'worker', 'external']);
 const SPECIAL_FILE = /(^|\/)(index|main|app|server|cli|manage|wsgi|asgi|__init__|__main__|conftest|setup|config|settings|env|middleware|instrumentation|layout|page|route|loading|error|not-found|template|default|global-error|sitemap|robots|manifest|opengraph-image|twitter-image|icon|apple-icon|_app|_document|_error|404|500|models|admin|apps|views|urls|signals|tasks|forms|serializers|celery|gunicorn\.conf|vite-env\.d|worker|sw|service-worker)\.[a-z]+$|\.d\.ts$|\.config\.[a-z]+$|\.stories\.|(^|\/)(pages|migrations|alembic|versions|scripts|bin|tools|seeds?|fixtures?|examples?|docs?|public|static|templates|\.github|e2e|cypress|playwright)\//i;
+// A comment saying a tool opens this file by name, or that it's generated: not leftover code, whatever imports it
+const LOADED_BY_NAME = /^\s*(?:\/\/|\/?\*|#|<!--|"""|''')[^\n]*(?:\b(?:cli|tool|tooling|framework|runner|bundler|build|compiler|plugin|sdk|script)\b[^\n]*\b(?:reads?|loads?|imports?|runs?|executes?|opens?|requires?|picks? up)\b[^\n]*\b(?:this file|directly|by name|by path|at runtime)\b|\bthis file is (?:read|loaded|imported|run|executed|required|used|picked up)\b[^\n]*\b(?:by|directly|at runtime)\b|\bthis (?:file|code) (?:is|was) (?:auto-?)?generated\b|@generated\b|\b(?:auto-?)?generated (?:file|code)\b|\bcode generated by\b|\bdo not (?:edit|modify|delete|remove) (?:this|it)\b)/im;
 const USED_LANGS = new Set(['typescript', 'javascript', 'python', 'vue', 'svelte', 'astro']);
 const plural = (n, w, ws) => `${n} ${n === 1 ? w : ws || w + 's'}`;
 
@@ -949,6 +1031,31 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (x.k === 'global-guard' && !TEST_FILE.test(f.path) && !/(^|\/)(scripts?|tools|bin|examples?)\//.test(f.path) && !(fileByPath.has(f.path) && kinds(fileByPath.get(f.path).n).some((k) => NOT_USED_KINDS.has(k)))) { const k = f.repo ?? ''; if (!globalGuards.has(k)) globalGuards.set(k, []); globalGuards.get(k).push({ ...x, file: f.path }); }
     if (x.k === 'guard-def' && !TEST_FILE.test(f.path)) { if (!guardDefs.has(x.name)) guardDefs.set(x.name, []); guardDefs.get(x.name).push({ file: f.path, wrapper: !!x.wrapper }); }
   }
+  const verifiedHelpers = new Map();
+  for (const f of scan.files) {
+    if (TEST_FILE.test(f.path)) continue;
+    for (const x of findings(f.path)) {
+      if (x.k !== 'py-verified-helper') continue;
+      const repo = f.repo ?? '';
+      if (!verifiedHelpers.has(repo)) verifiedHelpers.set(repo, new Map());
+      const byName = verifiedHelpers.get(repo);
+      if (!byName.has(x.name)) byName.set(x.name, []);
+      byName.get(x.name).push(f.path);
+    }
+  }
+  const routeImports = new Map();
+  const helperImported = (file, helper, name) => {
+    if (file === helper) return true;
+    let src = routeImports.get(file);
+    if (src === undefined) {
+      try { src = fs.readFileSync(path.join(root, file), 'utf8'); }
+      catch { src = ''; }
+      routeImports.set(file, src);
+    }
+    const moduleName = helper.replace(/\.py$/, '').replace(/\//g, '.');
+    const mod = moduleName.replaceAll('.', '\\.');
+    return new RegExp('^\\s*from\\s+' + mod + '\\s+import\\s+[^\\n]*\\b' + name + '\\b', 'm').test(src);
+  };
   const aliasGuards = pyAliasGuards(scan.files.filter((f) => !TEST_FILE.test(f.path)), findings);
   for (const [repo, aliases] of aliasGuards) for (const [name, file] of aliases) {
     if (!guardDefs.has(name)) guardDefs.set(name, []);
@@ -957,6 +1064,55 @@ export function buildHealth({ graph, scan, arch, root }) {
   // a sign-in check applied where the route's router is mounted: app.use('/admin', requireStaff, adminRouter),
   // or app.include_router(admin.router, dependencies=[Depends(require_admin)]) (a database session isn't one)
   const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isGuardDep)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardDep)]));
+  const sourceOf = new Map();
+  const readSource = (p) => {
+    if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
+    return sourceOf.get(p);
+  };
+  const published = new Map(); // repo -> addresses it lists for crawlers and AI tools
+  for (const f of scan.files) {
+    if (!LISTING_FILE.test(f.path) || TEST_FILE.test(f.path) || EXAMPLE_FILE.test(f.path)) continue;
+    const k = f.repo ?? '';
+    if (!published.has(k)) published.set(k, new Set());
+    for (const p of listedPaths(f.path, readSource(f.path))) published.get(k).add(p);
+  }
+  const isListed = (repo, p) => {
+    const listed = published.get(repo);
+    if (!listed) return false;
+    if (listed.has(p)) return true;
+    if (!/\[\.\.\./.test(p)) return false; // a catch-all route covers what's listed under it
+    const prefix = p.split('[')[0];
+    return prefix.length > 1 && [...listed].some((x) => x.startsWith(prefix));
+  };
+  const importsOf = new Map();
+  for (const l of graph.links) if (l.a !== l.b && l.a.startsWith('f:') && l.b.startsWith('f:')) { const a = l.a.slice(2); if (!importsOf.has(a)) importsOf.set(a, new Set()); importsOf.get(a).add(l.b.slice(2)); }
+  const PROJECT_IMPORT = /\bfrom\s+['"](?:\.{1,2}\/|@\/|~\/|#)|\bimport\s*\(\s*['"](?:\.{1,2}\/|@\/|~\/|#)|\brequire\(\s*['"](?:\.{1,2}\/|@\/|~\/|#)/g;
+  /** A Next.js route file whose code, and everything it imports, shows no data store, session or server secret. */
+  const readsNothingPrivate = (file, dynamic) => {
+    const seen = new Set([file]), queue = [file];
+    while (queue.length) {
+      const p = queue.pop();
+      const src = readSource(p);
+      if (READS_PRIVATE.test(src) || (dynamic && READS_FILES.test(src))) return false;
+      const next = [...(importsOf.get(p) || [])];
+      // an import we couldn't follow could hold anything
+      if ((src.match(PROJECT_IMPORT) || []).length > next.length) return false;
+      for (const n of next) if (!seen.has(n) && !NOT_ITS_DATA.test(n)) { seen.add(n); queue.push(n); }
+      if (seen.size > 200) return false;
+    }
+    return true;
+  };
+  const marksPublic = (file) => {
+    const src = readSource(file);
+    if (PUBLIC_RESPONSE.test(src) || NEXT_STATIC.test(src)) return true;
+    return [...(importsOf.get(file) || [])].some((p) => { const h = readSource(p); return PUBLIC_RESPONSE.test(h) && !PRIVATE_RESPONSE.test(h); });
+  };
+  /** A reading endpoint that's open on purpose: its address, the project's own listing, its response, or having nothing private to give. */
+  const publicByDesign = (r, fnd, repo) => {
+    if (r.m !== 'GET') return false;
+    if (PUBLIC_FILE_PATH.test(r.p) || isListed(repo, r.p) || fnd.publicResponse) return true;
+    return !!fnd.nextGet && (marksPublic(r.f) || readsNothingPrivate(r.f, /\[/.test(r.p)));
+  };
   const perRepo = new Map(); // repo -> { guarded, open: [], guardCounts }
   graph.routes.forEach((r, i) => {
     const fnd = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
@@ -973,7 +1129,9 @@ export function buildHealth({ graph, scan, arch, root }) {
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);
     // a parameter typed with a dependency alias that checks the caller: `user: AdminUser`
     const viaAlias = !fnd.via && fnd.types?.find((t) => aliasGuards.get(repo)?.has(t));
-    if (fnd.via || global || viaWrapper || mounted || viaAlias) {
+    const viaSignatureHelper = !fnd.via && fnd.calls?.find((name) =>
+      (verifiedHelpers.get(repo)?.get(name) || []).some((helper) => helperImported(r.f, helper, name)));
+    if (fnd.via || global || viaWrapper || mounted || viaAlias || viaSignatureHelper) {
       pr.guarded++; pr.guardedIn.set(r.f, (pr.guardedIn.get(r.f) || 0) + 1);
       const name = fnd.guard || viaWrapper || mounted || viaAlias;
       if (name) {
@@ -983,7 +1141,7 @@ export function buildHealth({ graph, scan, arch, root }) {
       }
       return;
     }
-    if (r.m === 'OPTIONS' || r.m === 'HEAD') return;
+    if (r.m === 'OPTIONS' || r.m === 'HEAD' || fnd.notAllowed) return;
     // webhook receivers: by URL, or a webhook-ish handler in a webhook file (not that file's admin endpoints)
     const webhook = (WEBHOOK_PATH.test(r.p) && !WEBHOOK_ADMIN.test(r.p)) || (/webhook|hooks?\//i.test(r.f) && /webhook|hook|notify|event|ingress|pubsub|callback|receive|inbound/i.test(r.h || '') && !/create|list|manage|register|delete|test|setup|sync/i.test((r.h || '') + r.p));
     if (webhook && fnd.signed) return;
@@ -991,6 +1149,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (stripeFiles.has(r.f) && (webhook || /stripe|payment|hook/i.test(r.p) || graph.routes.filter((x) => x.f === r.f && x.m !== 'GET').length === 1)) return;
     if (!webhook && PUBLIC_PATH.test(r.p.replace(/<[^>]*>|\{[^}]*\}|:\w+|\[[^\]]*\]/g, 'x'))) return;
     if (r.p === '/' && r.m === 'GET') return;
+    if (!webhook && publicByDesign(r, fnd, repo)) return;
     const entry = { i, r, fnd, write: !['GET', 'ANY'].includes(r.m), webhook };
     if (fnd.misplaced) pr.misplaced.push(entry); else pr.open.push(entry);
   });
@@ -1096,7 +1255,7 @@ export function buildHealth({ graph, scan, arch, root }) {
       try { src = fs.readFileSync(path.join(root, f.path), 'utf8'); } catch { continue; }
       for (const tok of new Set(src.match(/[\w$-]+/g) || [])) { const p = want.get(tok); if (p && p !== f.path) mentioned.add(p); }
     }
-    const unused = candidates.filter((f) => !mentioned.has(f.p));
+    const unused = candidates.filter((f) => !mentioned.has(f.p) && !LOADED_BY_NAME.test(readSource(f.p).split('\n', 20).join('\n')));
     // A module where most files look unused is more likely loaded in a way we can't see; stay quiet.
     const byNode = new Map();
     for (const f of unused) { if (!byNode.has(f.n)) byNode.set(f.n, []); byNode.get(f.n).push(f); }
