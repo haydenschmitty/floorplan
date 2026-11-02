@@ -239,6 +239,24 @@ if (idleExit) setInterval(() => { if (!tabs.size && !running.size && Date.now() 
 const flowsFile = path.join(here, 'custom-flows.json');
 const readFlows = () => { try { return JSON.parse(fs.readFileSync(flowsFile, 'utf8')).flows || []; } catch { return []; } };
 
+// Kept boards: answer boards saved from the Ask bar, stored next to the map (build.mjs folds them into the page).
+const boardsFile = path.join(here, 'boards.json');
+const readBoards = () => { try { const l = JSON.parse(fs.readFileSync(boardsFile, 'utf8')).boards; return Array.isArray(l) ? l : []; } catch { return []; } };
+const clip = (v, n) => (typeof v === 'string' ? v : '').slice(0, n);
+const cleanRefs = (list, max) => list.slice(0, max).map((i) => ({ ref: clip(i?.ref, 300), note: clip(i?.note, 500) }));
+/** A board as the page sends it, checked and trimmed (text is kept as written; the page escapes it). null if it has no usable id or items.
+ *  createdAt/updatedAt aren't needed: the server stamps them when it saves. */
+function cleanBoard(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+  if (typeof b.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(b.id)) return null;
+  if (!Array.isArray(b.items) || (b.steps !== undefined && !Array.isArray(b.steps))) return null;
+  return {
+    id: b.id, title: clip(b.title, 200), question: clip(b.question, 2000), answer: clip(b.answer, 8000),
+    items: cleanRefs(b.items, 30), steps: cleanRefs(b.steps || [], 60),
+    createdAt: clip(b.createdAt, 40), updatedAt: clip(b.updatedAt, 40),
+  };
+}
+
 // ---------- Floorplan Cloud waitlist (opt-in) ----------
 // The map may ask, once, whether you want an email when Floorplan Cloud launches. Nothing is sent unless
 // you click "Notify me", and then only the email you see in the box and whether it's for you or a team.
@@ -555,6 +573,30 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/status') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ tabs: tabs.size, pid: process.pid, hash: selfHash, root })); }
     if (req.method === 'GET' && url.pathname === '/api/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ cli: !!cli, engine, want, version, path: cli?.path || null })); }
+    if (url.pathname === '/api/boards') {
+      const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+      if (req.method === 'GET') return send(200, { boards: readBoards() });
+      if (req.method === 'POST' || req.method === 'DELETE') {
+        let raw = '', big = false;
+        req.on('data', (d) => { raw += d; if (raw.length > 200000) { big = true; req.destroy(); } });
+        req.on('end', () => {
+          if (big) return;
+          let body; try { body = JSON.parse(raw); } catch { return send(400, { error: 'Unreadable request.' }); }
+          let boards = readBoards();
+          if (req.method === 'DELETE') boards = boards.filter((x) => x.id !== body?.id);
+          else {
+            const b = cleanBoard(body?.board);
+            if (!b) return send(400, { error: 'That board has no usable id or items.' });
+            const now = new Date().toISOString(), old = boards.find((x) => x.id === b.id);
+            const next = { ...b, createdAt: old?.createdAt || now, updatedAt: now };
+            boards = old ? boards.map((x) => (x.id === b.id ? next : x)) : [...boards, next];
+          }
+          fs.writeFileSync(boardsFile, JSON.stringify({ boards }, null, 2) + '\n');
+          send(200, { boards });
+        });
+        return;
+      }
+    }
     // requested flows are saved next to the map; build.mjs folds them into graph.json
     if (url.pathname === '/api/flows') {
       if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ flows: readFlows() })); }
