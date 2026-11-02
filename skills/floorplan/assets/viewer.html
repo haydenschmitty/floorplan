@@ -7,13 +7,14 @@
 /* Theme: runs before anything is drawn so the page never flashes the wrong colours. "auto" follows the device. */
 (() => {
   const KEY = 'floorplan-theme', root = document.documentElement, mq = matchMedia('(prefers-color-scheme: light)');
+  const embedded = root.hasAttribute('data-embed') && window.self !== window.top;
   let mem = 'auto';
   const valid = (v) => v === 'auto' || v === 'light' || v === 'dark';
   // ?theme=light|dark|auto in the address (a docs site embedding the map picks its colours) wins over the saved
   // choice and is never saved: an iframe shares storage with the docs site and every other map embedded there
   let fixed = null;
   try { const t = new URLSearchParams(location.search).get('theme'); if (valid(t)) fixed = t; } catch (e) {}
-  const get = () => { if (fixed) return fixed; try { const v = localStorage.getItem(KEY); if (valid(v)) return v; } catch (e) {} return mem; };
+  const get = () => { if (fixed) return fixed; if (embedded) return mem; try { const v = localStorage.getItem(KEY); if (valid(v)) return v; } catch (e) {} return mem; };
   const apply = () => {
     const c = get();
     root.setAttribute('data-theme', c === 'auto' ? (mq.matches ? 'light' : 'dark') : c);
@@ -31,7 +32,7 @@
   });
   window.floorplanTheme = { get, set: (c) => {
     if (!valid(c)) return;
-    if (fixed) fixed = c; else { mem = c; try { localStorage.setItem(KEY, c); } catch (e) {} }
+    if (fixed) fixed = c; else { mem = c; if (!embedded) { try { localStorage.setItem(KEY, c); } catch (e) {} } }
     root.classList.add('theme-switching'); apply();
     requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')));
   } };
@@ -1469,9 +1470,10 @@ function renderContext() {
     return;
   }
   const i = info(state.container);
+  const showDescription = !(EMBED && state.container === 'root') || new URLSearchParams(location.search).get('description') === 'show';
   const kind = state.container === 'root' ? 'Overview' : i.type === 'node' ? i.kind.charAt(0).toUpperCase() + i.kind.slice(1) : i.type === 'dir' ? 'Folder' : i.type === 'file' ? 'File' : i.type;
   const badge = state.container === 'root' ? '' : `<span class="ico" style="--c:${colorOf(i)}">${icon(iconKey(i))}</span>`;
-  $('#context').innerHTML = `<div class="k">${badge}${h(kind)}</div><h1>${h(i.name)}</h1>${i.desc ? `<p class="cd" id="ctx-desc">${h(i.desc)}</p>` : ''}${state.view?.hidden ? `<p class="cx" style="color:var(--text-3);font-size:12.5px;margin-top:8px">${state.view.hidden} more exports aren't imported by name anywhere; they're listed in the details panel.</p>` : ''}${i.desc ? '<button type="button" class="ctx-more" aria-controls="ctx-desc" hidden></button>' : ''}`;
+  $('#context').innerHTML = `<div class="k">${badge}${h(kind)}</div><h1>${h(i.name)}</h1>${i.desc && showDescription ? `<p class="cd" id="ctx-desc">${h(i.desc)}</p>` : ''}${state.view?.hidden ? `<p class="cx" style="color:var(--text-3);font-size:12.5px;margin-top:8px">${state.view.hidden} more exports aren't imported by name anywhere; they're listed in the details panel.</p>` : ''}${i.desc && showDescription ? '<button type="button" class="ctx-more" aria-controls="ctx-desc" hidden></button>' : ''}`;
   foldContext();
 }
 /** On a phone the description folds to one line; the More / Less toggle shows only when there's more to read, and the choice is remembered on this device. */

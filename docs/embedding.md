@@ -13,6 +13,7 @@ node floorplan/serve.mjs --export docs/_static/map.html --embed
 This is the same copy as [Export](using-the-map.md#export): one HTML file with the whole map, search, screens, the tour and flows, but no Ask bar, no requests for Claude or Codex, and nothing about your computer. Health and recent work are left out unless you add `--include`. **Think twice before adding `health` to a public docs site**: it lists the endpoints anyone can use and where secrets sit in the code.
 
 `--embed` changes how the copy behaves inside a docs page:
+- the project description is hidden on the overview, leaving more room for the map; add `?description=show` to the iframe address to show it;
 - the details panel starts closed, and opens when a reader clicks a box;
 - the scroll wheel scrolls the docs page, not the map. Readers zoom by clicking the map first, pinching on a trackpad, or holding Ctrl (⌘ on a Mac) while scrolling;
 - on a touch screen, one finger scrolls the page until the reader taps the map;
@@ -34,7 +35,7 @@ The map goes in an `<iframe>`. Give it a height, since it fills whatever space i
            title="Architecture map" loading="lazy" allowfullscreen></iframe>
 ```
 
-With MyST Markdown, use the same `<iframe>` line in the page.
+The path above works for a page at the root of the built site. For a nested page, adjust it relative to that page: for example, use `../_static/map.html` on `guide/setup.html`. With MyST Markdown, use the same `<iframe>` line in the page and adjust the path in the same way.
 
 **MkDocs** (including Material for MkDocs). Put the file under `docs/`, and write the `<iframe>` straight into the Markdown page:
 
@@ -56,7 +57,7 @@ To open on a box with its details showing, open the map, go to that box and clic
 
 ## Colours
 
-By default the map follows the reader's device, light or dark. To fix it to your docs theme, add `?theme=light` or `?theme=dark` before the `#`:
+By default the map follows the reader's device, light or dark. To fix it to your docs theme, add `?theme=light` or `?theme=dark` before the `#` (combine options with `&`, for example `?theme=light&description=show`):
 
 ```html
 <iframe src="_static/map.html?theme=light#v=api" …></iframe>

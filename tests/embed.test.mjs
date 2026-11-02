@@ -106,13 +106,13 @@ test('where full screen is not allowed, the copy opens in its own tab in the sam
 });
 
 /** Runs the theme script in the head with a pretend browser. */
-function theme({ search = '', saved } = {}) {
+function theme({ search = '', saved, inFrame = false, marked = false, lightDevice = false } = {}) {
   const attrs = {}, store = new Map(saved ? [['floorplan-theme', saved]] : []), listeners = {};
   const parent = {};
   const win = {
-    document: { documentElement: { setAttribute: (k, v) => { attrs[k] = v; }, classList: { add() {}, remove() {} } } },
+    document: { documentElement: { hasAttribute: (a) => a === 'data-embed' && marked, setAttribute: (k, v) => { attrs[k] = v; }, classList: { add() {}, remove() {} } } },
     location: { search },
-    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    matchMedia: () => ({ matches: lightDevice, addEventListener() {} }),
     localStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) },
     addEventListener: (t, f) => { listeners[t] = f; },
     dispatchEvent() {},
@@ -122,6 +122,7 @@ function theme({ search = '', saved } = {}) {
     parent,
   };
   win.window = win;
+  win.self = win; win.top = inFrame ? parent : win;
   const at = embedded.indexOf('/* Theme: runs before');
   vm.runInNewContext(embedded.slice(embedded.lastIndexOf('<script>', at) + 8, embedded.indexOf('</script>', at)), win);
   return { attrs, store, listeners, parent, win, api: win.floorplanTheme };
@@ -148,4 +149,39 @@ test('the docs page around the map can switch its colours live, and nobody else 
   assert.equal(t.attrs['data-theme'], 'light', 'a message from another window is ignored');
   t.listeners.message({ source: t.parent, data: { floorplan: 'theme', theme: 'purple' } });
   assert.equal(t.attrs['data-theme'], 'light');
+});
+
+test('an embedded map uses its own unsaved theme by default', () => {
+  const t = theme({ marked: true, inFrame: true, saved: 'dark', lightDevice: true });
+  assert.equal(t.attrs['data-theme'], 'light');
+  t.api.set('dark');
+  t.api.set('light');
+  assert.equal(t.store.get('floorplan-theme'), 'dark');
+  assert.equal(t.api.get(), 'light');
+});
+
+test('a marked export opened on its own still saves its theme', () => {
+  const t = theme({ marked: true, saved: 'dark' });
+  assert.equal(t.attrs['data-theme'], 'dark');
+  t.api.set('light');
+  assert.equal(t.store.get('floorplan-theme'), 'light');
+});
+
+
+test('an embed hides the overview description unless requested, while other descriptions remain', () => {
+  const start = embedded.indexOf('function renderContext() {');
+  const end = embedded.indexOf('/** On a phone the description', start);
+  function context({ embed, search = '', container = 'root' }) {
+    const element = {};
+    const state = { container, view: {} };
+    const code = embedded.slice(start, end) + '\nrenderContext();';
+    vm.runInNewContext(code, { state, EMBED: embed, location: { search }, URLSearchParams,
+      $: () => element, info: () => ({ name: 'Example', desc: 'Description', type: 'node', kind: 'service' }),
+      h: (s) => s, colorOf: () => '', icon: () => '', iconKey: () => '', foldContext: () => {} });
+    return element.innerHTML;
+  }
+  assert.doesNotMatch(context({ embed: true }), /Description/);
+  assert.match(context({ embed: true, search: '?description=show' }), /Description/);
+  assert.match(context({ embed: true, container: 'api' }), /Description/);
+  assert.match(context({ embed: false }), /Description/);
 });
