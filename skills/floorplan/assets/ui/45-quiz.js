@@ -58,17 +58,31 @@
     { id: 'detail', label: 'In detail', hint: 'Files, endpoints and the parts inside' },
     { id: 'all', label: 'Both', hint: 'Main parts and details, mixed' },
   ];
-  const levelOf = (x) => ((SC.parentOf(x.ref) || 'root') === 'root' ? 'big' : 'detail');
-  const atLevel = (level) => pool.filter((x) => level === 'all' || levelOf(x) === level);
+  // inside a chosen part, its big picture is the part itself and what sits directly in it
+  const levelOf = (x, part = '') => (x.ref === part || (SC.parentOf(x.ref) || 'root') === (part || 'root') ? 'big' : 'detail');
+  const atLevel = (level, part = '') => pool.filter((x) => level === 'all' || levelOf(x, part) === level);
   const LEVEL_ASK = {
     big: 'Ask about the main parts of the app (the top-level cards and outside services) and how they connect: what each is for, which talks to which, and what happens end to end. Use their ids.',
     detail: 'Ask about specific files and endpoints (f:... and r:... ids) and the smaller parts inside the main ones: what each does, what uses it, and what happens step by step.',
     all: '',
   };
+  // the part of the app to be asked about: a main part or one inside it, or the whole app ('')
+  const PARTS = G.nodes.filter((n) => !n.parent && n.id !== 'unassigned').flatMap((n) => [
+    { id: 'n:' + n.id, name: n.label, sub: false },
+    ...G.nodes.filter((c) => c.parent === n.id).map((c) => ({ id: 'n:' + c.id, name: c.label, sub: true })),
+  ]).filter((p) => SC.exists(p.id));
+  const inPart = (x, part) => !part || x.ref === part || SC.chain(x.ref).includes(part);
+  const chosen = (level, part) => atLevel(level, part).filter((x) => inPart(x, part));
+  const COUNTS = [5, 10, 20];
   const PROJECT = G.project?.name || G.meta?.rootName || 'map';
   const prefs = {
     get level() { const l = SC.store.get('quiz-level:' + PROJECT, 'all'); return LEVELS.some((x) => x.id === l) ? l : 'all'; },
     set level(l) { SC.store.set('quiz-level:' + PROJECT, l); },
+    get part() { const p = SC.store.get('quiz-part:' + PROJECT, ''); return PARTS.some((x) => x.id === p) ? p : ''; },
+    set part(p) { SC.store.set('quiz-part:' + PROJECT, p); },
+    // questions in one round: long enough to mean something, short enough to finish
+    get count() { const c = +SC.store.get('quiz-count:' + PROJECT, 10); return COUNTS.includes(c) ? c : 10; },
+    set count(c) { SC.store.set('quiz-count:' + PROJECT, +c); },
     best: () => SC.store.get('quiz-best:' + PROJECT, {}) || {},
     /** Keeps the better of this score and the one saved for the level. */
     score(level, s, n) {
@@ -77,7 +91,18 @@
       SC.store.set('quiz-best:' + PROJECT, { ...all, [level]: { s, n } });
       return true;
     },
+    // the questions answered right at least once, so a round asks the others first
+    right: () => new Set(SC.store.get('quiz-right:' + PROJECT, []) || []),
+    gotRight(x) { const r = prefs.right(); if (r.has(key(x))) return; r.add(key(x)); SC.store.set('quiz-right:' + PROJECT, [...r].slice(-500)); },
   };
+  /** Up to a round's worth: the ones not answered right yet first, each group in a new order. */
+  const roundOf = (list) => {
+    const r = prefs.right();
+    return [...shuffle(list.filter((x) => !r.has(key(x)))), ...shuffle(list.filter((x) => r.has(key(x))))].slice(0, prefs.count);
+  };
+  const partName = (id) => PARTS.find((p) => p.id === id)?.name || SC.info(id)?.name || id;
+  // the best score is kept per level and part
+  const bestKey = (level, part) => (part ? `${level}:${part}` : level);
 
   // recent work (graph.recent): the cards a change touched, and what was asked for
   const recent = (() => {
@@ -96,7 +121,7 @@
 #quiz .qn { color: var(--text-2); line-height: 1.55; margin-top: 6px; font-size: 13.5px; }
 #quiz .qn code { font-family: var(--mono); font-size: 12px; }
 #quiz .qc { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
-#quiz .qc button { display: flex; gap: 10px; align-items: baseline; width: 100%; min-height: 40px; padding: 9px 12px; border: 0; border-radius: 12px; background: rgba(var(--ink), .05); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; text-align: left; cursor: pointer; transition: background .2s var(--ease); }
+#quiz .qc button { display: flex; gap: 10px; align-items: baseline; width: 100%; min-height: 44px; padding: 9px 12px; border: 0; border-radius: 12px; background: rgba(var(--ink), .05); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; text-align: left; cursor: pointer; transition: background .2s var(--ease); }
 #quiz .qc button:hover:not(:disabled) { background: rgba(var(--ink), .09); }
 #quiz .qc button:disabled { cursor: default; }
 #quiz .qc button .n { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
@@ -109,9 +134,18 @@
 #quiz .qp { margin-top: 10px; font-size: 12.5px; color: var(--text-3); display: flex; gap: 8px; align-items: center; }
 #quiz .qp .spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(var(--ink), .15); border-top-color: var(--text-2); animation: quizSpin .8s linear infinite; flex: none; }
 #quiz .ql { display: flex; gap: 4px; margin-top: 12px; padding: 3px; border-radius: 12px; background: rgba(var(--ink), .05); }
-#quiz .ql button { flex: 1; min-height: 40px; padding: 4px 6px; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px; line-height: 1.25; cursor: pointer; }
+#quiz .ql button { flex: 1; min-height: 44px; padding: 4px 6px; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px; line-height: 1.25; cursor: pointer; }
 #quiz .ql button .c { display: block; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 #quiz .ql button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+#quiz .qrow { display: flex; gap: 8px; margin-top: 12px; }
+#quiz .qsel { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-3); }
+#quiz .qsel.n { flex: 0 0 auto; }
+#quiz select, #quiz .qa input { min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: rgba(var(--ink), .05); color: var(--text); font: inherit; font-size: 13px; min-width: 0; }
+#quiz select option { background: var(--surface); color: var(--text); }
+#quiz .qa { display: flex; gap: 6px; margin-top: 10px; }
+#quiz .qa input { flex: 1; padding: 0 12px; }
+#quiz .qa input::placeholder { color: var(--text-3); }
+#quiz .qa .btn { height: 44px; }
 #quiz .qh { margin-top: 8px; font-size: 12.5px; color: var(--text-3); line-height: 1.5; }
 #quiz .qh b { color: var(--text-2); font-weight: 600; }
 #quiz .qf { display: flex; align-items: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
@@ -159,23 +193,41 @@
   const closeBtn = `<button class="btn icon qx" data-x title="Close (Esc)">${SC.iconI('x')}</button>`;
   const kicker = (...parts) => `<div class="qk">${['Quiz', ...parts.filter(Boolean)].map((p) => `<span>${h(p)}</span>`).join('<i></i>')}</div>`;
   const levelName = (id) => LEVELS.find((l) => l.id === id)?.label || '';
-  const bestText = (level) => { const b = prefs.best()[level]; return b ? `${b.s} of ${b.n}` : ''; };
+  const bestText = (level, part) => { const b = prefs.best()[bestKey(level, part)]; return b ? `${b.s} of ${b.n}` : ''; };
+  /** A round at the chosen level and part, with the title saying which. */
+  const startChosen = () => {
+    const { level, part } = prefs;
+    start(chosen(level, part), { kind: 'level', level, part, title: [part && partName(part), level !== 'all' && levelName(level)].filter(Boolean).join(' · ') });
+  };
 
   function renderHome() {
-    const level = prefs.level, list = atLevel(level), best = bestText(level);
-    const ask = canAsk();
+    const { level, part, count } = prefs, list = chosen(level, part), best = bestText(level, part);
+    const ask = canAsk(), right = prefs.right(), done = list.filter((x) => right.has(key(x))).length;
+    const progress = done ? ` You’ve got <b>${done} of ${list.length}</b> right${best ? `, best round <b>${best}</b>` : ''}.` : best ? ` Your best: <b>${best}</b>.` : '';
+    const where = part ? partName(part) : 'the app';
     card.innerHTML = `${closeBtn}${kicker()}
-      <div class="qt">How well do you know ${h(PROJECT)}?</div>
-      <div class="qn">Questions about how the app fits together. After each one, the card that shows the answer lights up on the map.</div>
-      <div class="ql" role="radiogroup" aria-label="How deep">${LEVELS.map((l) => `<button role="radio" aria-checked="${l.id === level}" class="${l.id === level ? 'on' : ''}" data-level="${l.id}" title="${h(l.hint)}">${h(l.label)}<span class="c">${SC.plural(atLevel(l.id).length, 'question')}</span></button>`).join('')}</div>
-      <div class="qh">${h(LEVELS.find((l) => l.id === level).hint)}.${best ? ` Your best: <b>${best}</b>.` : ''}</div>
-      ${recent && ask ? `<div class="qh">Something just changed? <b>Recent work</b> asks about it, to check you can explain it.</div>` : ''}
-      <div class="qf end">${recent && ask ? `<button class="btn soft" data-recent>Recent work</button>` : ''}${ask ? `<button class="btn ${list.length ? 'soft' : 'primary'}" data-more>${SC.iconI('spark')}${list.length ? 'More questions' : 'Write questions'}</button>` : ''}${list.length ? `<button class="btn primary" data-go>Start</button>` : ''}</div>
-      ${!list.length && !ask ? `<div class="qh">No questions at this level yet.${SC.exported ? '' : ` ${window.FLOORPLAN_SERVER ? WHY.cli_missing : WHY.no_engine}`}</div>` : ''}`;
+      <div class="qt">How well do you know ${h(part ? partName(part) : PROJECT)}?</div>
+      <div class="qn">After each question, the card that shows the answer lights up on the map.</div>
+      <div class="qrow">
+        <label class="qsel">Part of the app<select data-part>${[{ id: '', name: 'The whole app' }, ...PARTS.filter((p) => ask || p.id === part || chosen('all', p.id).length)].map((p) => `<option value="${h(p.id)}" ${p.id === part ? 'selected' : ''}>${p.sub ? '   ' : ''}${h(p.name)}${p.id ? ` (${chosen('all', p.id).length})` : ''}</option>`).join('')}</select></label>
+        <label class="qsel n">Per round<select data-count>${COUNTS.map((c) => `<option value="${c}" ${c === count ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+      </div>
+      <div class="ql" role="radiogroup" aria-label="How deep">${LEVELS.map((l) => `<button role="radio" aria-checked="${l.id === level}" class="${l.id === level ? 'on' : ''}" data-level="${l.id}" title="${h(l.hint)}">${h(l.label)}<span class="c">${SC.plural(chosen(l.id, part).length, 'question')}</span></button>`).join('')}</div>
+      <div class="qh">${h(LEVELS.find((l) => l.id === level).hint)}.${progress}${list.length > count ? ` Rounds of ${count}, the ones you haven’t got right first.` : ''}</div>
+      ${ask ? `<form class="qa" data-topic><input name="t" maxlength="300" autocomplete="off" placeholder="Any topic? e.g. sign-in" aria-label="What new questions should be about (optional)"><button class="btn soft" type="submit" title="Have ${h(A.name)} write new questions for what you picked">${SC.iconI('spark')}${list.length ? 'More' : 'Write'}</button></form>` : ''}
+      ${(recent && ask) || list.length ? `<div class="qf end">${recent && ask ? `<button class="btn soft" data-recent title="Questions about what was just changed, to check you can explain it">Recent work</button>` : ''}${list.length ? `<button class="btn primary" data-go>Start</button>` : ''}</div>` : ''}
+      ${!list.length && !ask ? `<div class="qh">No questions about ${h(where)} at this level yet.${SC.exported ? '' : ` ${window.FLOORPLAN_SERVER ? WHY.cli_missing : WHY.no_engine}`}</div>` : ''}`;
     card.querySelectorAll('[data-level]').forEach((b) => b.onclick = () => { prefs.level = b.dataset.level; render(); });
-    card.querySelector('[data-go]')?.addEventListener('click', () => start(atLevel(prefs.level), { kind: 'level', level: prefs.level }));
-    card.querySelector('[data-more]')?.addEventListener('click', () => more({ level: prefs.level }));
+    card.querySelector('[data-part]').onchange = (ev) => { prefs.part = ev.target.value; render(); card.querySelector('[data-part]')?.focus(); };
+    card.querySelector('[data-count]').onchange = (ev) => { prefs.count = ev.target.value; render(); card.querySelector('[data-count]')?.focus(); };
+    card.querySelector('[data-go]')?.addEventListener('click', startChosen);
     card.querySelector('[data-recent]')?.addEventListener('click', () => more({ recent: true }));
+    // new questions for the chosen part and depth, on the typed topic if there is one
+    card.querySelector('[data-topic]')?.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const asked = ev.target.t.value.trim();
+      more({ level: prefs.level, focus: prefs.part || undefined, ...(asked ? { asked } : {}) });
+    });
   }
 
   function render() {
@@ -207,7 +259,7 @@
           const cls = !answered ? '' : c === x.answer ? 'right' : c === x.picked ? 'wrong' : 'dim';
           return `<button data-pick="${k}" class="${cls}" ${answered ? 'disabled' : ''}><span class="n">${k + 1}</span><span>${h(c)}</span></button>`;
         }).join('')}</div>
-        ${answered ? `<div class="qe"><b>${x.picked === x.answer ? 'Right.' : `Not quite: it’s ${h(x.answer)}.`}</b>${x.explain ? ` ${h(x.explain)}` : ''}<span class="on-map">Highlighted on the map: ${h(SC.info(x.ref)?.name || x.ref)}</span></div>` : ''}
+        ${answered ? `<div class="qe"><b>${x.picked === x.answer ? 'Right.' : `Not quite. The answer is “${h(x.answer)}”.`}</b>${x.explain ? ` ${h(x.explain)}` : ''}<span class="on-map">Highlighted on the map: ${h(SC.info(x.ref)?.name || x.ref)}</span></div>` : ''}
         <div class="qf">${dots()}${answered ? `<button class="btn primary" data-next>${last ? 'See your score' : 'Next'}</button>` : `<button class="btn" data-skip>Skip</button>`}</div>`;
     }
     card.querySelectorAll('[data-x]').forEach((b) => b.onclick = close);
@@ -237,6 +289,7 @@
     const x = round?.list[round.at];
     if (!x || x.picked != null || !x.order[k]) return;
     x.picked = x.order[k];
+    if (x.picked === x.answer) prefs.gotRight(x);
     render();
     show(x.ref);
   }
@@ -245,7 +298,7 @@
     if (round.at < round.list.length - 1) { round.at++; render(); return; }
     round.done = true;
     // a whole round at one level counts toward its best score; retries and one-card quizzes don't
-    if (round.kind === 'level') round.newBest = prefs.score(round.level, score(), round.list.length) && !!round.hadBest;
+    if (round.kind === 'level') round.newBest = prefs.score(bestKey(round.level, round.part), score(), round.list.length) && !!round.hadBest;
     render();
   }
   function openCard() { window.FloorplanTour?.end(); card.hidden = false; }
@@ -254,13 +307,13 @@
     openCard();
     render();
   }
-  /** Asks these questions, in a new order with their choices shuffled. kind: level (a whole level, for the best score), retry, focus, recent, new. */
-  function start(list, { kind = 'new', level = '', title = '', req = null } = {}) {
+  /** Asks these questions (a round's worth), with their choices shuffled. kind: level (a round at a level and part, for the best score), retry, focus, recent, new. */
+  function start(list, { kind = 'new', level = '', part = '', title = '', req = null } = {}) {
     if (!list.length) return;
     SC.stopFlow();
     home = false; loading = null; failed = null;
-    round = { kind, level, req, title: title || (kind === 'level' && level !== 'all' ? levelName(level) : ''), hadBest: !!prefs.best()[level], at: 0, done: false,
-      list: shuffle(list).map((x) => ({ ...x, order: shuffle(x.choices), picked: null })) };
+    round = { kind, level, part, req, title, hadBest: !!prefs.best()[bestKey(level, part)], at: 0, done: false,
+      list: roundOf(list).map((x) => ({ ...x, order: shuffle(x.choices), picked: null })) };
     openCard();
     render();
   }
@@ -283,7 +336,7 @@
   function promptFor({ level, focus, recent: aboutRecent, asked }) {
     const name = focus ? SC.info(focus)?.name || focus : '';
     const lines = [];
-    if (focus) lines.push(`Write 3-5 questions about ${name} (${focus}): what it is for, what it uses and what uses it.`);
+    if (focus) lines.push(`Write 3-5 questions about ${name} (${focus}): what it is for, what it uses and what uses it.${level === 'big' ? ' Keep to how it fits with the rest of the app.' : level === 'detail' ? ' Ask about the files, endpoints and smaller parts inside it.' : ''}`);
     else if (aboutRecent) {
       lines.push('Write 3-5 questions that check the person can explain the recent work below: what changed, why it was needed, and what else it affects. Use the changed cards, or the cards they connect to, as ids.');
       lines.push(`Recent work:\n${recent.tasks.map((t, i) => {
@@ -304,7 +357,7 @@
     if (!canAsk()) return fail('New questions need the Ask bar', WHY[window.FLOORPLAN_SERVER ? 'cli_missing' : 'no_engine'], req, false);
     if (req.recent && !recent) return;
     const name = req.focus ? SC.info(req.focus)?.name || req.focus : '';
-    const title = req.focus ? name : req.recent ? 'Recent work' : req.level && req.level !== 'all' ? levelName(req.level) : 'New questions';
+    const title = req.asked ? 'Your questions' : req.focus ? name : req.recent ? 'Recent work' : req.level && req.level !== 'all' ? levelName(req.level) : 'New questions';
     home = false; round = null; failed = null;
     const mine = loading = { label: req.focus ? `Writing questions about ${name}` : req.recent ? 'Writing questions about recent work' : 'Writing new questions', lines: ['Thinking…'] };
     openCard();
@@ -356,10 +409,10 @@
   });
 
   window.addEventListener('keydown', (ev) => {
-    if (!active() || ev.target?.tagName === 'INPUT' || ev.target?.tagName === 'TEXTAREA' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (!active() || ['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName) || ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const stop = () => { ev.stopPropagation(); ev.preventDefault(); };
     if (ev.key === 'Escape') { stop(); close(); return; }
-    if (home && ev.key === 'Enter' && atLevel(prefs.level).length) { stop(); start(atLevel(prefs.level), { kind: 'level', level: prefs.level }); return; }
+    if (home && ev.key === 'Enter' && chosen(prefs.level, prefs.part).length) { stop(); startChosen(); return; }
     if (!round || round.done) return;
     const x = round.list[round.at];
     if (x.picked == null && /^[1-4]$/.test(ev.key) && x.order[+ev.key - 1]) { stop(); pick(+ev.key - 1); }
@@ -368,5 +421,5 @@
   // a guided flow or the tour takes over the canvas: step aside
   SC.on('render', () => { if (active() && (SC.state.flow || window.FloorplanTour?.active())) close(); });
 
-  window.FloorplanQuiz = { open: openHome, start: (level = prefs.level) => start(atLevel(level), { kind: 'level', level }), more, close, active, questions: pool, levelOf };
+  window.FloorplanQuiz = { open: openHome, start: startChosen, more, close, active, questions: pool, levelOf };
 })();

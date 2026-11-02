@@ -93,15 +93,15 @@ Replays the one-minute tour that runs the first time you open a map.
 ### Quiz
 Checks that you understood the map: multiple-choice questions like "which part takes card payments?", one at a time. After each answer the card that shows it is highlighted on the map, with a sentence on why, and at the end you can retry the ones you missed. Press **1**–**4** to answer, **Enter** for the next question and **Esc** to stop.
 
-Pick how deep to go first:
-- **Big picture:** the main parts on the overview and the outside services, and how they connect;
-- **In detail:** files, endpoints and the smaller parts inside the main ones;
-- **Both**, mixed.
+Choose what to be asked about first:
+- **Part of the app:** the whole app, or one part of it, like the checkout or the admin screens;
+- **How deep:** **Big picture** (the main parts and how they connect), **In detail** (files, endpoints and the smaller parts inside), or **Both**;
+- **Per round:** 5, 10 or 20 questions. Ones you haven't answered right yet come first.
 
-Your best score at each level is kept in this browser.
+The quiz remembers in this browser which questions you've got right and your best round for each choice.
 
 The starter questions are written with the map. With the Ask bar connected, Claude or Codex can write more:
-- **More questions** adds new ones at the level you picked, about parts the quiz hasn't covered. Claude Code and Codex can read your code, so their questions can go past the map, like what happens when a payment fails; in the Claude app they come from the map alone.
+- **More** adds new ones for the part and depth you picked, about what the quiz hasn't covered yet. Type a topic first ("sign-in", "what happens when a payment fails") to be asked about just that. Claude Code and Codex can read your code, so their questions can go past the map, like what happens when a payment fails; in the Claude app they come from the map alone.
 - **Quiz me on this**, from a card's right-click menu or its details, asks about just that card.
 - **Recent work** asks about what was just changed, to check you could explain the change yourself.
 - Or type it in the Ask bar: "quiz me", "give me quiz questions about payments", "test me on the recent changes". The quiz opens with questions on what you asked for.
