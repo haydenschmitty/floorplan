@@ -1381,7 +1381,8 @@ function setHash(container, sel) {
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   let v = p.get('v') || 'root', s = p.get('s');
-  if (v !== 'root' && !parentOf.has(v)) v = 'root';
+  // docs and the export hint say #v=<part id>; the viewer keys parts as n:<id>, so a bare id is promoted when it names a part
+  if (v !== 'root' && !parentOf.has(v)) v = parentOf.has('n:' + v) ? 'n:' + v : 'root';
   if (s && !parentOf.has(s) && !s.startsWith('x:') && !s.startsWith('m:')) s = null;
   return { v, s };
 }

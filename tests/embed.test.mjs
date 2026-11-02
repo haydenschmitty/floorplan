@@ -185,3 +185,19 @@ test('an embed hides the overview description unless requested, while other desc
   assert.match(context({ embed: true, container: 'api' }), /Description/);
   assert.match(context({ embed: false }), /Description/);
 });
+
+test('#v= opens the part named by its id as written, with or without the n: prefix', () => {
+  const start = embedded.indexOf('function readHash() {');
+  const end = embedded.indexOf('window.addEventListener', start);
+  const file = dataOf(embedded).files[0].p;
+  const read = (hash) => {
+    const parentOf = new Map([['n:api', 'root'], ['n:web', 'root'], ['f:' + file, 'n:api']]);
+    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf });
+  };
+  assert.equal(read('#v=api').v, 'n:api');
+  assert.equal(read('#v=n:api').v, 'n:api');
+  assert.equal(read('#v=nope').v, 'root');
+  assert.equal(read('').v, 'root');
+  assert.equal(read('#v=' + file).v, 'root', 'a bare file path is not a part');
+  assert.equal(read('#v=api&s=n:web').s, 'n:web');
+});
