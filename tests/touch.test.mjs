@@ -11,7 +11,7 @@ before(() => { root = shopApp(); scanAndBuild(root); html = fs.readFileSync(path
 after(() => cleanup(root));
 
 test('the map takes the touch itself, and the page does not bounce under it (touch screens only)', () => {
-  assert.match(html, /#svg \{ touch-action: none; \}/); // a finger can drag the map, and a pinch doesn't zoom the whole page
+  assert.match(html, /#stage \{ cursor: grab; touch-action: none; \}/); // a finger can drag the map, and a pinch doesn't zoom the whole page
   assert.match(html, /@media \(pointer: coarse\) \{ html, body \{ overscroll-behavior: none; \} \}/);
 });
 
@@ -29,7 +29,7 @@ test('a drag follows only the finger that started it, ends when the browser canc
 });
 
 test('a third finger is ignored, and the click that ends a drag is swallowed once and cleared at the next touch, so the next tap still works', () => {
-  assert.match(html, /swallowClick = false; vp\.classList\.remove\('anim'\)/);
+  assert.match(html, /swallowClick = false; svg\.classList\.remove\('anim'\)/);
   assert.match(html, /if \(ev\.pointerType === 'touch'\) \{\n    if \(fingers\.size >= 2\) return; \/\/ a third finger is ignored/);
 });
 
@@ -40,6 +40,6 @@ test('a tap does not leave a hover tooltip over the details, and a tooltip stays
 });
 
 test('none of this changes a mouse: the glide is only cancelled for a finger, and a mouse drag keeps its original one-time click guard', () => {
-  assert.match(html, /if \(ev\.pointerType === 'touch'\) swallowClick = true; else svg\.addEventListener\('click', \(e\) => e\.stopPropagation\(\), \{ capture: true, once: true \}\)/);
-  assert.match(html, /svg\.addEventListener\('click', \(\) => select\(null\)\);/);
+  assert.match(html, /if \(ev\.pointerType === 'touch'\) swallowClick = true; else stage\.addEventListener\('click', \(e\) => e\.stopPropagation\(\), \{ capture: true, once: true \}\)/);
+  assert.match(html, /stage\.addEventListener\('click', \(\) => select\(null\)\);/);
 });
