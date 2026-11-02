@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Skill installation:** quote the YAML description so the skill installer can parse it (#25).
+- **Blueprints in Codex:** the build report now says a blueprint is "planned, not built yet" in Codex too. Fixed by @owlahikit.
 
 ## 0.6.2 (2026-11-02)
 
