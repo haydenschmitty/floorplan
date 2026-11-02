@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Smoother panning and zooming:** the map now applies one move per frame however many wheel or mouse events arrive, and keeps hover effects, transitions and tooltips out of the way while you drag or zoom (they return a moment after you stop). Cards no longer keep an animation attached after they have appeared, and the zoom-level styling only changes when the zoom crosses a threshold.
+
 ## 0.6.1 (2026-11-01)
 
 - **Fewer false alarms in Health** (thanks to the user who reported these):

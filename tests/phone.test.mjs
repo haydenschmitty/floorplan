@@ -76,7 +76,7 @@ test('on a phone the details panel is a sheet at the bottom that starts closed a
 
 test('tapping a box on a phone opens the details; going into or out of a box, or tapping empty space, closes them', () => {
   assert.match(html, /if \(sel && isPhone\(\) && document\.body\.classList\.contains\('no-panel'\)\) \{ setPanel\(true\); if \(typeof sel === 'string'\) bringIntoView\(sel\); \}/);
-  assert.match(html, /svg\.addEventListener\('click', closeSheet\);/);
+  assert.match(html, /stage\.addEventListener\('click', closeSheet\);/);
   assert.match(html, /closeSheet\(\);\n  go\(item, \{ zoomFrom: item \}\);/);
   assert.match(html, /function up\(\) \{ if \(state\.container === 'root'\) return; closeSheet\(\);/);
   // the choice on a phone is not saved, so it can't close the side panel on a desktop that shares the storage
@@ -90,7 +90,7 @@ test('the top bar height is measured, and everything under it follows', () => {
 
 test('motion is switched off for people who ask for less of it', () => {
   const css = media('(prefers-reduced-motion: reduce) and (max-width: 999px), (prefers-reduced-motion: reduce) and (pointer: coarse)');
-  assert.match(css, /#panel, body\.no-panel #panel, #viewport\.anim, #ask, #flowbar, #zoom button \{ transition: none; \}/);
+  assert.match(css, /#panel, body\.no-panel #panel, #viewport\.anim, #svg\.anim, #ask, #flowbar, #zoom button \{ transition: none; \}/);
 });
 
 /** Runs the one-line start-up script (before anything is drawn) against a pretend browser. */
