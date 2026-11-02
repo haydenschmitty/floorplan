@@ -93,7 +93,20 @@ Replays the one-minute tour that runs the first time you open a map.
 ### Quiz
 Checks that you understood the map: multiple-choice questions like "which part takes card payments?", one at a time. After each answer the card that shows it is highlighted on the map, with a sentence on why, and at the end you can retry the ones you missed. Press **1**–**4** to answer, **Enter** for the next question and **Esc** to stop.
 
-The starter questions are written with the map. With the Ask bar connected, **More questions** has Claude or Codex write new ones about parts the quiz hasn't covered, and **Quiz me on this** in a card's details asks about just that card. Questions that point at something not on the map, or whose answer isn't one of the choices, are left out. New questions last until you close the page; an exported copy keeps only the starter ones.
+Pick how deep to go first:
+- **Big picture:** the main parts on the overview and the outside services, and how they connect;
+- **In detail:** files, endpoints and the smaller parts inside the main ones;
+- **Both**, mixed.
+
+Your best score at each level is kept in this browser.
+
+The starter questions are written with the map. With the Ask bar connected, Claude or Codex can write more:
+- **More questions** adds new ones at the level you picked, about parts the quiz hasn't covered. Claude Code and Codex can read your code, so their questions can go past the map, like what happens when a payment fails; in the Claude app they come from the map alone.
+- **Quiz me on this**, from a card's right-click menu or its details, asks about just that card.
+- **Recent work** asks about what was just changed, to check you could explain the change yourself.
+- Or type it in the Ask bar: "quiz me", "give me quiz questions about payments", "test me on the recent changes". The quiz opens with questions on what you asked for.
+
+Questions that point at something not on the map, or whose answer isn't one of the choices, are left out. New questions last until you close the page; an exported copy keeps only the starter ones.
 
 ### Flows
 Guided walkthroughs of the app's main jobs, like "Checkout" or "Sign up". A flow moves across the board step by step, with a narration at each stop. Use **←** / **→** or the flow bar's buttons to step through, and **Esc** to stop.

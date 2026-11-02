@@ -54,6 +54,7 @@ test('the build leaves out each broken question and says why, without failing th
     { ...QUIZ[0], node: 'shop-api/routes/gone.js' }, // a file renamed or deleted since the quiz was written
     { ...QUIZ[0], question: '' },
     QUIZ[1],
+    { ...QUIZ[0], question: 'Which part is the server?' }, // gives its answer away
   ]);
   assert.ok(r.ok, r.out);
   assert.match(r.out, /quiz\[0\] was left out: answer must be one of its choices/);
@@ -61,6 +62,7 @@ test('the build leaves out each broken question and says why, without failing th
   assert.match(r.out, /quiz\[2\] was left out: choices must be 2-4 strings/);
   assert.match(r.out, /quiz\[3\] was left out: node "shop-api\/routes\/gone\.js" is neither a node id nor an included file/);
   assert.match(r.out, /quiz\[4\] was left out: its question must be a string/);
+  assert.match(r.out, /quiz\[6\] was left out: its answer is in the question/);
   assert.deepEqual(readGraph(root).quiz.map((x) => x.q), [QUIZ[1].question]);
   const notList = buildWith({ question: 'x' });
   assert.ok(notList.ok && /quiz must be an array/.test(notList.out));
@@ -103,6 +105,8 @@ test('More questions asks the agent in its quiz mode, held to the quiz schema', 
   const instructions = args[args.indexOf('--append-system-prompt') + 1];
   assert.match(instructions, /You write quiz questions/);
   assert.match(instructions, /exactly one right/);
+  assert.match(instructions, /Never let the question give the answer away/);
+  assert.match(instructions, /You can read the source/, 'Claude Code can go past the map');
   assert.equal(input, 'Write 4-6 new questions about the shop.');
   assert.ok(!args.includes('--resume'), 'a quiz request does not continue the Ask conversation');
 });

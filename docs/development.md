@@ -106,7 +106,8 @@ When you fix a bug in what Floorplan detects, add a sample that shows it, and ch
 Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order. They talk to the viewer only through `window.Floorplan`, which offers:
 - the graph and lookups;
 - navigation (`go`, `open`, `reveal`, `showBoard`, `playFlow`);
-- `addHeaderButton` and `addPanelSection('overview' | 'item', fn)`;
+- `addHeaderButton`, `addPanelSection('overview' | 'item', fn)` and `addMenuItem(fn)` (a card's right-click menu);
+- the agent: `onAsk(fn)` to take a request typed in the Ask bar, and `requestAgent(mode, prompt, onProgress)` to ask in one of serve.mjs's modes (`cancelAgent` stops it);
 - `modal`, `toast`, `store`;
 - events (`on('ready' | 'render' | 'panel' | 'technical')`);
 - `exported`, set in an exported copy: leave out anything there that needs Claude, Codex or the map's server.

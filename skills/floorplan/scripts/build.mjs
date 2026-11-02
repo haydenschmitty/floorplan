@@ -267,6 +267,8 @@ if (arch.quiz !== undefined) {
     if (!Array.isArray(choices) || choices.length < 2 || choices.length > 4 || !choices.every(isStr)) return skip('choices must be 2-4 strings');
     if (new Set(choices).size !== choices.length) return skip('choices has the same choice twice');
     if (!choices.includes(x.answer)) return skip('answer must be one of its choices, copied exactly');
+    const words = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    if (words(x.answer).length >= 3 && ` ${words(x.question)} `.includes(` ${words(x.answer)} `)) return skip('its answer is in the question, which gives it away; ask about what happens or what depends on it instead');
     const p = isStr(x.node) ? x.node.replace(/^file:/, '') : '';
     const ref = byId.has(x.node) ? `n:${x.node}` : includedSet.has(p) ? `f:${p}` : null;
     if (!ref) return skip(`node "${x.node ?? ''}" is neither a node id nor an included file${isStr(x.node) ? didYouMean(x.node, ids) : ''}`);

@@ -1204,6 +1204,7 @@ function itemMenu(id) {
       : drillable(real) && state.container !== real ? { label: 'Open', icon: 'drill', hint: '2×click', run: () => open(real) } : null,
     state.container === 'q:answer' && !id.startsWith('x:') ? { label: 'Show on the map', icon: 'external', run: () => reveal(real) } : null,
     EXPORTED ? null : { label: 'Ask about this', icon: 'spark', run: () => addAskContext(real) },
+    ...ext.menu.map((fn) => { try { return fn(real); } catch (e) { console.error('floorplan extension', e); return null; } }),
     { label: 'Show details', icon: 'panel', run: () => { setPanel(true); if (id.startsWith('x:')) reveal(real); else select(id); } },
     '-',
     path ? { label: i.type === 'route' ? 'Copy endpoint' : 'Copy path', icon: 'copy', run: () => copy(path) } : null,
@@ -2180,6 +2181,8 @@ async function submitAsk() {
   askInput.value = '';
   askState.context = []; renderChips();
   if (askState.mode === 'change') return requestChange(ctxIds.length ? `${question}\n\nThis is about: ${ctxIds.map((id) => `${id} (${info(id).name})`).join(', ')}.` : question);
+  // an extension can take a request it handles itself ("quiz me on payments" opens the quiz)
+  for (const fn of ext.ask) { try { if (fn(question, ctxIds)) return; } catch (e) { console.error('floorplan extension', e); } }
   const shown = question;
   // what Claude sees: the question plus the pinned items, by id, so it starts from them
   if (ctxIds.length) question += `\n\nFocus on these map items: ${ctxIds.map((id) => `${id} (${info(id).name})`).join(', ')}.`;
@@ -2346,7 +2349,7 @@ function playFlow({ title = 'Tour', description = '', steps = [], inPlace = fals
   state.flow = { f: { id: 'tmp-' + Date.now(), title, description, steps: st }, i: 0, inPlace };
   flowStep();
 }
-const ext = { sections: { overview: [], item: [] }, listeners: {} };
+const ext = { sections: { overview: [], item: [] }, listeners: {}, menu: [], ask: [] };
 const custom = { panel: null };
 function emit(event, data) { for (const fn of ext.listeners[event] || []) { try { fn(data); } catch (e) { console.error('floorplan extension', e); } } }
 window.Floorplan = Object.freeze({
@@ -2387,6 +2390,10 @@ window.Floorplan = Object.freeze({
     return b;
   },
   addPanelSection(where, fn) { (ext.sections[where] ||= []).push(fn); },
+  // a card's right-click menu: fn(id) returns { label, icon, run } or null, shown after "Ask about this"
+  addMenuItem(fn) { ext.menu.push(fn); },
+  // a request typed in the Ask bar: fn(text, pinnedIds) returns true when it handled it, so it isn't asked as a question
+  onAsk(fn) { ext.ask.push(fn); },
   showPanel(html, bind) { custom.panel = { html, bind }; setPanel(true); renderPanel(); },
   closePanel() { custom.panel = null; renderPanel(); },
   modal: showModal, toast, copy: (text) => copy(text),
