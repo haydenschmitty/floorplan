@@ -12,10 +12,29 @@ const lineIndex = (src) => {
 };
 
 const blank = (s) => s.replace(/[^\n]/g, ' ');
-// Strip comments while keeping offsets (so line numbers stay right).
-const stripCStyle = (src) => src
-  .replace(/\/\*[\s\S]*?\*\//g, blank)
-  .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, pre) => pre + blank(m.slice(pre.length)));
+// Strip comments while keeping offsets (so line numbers stay right). Strings are stepped over, so a
+// '/*' inside one (app.use('/api/*', cors())) doesn't start a comment that swallows the code after it.
+const stripCStyle = (src) => {
+  let out = '';
+  for (let i = 0; i < src.length;) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      // quotes end at the line's end, backticks can span lines
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && (c === '`' || src[j] !== '\n')) j += src[j] === '\\' ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    let end = -1;
+    if (c === '/' && src[i + 1] === '*') { end = src.indexOf('*/', i + 2); if (end >= 0) end += 2; }
+    else if (c === '/' && src[i + 1] === '/' && !/[:\\]/.test(src[i - 1] || '')) { end = src.indexOf('\n', i); if (end < 0) end = src.length; }
+    if (end >= 0) { out += blank(src.slice(i, end)); i = end; continue; }
+    out += c;
+    i++;
+  }
+  return out;
+};
 const stripHash = (src) => src.replace(/(^|\s)#[^\n]*/g, (m, pre) => pre + blank(m.slice(pre.length)));
 
 const all = (re, s) => [...s.matchAll(re)];

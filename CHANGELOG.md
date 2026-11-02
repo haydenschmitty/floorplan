@@ -15,6 +15,9 @@
   - Endpoints that change data are still always checked, and "Not a problem" is still there for anything Health can't work out.
 - **FastAPI checks Health missed** (#7), fixed by @Bl0ck154: dependencies named like `metrics_guard`, a token in a `Header` parameter when the handler rejects a bad one, a Twilio-style signature check inside a helper, and `/readyz` and `/livez` as public health checks.
 - **Health reads each Express route's own checks:** a sign-in check in front of a handler defined elsewhere (`router.post('/books', requireAuth, createBook)`) was missed, so the endpoint was reported as open to anyone. The other way round, a route could borrow the check of the route below it, and a handler whose name sounds like a check (`updateUser`) was taken for one, so some open endpoints weren't reported. Fixed by @rudycelekli.
+## Unreleased
+
+- **Code after a `/*` inside a string is read again:** a string such as `'/api/*'` (as in Hono's `app.use('/api/*', cors())`) was taken for the start of a comment, so every endpoint, import and web request from there to the next comment's end was missing from the map. Fixed by @rudycelekli.
 
 ## 0.6.1 (2026-11-01)
 
