@@ -196,14 +196,19 @@
   /** The questions picked on the start screen: the part, the depth and how many, with the title saying which. */
   const startChosen = () => {
     const level = prefs.level, part = scope();
-    start(chosen(level, part), { kind: 'level', count: prefs.count, title: [part && partName(part), level !== 'all' && levelName(level)].filter(Boolean).join(' · ') });
+    const list = chosen(level, part);
+    // req: what More questions on the score screen asks for, the same part and depth
+    start(list, { kind: 'level', count: prefs.count < list.length ? prefs.count : 0, req: { level, ...(part ? { focus: part } : {}) }, title: [part && partName(part), level !== 'all' && levelName(level)].filter(Boolean).join(' · ') });
   };
 
   // the start screen: pick from the questions there are (part, depth, how many), or have the agent write
   // some on a topic of your own
   function renderHome() {
-    const level = prefs.level, part = scope(), count = prefs.count, list = chosen(level, part);
-    const ask = canAsk(), n = count ? Math.min(count, list.length) : list.length;
+    const level = prefs.level, part = scope(), list = chosen(level, part);
+    // only counts there are enough questions for, then all of them; a saved count that's too big means all
+    const counts = [...COUNTS.filter((c) => c && c < list.length), 0];
+    const count = counts.includes(prefs.count) ? prefs.count : 0;
+    const ask = canAsk(), n = count || list.length;
     const parts = PARTS.filter((p) => ask || p.id === part || chosen('all', p.id).length);
     const tally = (id) => { const c = chosen('all', id).length; return c ? ` · ${c}` : ''; };
     card.innerHTML = `${closeBtn}${kicker()}
@@ -212,10 +217,10 @@
       <select id="quiz-part" data-part>${[{ id: '', name: 'The whole app' }, ...parts].map((p) => `<option value="${h(p.id)}" ${p.id === part ? 'selected' : ''}>${p.sub ? '    ' : ''}${h(p.name)}${p.id ? tally(p.id) : ''}</option>`).join('')}</select>
       <span class="qlab">How deep</span>
       <div class="ql" role="radiogroup" aria-label="How deep">${LEVELS.map((l) => `<button role="radio" aria-checked="${l.id === level}" class="${l.id === level ? 'on' : ''}" data-level="${l.id}" title="${h(l.hint)}">${h(l.label)}</button>`).join('')}</div>
-      <span class="qlab">Questions</span>
-      <div class="ql n" role="radiogroup" aria-label="How many questions">${COUNTS.map((c) => `<button role="radio" aria-checked="${c === count}" class="${c === count ? 'on' : ''}" data-count="${c}">${c || `All ${list.length}`}</button>`).join('')}</div>
+      ${counts.length > 1 ? `<span class="qlab">Questions</span>
+      <div class="ql n" role="radiogroup" aria-label="How many questions">${counts.map((c) => `<button role="radio" aria-checked="${c === count}" class="${c === count ? 'on' : ''}" data-count="${c}">${c || `All ${list.length}`}</button>`).join('')}</div>` : ''}
       ${list.length ? `<button class="btn primary qgo" data-go>Start ${SC.plural(n, 'question')}</button>`
-        : `<div class="qh">No ${level === 'all' ? '' : levelName(level).toLowerCase() + ' '}questions about ${h(part ? partName(part) : 'the app')} yet.${ask ? ` Write some below.` : SC.exported ? '' : ` ${window.FLOORPLAN_SERVER ? WHY.cli_missing : WHY.no_engine}`}</div>`}
+        : `<div class="qh">No ${{ big: 'big-picture ', detail: 'detailed ', all: '' }[level]}questions about ${h(part ? partName(part) : 'the app')} yet.${ask ? ` Write some below.` : SC.exported ? '' : ` ${window.FLOORPLAN_SERVER ? WHY.cli_missing : WHY.no_engine}`}</div>`}
       ${ask ? `<div class="qor">or</div>
       <form class="qa" data-topic><input name="t" maxlength="300" autocomplete="off" placeholder="Your own topic, e.g. sign-in" aria-label="Topic for new questions"><button class="btn soft" type="submit" title="${h(A.name)} writes new questions on this topic, or on the part above if it's empty">${SC.iconI('spark')}Write</button></form>
       ${recent ? `<div class="qh">Or <button class="lnk" data-recent>quiz me on recent work</button>, to check you can explain what just changed.</div>` : ''}` : ''}`;
@@ -244,7 +249,10 @@
       renderHome();
     } else if (round.done) {
       const n = round.list.length, s = score(), missed = round.list.filter((x) => x.picked !== x.answer);
-      const note = s === n ? 'Every one right. You know how this fits together.' : s >= n / 2 ? 'Most of the way there. The ones you missed are worth another look on the map.' : 'A good start. Try the tour again, then the ones you missed.';
+      const note = s === n ? 'Every one right. You know how this fits together.'
+        : s >= n / 2 ? 'Most of the way there. The ones you missed are worth another look on the map.'
+        : s ? 'Some right. Look at the cards for the ones you missed, then try them again.'
+        : 'None right this time. The tour and the highlighted cards are a good place to start, then try again.';
       // at most two buttons: the close button already ends the quiz, and the Quiz button reopens the start
       const again = missed.length ? `<button class="btn primary" data-again>Retry ${missed.length === 1 ? 'the one' : `the ${missed.length}`} you missed</button>` : '';
       const more = canAsk() ? `<button class="btn ${missed.length ? 'soft' : 'primary'}" data-more>${SC.iconI('spark')}More questions</button>` : '';
