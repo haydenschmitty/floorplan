@@ -93,7 +93,10 @@
     rate_limited: `${h(A.name)} is busy or you have hit a usage limit. Try again in a bit.`,
     quiz_empty: `${h(A.name)} didn't come back with questions that fit the map. Try again.`,
   };
-  const failure = (e) => WHY[e?.code] || h(e?.message || 'Something went wrong.');
+  // the browser's own "Failed to fetch": the map's server stopped since the page was opened
+  const failure = (e) => WHY[e?.code] || (e instanceof TypeError && window.FLOORPLAN_SERVER
+    ? 'Couldn’t reach the map’s server, which may have stopped. Start it again with <code>node floorplan/serve.mjs</code> in the codebase, then reload this page.'
+    : h(e?.message || 'Something went wrong.'));
 
   /** The card that shows an answer: highlighted where it sits, like a tour stop. */
   function show(ref) {
