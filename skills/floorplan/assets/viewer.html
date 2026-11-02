@@ -2148,11 +2148,12 @@ async function askViaApp(question, progress, mode = 'ask') {
  *  Stop button cancels it, which rejects with an AbortError. */
 async function requestAgent(mode, prompt, progress = () => {}) {
   if (!askState.engine) throw { code: window.FLOORPLAN_SERVER ? 'cli_missing' : 'no_engine' };
-  if (askState.busy) cancelAsk();
+  // never cut off a question the person is waiting on: they can stop it themselves
+  if (askState.busy) throw { code: 'busy', message: `${AGENT.name} is still working on another request. Wait for it, or press Stop in the Ask bar.` };
   setBusy(true);
-  askState.ctl = new AbortController();
+  const ctl = askState.ctl = new AbortController();
   try { return askState.engine === 'cli' ? await askViaCli(prompt, progress, mode) : await askViaApp(prompt, progress, mode); }
-  finally { setBusy(false); }
+  finally { if (askState.ctl === ctl) setBusy(false); } // a newer request (a flow, a question) keeps its own Stop
 }
 
 askState.context = [];

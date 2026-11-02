@@ -70,11 +70,17 @@
   // screen opens on what's in view (the part card selected, else the part being looked inside), and the
   // person can pick any other.
   const isPart = (id) => typeof id === 'string' && id.startsWith('n:') && id !== 'n:unassigned' && SC.exists(id);
-  const PARTS = G.nodes.filter((n) => !n.parent && n.id !== 'unassigned').flatMap((n) => [
-    { id: 'n:' + n.id, name: n.label, sub: false },
-    ...G.nodes.filter((c) => c.parent === n.id).map((c) => ({ id: 'n:' + c.id, name: c.label, sub: true })),
-  ]).filter((p) => SC.exists(p.id));
+  // every main part, each with all the parts inside it at any depth ("Server › Payments › Refunds")
+  const kids = (id) => G.nodes.filter((c) => c.parent === id);
+  const inside = (id, trail) => kids(id).flatMap((c) => {
+    const name = trail ? `${trail} › ${c.label}` : c.label;
+    return [{ id: 'n:' + c.id, name }, ...inside(c.id, name)];
+  });
+  const PARTS = G.nodes.filter((n) => !n.parent && n.id !== 'unassigned')
+    .map((n) => ({ id: 'n:' + n.id, name: n.label, inside: inside(n.id, '').filter((p) => SC.exists(p.id)) }))
+    .filter((p) => SC.exists(p.id));
   let picked = null; // the part picked on the start screen; null follows the map until then
+  let draft = ''; // a topic being typed on the start screen
   function scope() {
     if (picked !== null) return picked;
     if (isPart(SC.state.selected)) return SC.state.selected;
@@ -209,12 +215,20 @@
     const counts = [...COUNTS.filter((c) => c && c < list.length), 0];
     const count = counts.includes(prefs.count) ? prefs.count : 0;
     const ask = canAsk(), n = count || list.length;
-    const parts = PARTS.filter((p) => ask || p.id === part || chosen('all', p.id).length);
+    // a part is listed when it has questions, when new ones can be written, or when it's the one in use
+    const listed = (p) => ask || p.id === part || chosen('all', p.id).length;
     const tally = (id) => { const c = chosen('all', id).length; return c ? ` · ${c}` : ''; };
+    const opt = (id, name) => `<option value="${h(id)}" ${id === part ? 'selected' : ''}>${h(name)}${id ? tally(id) : ''}</option>`;
+    // each main part is a group: the part as a whole first, then the parts inside it
+    const options = PARTS.map((p) => {
+      const sub = p.inside.filter(listed);
+      if (!sub.length) return listed(p) ? opt(p.id, p.name) : '';
+      return `<optgroup label="${h(p.name)}">${opt(p.id, `All of ${p.name}`)}${sub.map((s) => opt(s.id, s.name)).join('')}</optgroup>`;
+    }).join('');
     card.innerHTML = `${closeBtn}${kicker()}
       <div class="qt">Test yourself on ${h(part ? partName(part) : PROJECT)}</div>
       <label class="qlab" for="quiz-part">Part of the app</label>
-      <select id="quiz-part" data-part>${[{ id: '', name: 'The whole app' }, ...parts].map((p) => `<option value="${h(p.id)}" ${p.id === part ? 'selected' : ''}>${p.sub ? '    ' : ''}${h(p.name)}${p.id ? tally(p.id) : ''}</option>`).join('')}</select>
+      <select id="quiz-part" data-part>${opt('', 'The whole app')}${options}</select>
       <span class="qlab">How deep</span>
       <div class="ql" role="radiogroup" aria-label="How deep">${LEVELS.map((l) => `<button role="radio" aria-checked="${l.id === level}" class="${l.id === level ? 'on' : ''}" data-level="${l.id}" title="${h(l.hint)}">${h(l.label)}</button>`).join('')}</div>
       ${counts.length > 1 ? `<span class="qlab">Questions</span>
@@ -222,18 +236,22 @@
       ${list.length ? `<button class="btn primary qgo" data-go>Start ${SC.plural(n, 'question')}</button>`
         : `<div class="qh">No ${{ big: 'big-picture ', detail: 'detailed ', all: '' }[level]}questions about ${h(part ? partName(part) : 'the app')} yet.${ask ? ` Write some below.` : SC.exported ? '' : ` ${window.FLOORPLAN_SERVER ? WHY.cli_missing : WHY.no_engine}`}</div>`}
       ${ask ? `<div class="qor">or</div>
-      <form class="qa" data-topic><input name="t" maxlength="300" autocomplete="off" placeholder="Your own topic, e.g. sign-in" aria-label="Topic for new questions"><button class="btn soft" type="submit" title="${h(A.name)} writes new questions on this topic, or on the part above if it's empty">${SC.iconI('spark')}Write</button></form>
+      <form class="qa" data-topic><input name="t" maxlength="300" autocomplete="off" value="${h(draft)}" placeholder="Your own topic, e.g. sign-in" aria-label="Topic for new questions"><button class="btn soft" type="submit" title="${h(A.name)} writes new questions on this topic, or on the part and depth above if it's empty">${SC.iconI('spark')}Write</button></form>
       ${recent ? `<div class="qh">Or <button class="lnk" data-recent>quiz me on recent work</button>, to check you can explain what just changed.</div>` : ''}` : ''}`;
     card.querySelector('[data-part]').onchange = (ev) => { picked = ev.target.value; render(); card.querySelector('[data-part]')?.focus(); };
     card.querySelectorAll('[data-level]').forEach((b) => b.onclick = () => { prefs.level = b.dataset.level; render(); });
     card.querySelectorAll('[data-count]').forEach((b) => b.onclick = () => { prefs.count = b.dataset.count; render(); });
     card.querySelector('[data-go]')?.addEventListener('click', startChosen);
     card.querySelector('[data-recent]')?.addEventListener('click', () => more({ recent: true }));
-    // the agent writes questions on the typed topic, or on the part and depth above when there's none
-    card.querySelector('[data-topic]')?.addEventListener('submit', (ev) => {
+    // the agent writes questions on the typed topic (instead of the picks above), or on the part and depth
+    // above when there's none. What's typed survives the card redrawing as the picks change.
+    const form = card.querySelector('[data-topic]');
+    form?.t.addEventListener('input', () => { draft = form.t.value; });
+    form?.addEventListener('submit', (ev) => {
       ev.preventDefault();
-      const asked = ev.target.t.value.trim();
-      more({ level: prefs.level, focus: scope() || undefined, ...(asked ? { asked } : {}) });
+      const asked = form.t.value.trim();
+      draft = '';
+      more(asked ? { asked } : { level: prefs.level, ...(scope() ? { focus: scope() } : {}) });
     });
   }
 
@@ -293,6 +311,16 @@
     card.style.bottom = Math.min(bottom, Math.max(76, innerHeight - card.offsetHeight - 80)) + 'px';
   }
   window.addEventListener('resize', () => { if (active()) place(); });
+  // an answer opening in the Ask bar grows upward: move out of its way, again once it has finished
+  // sliding in (it's measured mid-animation the first time, lower than where it ends up)
+  // (watching what changes in it, not its size: size observers don't run while the page isn't drawn)
+  const replace = () => { if (active()) place(); };
+  const askSheet = document.getElementById('ask-sheet');
+  if (askSheet) {
+    new MutationObserver(() => { replace(); setTimeout(replace, 450); }).observe(askSheet, { attributes: true, attributeFilter: ['hidden'], childList: true, subtree: true });
+    askSheet.addEventListener('animationend', replace);
+    askSheet.addEventListener('transitionend', replace);
+  }
 
   function pick(k) {
     const x = round?.list[round.at];
@@ -328,7 +356,7 @@
     if (!active()) return;
     const wasLoading = !!loading;
     home = false; round = null; loading = null; failed = null;
-    picked = null; // next time, start from what's in view again
+    picked = null; draft = ''; // next time, start from what's in view again
     card.hidden = true;
     if (wasLoading) SC.cancelAgent();
     if (SC.state.container === 'root') SC.select(null);
@@ -340,23 +368,25 @@
     render();
   }
 
-  /** The request for new questions: at a level, about one card, or about recent work, plus the person's own words when they typed it. */
+  const cut = (s, max) => (s.length > max ? s.slice(0, max).replace(/\n[^\n]*$/, '') + '\n…' : s);
+  /** The request for new questions: on a topic the person typed, about one card, about recent work, or at a
+   *  level. The server keeps the first 4000 characters, so what matters most comes first and the long lists are cut. */
   function promptFor({ level, focus, recent: aboutRecent, asked }) {
     const name = focus ? SC.info(focus)?.name || focus : '';
     const lines = [];
     if (focus) lines.push(`Write 3-5 questions about ${name} (${focus}): what it is for, what it uses and what uses it.${level === 'big' ? ' Keep to how it fits with the rest of the app.' : level === 'detail' ? ' Ask about the files, endpoints and smaller parts inside it.' : ''}`);
-    else if (aboutRecent) {
-      lines.push('Write 3-5 questions that check the person can explain the recent work below: what changed, why it was needed, and what else it affects. Use the changed cards, or the cards they connect to, as ids.');
-      lines.push(`Recent work:\n${recent.tasks.map((t, i) => {
-        const its = recent.items.filter((it) => it.task === i);
-        return `- ${t.title}${t.request ? ` (asked for: ${t.request})` : ''}: ${t.summary || ''}\n${its.map((it) => `  - ${it.id} (${SC.info(it.id)?.name || it.id}), ${it.change === 'new' ? 'new' : 'changed'}: ${it.note || ''}`).join('\n')}`;
-      }).join('\n')}`);
-    } else lines.push(`Write 4-6 new questions about ${PROJECT}, covering parts of the app the questions below leave out.${LEVEL_ASK[level] ? ' ' + LEVEL_ASK[level] : ''}`);
-    if (asked) lines.push(`The person asked for this quiz in their own words, so follow what they asked for (a topic, how many, how hard): "${asked}"`);
+    else if (aboutRecent) lines.push('Write 3-5 questions that check the person can explain the recent work below: what changed, why it was needed, and what else it affects. Use the changed cards, or the cards they connect to, as ids.');
+    else if (asked) lines.push(`Write 4-6 questions about ${PROJECT} on the topic the person typed, using whichever map items it involves.`);
+    else lines.push(`Write 4-6 new questions about ${PROJECT}, covering parts of the app the questions below leave out.${LEVEL_ASK[level] ? ' ' + LEVEL_ASK[level] : ''}`);
+    if (asked) lines.push(`In their own words (follow what they ask for: a topic, how many, how hard): "${asked.slice(0, 300)}"`);
     if (SC.technical()) lines.push('This person has the map\'s developer detail on, so technical terms and file names are fine.');
-    // the most recent questions are enough to steer clear of repeats, and keep the request short
-    const have = pool.slice(-30).map((x) => `- ${x.q}`).join('\n');
-    if (have) lines.push(`Questions the person already has:\n${have}`);
+    if (aboutRecent) lines.push(cut(`Recent work:\n${recent.tasks.map((t, i) => {
+      const its = recent.items.filter((it) => it.task === i);
+      return `- ${t.title}${t.request ? ` (asked for: ${t.request})` : ''}: ${t.summary || ''}\n${its.map((it) => `  - ${it.id} (${SC.info(it.id)?.name || it.id}), ${it.change === 'new' ? 'new' : 'changed'}: ${it.note || ''}`).join('\n')}`;
+    }).join('\n')}`, 1800));
+    // the most recent questions are enough to steer clear of repeats
+    const have = pool.slice(-30).reverse().map((x) => `- ${x.q}`).join('\n');
+    if (have) lines.push(cut(`Questions the person already has:\n${have}`, 1200));
     return lines.join('\n\n');
   }
   /** Has the agent write new questions, then asks them. req: { level } or { focus: id } or { recent: true }. */
@@ -365,9 +395,10 @@
     if (!canAsk()) return fail('New questions need the Ask bar', WHY[window.FLOORPLAN_SERVER ? 'cli_missing' : 'no_engine'], req, false);
     if (req.recent && !recent) return;
     const name = req.focus ? SC.info(req.focus)?.name || req.focus : '';
-    const title = req.asked ? 'Your questions' : req.focus ? name : req.recent ? 'Recent work' : req.level && req.level !== 'all' ? levelName(req.level) : 'New questions';
+    const topic = req.asked && !req.focus && !req.recent ? `“${req.asked.length > 60 ? req.asked.slice(0, 57) + '…' : req.asked}”` : '';
+    const title = req.focus ? name : req.recent ? 'Recent work' : topic ? 'Your topic' : req.level && req.level !== 'all' ? levelName(req.level) : 'New questions';
     home = false; round = null; failed = null;
-    const mine = loading = { label: req.focus ? `Writing questions about ${name}` : req.recent ? 'Writing questions about recent work' : 'Writing new questions', lines: ['Thinking…'] };
+    const mine = loading = { label: `Writing questions about ${req.focus ? name : req.recent ? 'recent work' : topic || (req.level && req.level !== 'all' ? `the ${levelName(req.level).toLowerCase()}` : PROJECT)}`, lines: ['Thinking…'] };
     openCard();
     render();
     try {
@@ -388,14 +419,14 @@
 
   // asking for a quiz in the Ask bar ("quiz me", "give me quiz questions about payments", "test me on
   // recent changes") opens it here instead of answering in words
-  // only a request for a quiz: "where is the quiz scored?" about an app that has its own quiz is a question
-  const WANTS_QUIZ = /^\s*quiz\b|\bquiz me\b|\b(give|make|write|generate|create|start)( me)?( a| an| some| more| the)? (quiz|practice questions|test questions)\b|\btest (me|my (knowledge|understanding))\b/i;
+  // only a request addressed to the person asking ("quiz me", "give me a quiz", "test me"): about an app
+  // with quizzes or tests of its own, "how does a teacher create a quiz?" is a question to answer
+  const WANTS_QUIZ = /^\s*quiz( me| us)?\s*[.!?]*\s*$|\bquiz (me|us)\b|\btest (me|us)\b|\b(give|make|write|generate|create)( me| us)( a| an| some| more)? (quiz|quizzes|quiz questions|practice questions)\b|\bgive me (a |some |more )?quiz\b/i;
   SC.onAsk?.((text, pinned) => {
     if (!WANTS_QUIZ.test(text)) return false;
     if (!canAsk()) { openHome(); return true; }
     const focus = pinned[0];
-    const level = /\bbig[- ]picture|\boverview|\bmain parts|\bhigh[- ]level|\beasy\b/i.test(text) ? 'big' : /\bdetail|\bfiles?\b|\bendpoints?\b|\bhard(er)?\b|\bdeep(er)?\b/i.test(text) ? 'detail' : 'all';
-    more(focus ? { focus, asked: text } : recent && /\brecent|\bchange|\bjust (did|made|built)/i.test(text) ? { recent: true, asked: text } : { level, asked: text });
+    more(focus ? { focus, asked: text } : recent && /\brecent|\bchange|\bjust (did|made|built)/i.test(text) ? { recent: true, asked: text } : { asked: text });
     return true;
   });
 
@@ -416,10 +447,14 @@
     };
   });
 
+  // a menu the map has open (right-click, Flows, Filters) gets Esc first
+  const menuOpen = () => document.getElementById('ctxmenu')?.hidden === false || !!document.querySelector('#flowmenu.open, #legend.open');
   window.addEventListener('keydown', (ev) => {
     if (!active() || ['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName) || ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const stop = () => { ev.stopPropagation(); ev.preventDefault(); };
-    if (ev.key === 'Escape') { stop(); close(); return; }
+    if (ev.key === 'Escape') { if (menuOpen()) return; stop(); close(); return; }
+    // Enter on a focused button or link is that control's own click, not "start" or "next"
+    if (ev.key === 'Enter' && ev.target?.closest?.('button, a, [role="button"], [contenteditable="true"]')) return;
     if (home && ev.key === 'Enter' && chosen(prefs.level, scope()).length) { stop(); startChosen(); return; }
     if (!round || round.done) return;
     const x = round.list[round.at];

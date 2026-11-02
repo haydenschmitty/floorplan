@@ -80,6 +80,16 @@ test('an export keeps the starter questions along with flows and the tour, and d
   assert.deepEqual(dataOf(without).quiz, []);
 });
 
+test("on a blueprint, the agent is sent to the plan, not to source files that don't exist", () => {
+  const src = fs.readFileSync(path.join(REPO, 'skills', 'floorplan', 'assets', 'graph-query.js'), 'utf8');
+  const instructions = new Function(`${src}; return floorplanQuizInstructions;`)();
+  const plan = instructions({ project: { name: 'Shop' }, meta: { blueprint: { source: 'PRD.md' } } }, 'cli');
+  assert.match(plan, /floorplan\/plan\.json and PRD\.md/);
+  assert.doesNotMatch(plan, /You can read the source/);
+  assert.match(instructions({ project: { name: 'Shop' }, meta: {} }, 'cli'), /You can read the source/);
+  assert.match(instructions({ project: { name: 'Shop' }, meta: { blueprint: {} } }, 'app'), /hasn't been built yet/);
+});
+
 test('More questions asks the agent in its quiz mode, held to the quiz schema', async () => {
   assert.ok(buildWith(QUIZ).ok);
   const log = path.join(root, 'fake.log');
