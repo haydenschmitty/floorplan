@@ -15,6 +15,9 @@
   - Endpoints that change data are still always checked, and "Not a problem" is still there for anything Health can't work out.
 - **FastAPI checks Health missed** (#7), fixed by @Bl0ck154: dependencies named like `metrics_guard`, a token in a `Header` parameter when the handler rejects a bad one, a Twilio-style signature check inside a helper, and `/readyz` and `/livez` as public health checks.
 - **Health reads each Express route's own checks:** a sign-in check in front of a handler defined elsewhere (`router.post('/books', requireAuth, createBook)`) was missed, so the endpoint was reported as open to anyone. The other way round, a route could borrow the check of the route below it, and a handler whose name sounds like a check (`updateUser`) was taken for one, so some open endpoints weren't reported. Fixed by @rudycelekli.
+## Unreleased
+
+- **Django endpoints get their full address:** an app's `urls.py` included by the project (`path("api/orders/", include("orders.urls"))`) now puts its endpoints under that prefix, as `/api/orders/<int:pk>` rather than `/<int:pk>`, so the website's requests link to them. The include line itself is no longer listed as an endpoint, and the project's `urls.py` links to the app's. Fixed by @rudycelekli.
 
 ## 0.6.1 (2026-11-01)
 
