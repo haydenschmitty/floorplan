@@ -254,6 +254,22 @@ if (arch.tour !== undefined) {
     if (ref) outTour.push({ ref, title: isStr(s.title) ? s.title : '', note: isStr(s.note) ? s.note : '' });
   });
 }
+// Quiz: multiple-choice questions written by Claude in architecture.json, each pointing at the card
+// (node id or file path) that shows the answer
+const outQuiz = [];
+if (arch.quiz !== undefined) {
+  if (!Array.isArray(arch.quiz)) err('quiz must be an array of { question, choices, answer, node, explain }');
+  else arch.quiz.forEach((x, i) => {
+    const where = `quiz[${i}]`;
+    if (!isStr(x?.question)) return err(`${where}.question must be a string`);
+    const choices = x.choices;
+    if (!Array.isArray(choices) || choices.length < 2 || choices.length > 4 || !choices.every(isStr)) return err(`${where}.choices must be 2-4 strings`);
+    if (new Set(choices).size !== choices.length) return err(`${where}.choices has the same choice twice`);
+    if (!choices.includes(x.answer)) return err(`${where}.answer must be one of its choices, copied exactly`);
+    const ref = resolveEndpoint(x.node, `${where}.node`);
+    if (ref) outQuiz.push({ q: x.question, choices, answer: x.answer, ref, explain: isStr(x.explain) ? x.explain : '' });
+  });
+}
 // "Recent work": what Claude just changed, per task, framed against what the user asked for
 // (floorplan/recent-work.json, rewritten on every make/update). Stale refs are warnings, never errors.
 let outRecent = null;
@@ -411,6 +427,7 @@ const graph = {
   links: [...links.values()],
   flows: outFlows,
   tour: outTour,
+  quiz: outQuiz,
   ...(outRecent?.items.length ? { recent: outRecent } : {}),
 };
 // extension hooks, computed from the finished graph plus the raw scan

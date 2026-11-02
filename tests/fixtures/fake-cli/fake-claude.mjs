@@ -23,6 +23,15 @@ process.stdin.on('end', () => {
   }
   out({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'node floorplan/query.mjs overview' } }] } });
   out({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'shop-api/routes/orders.js' } }] } });
+  // more quiz questions: one good, and two the map must drop (an answer that isn't a choice, a card that doesn't exist)
+  if (schema.includes('"explain"')) {
+    out({ type: 'result', subtype: 'success', is_error: false, session_id: 'test-session', structured_output: { questions: [
+      { question: 'Which file handles refunds?', choices: ['Orders routes', 'Notes routes', 'The website'], answer: 'Orders routes', id: 'f:shop-api/routes/orders.js', explain: 'The refund endpoint lives with the other order endpoints.' },
+      { question: 'What stores notes?', choices: ['Website', 'Server'], answer: 'Database', id: 'n:api', explain: '' },
+      { question: 'What sends emails?', choices: ['Mailer', 'Server'], answer: 'Mailer', id: 'n:mailer', explain: '' },
+    ] } });
+    return;
+  }
   out({ type: 'result', subtype: 'success', is_error: false, session_id: 'test-session', structured_output: {
     title: 'Refunds', answer: 'Refunds go through [[f:shop-api/routes/orders.js]].',
     items: [{ id: 'f:shop-api/routes/orders.js', note: 'Holds the refund endpoint.' }],

@@ -2124,13 +2124,26 @@ async function askViaApp(question, progress, mode = 'ask') {
       inputSchema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] },
       execute: ({ from, to }) => { progress('Tracing a dependency path'); return clip(Q.path(String(from), String(to))); } },
   ];
-  const flow = mode === 'flow';
-  const rules = `${flow ? floorplanFlowInstructions(G, 'app') : floorplanAskInstructions(G, 'app')}\nThe JSON must match this schema:\n${JSON.stringify(flow ? FLOORPLAN_FLOW_SCHEMA : FLOORPLAN_ANSWER_SCHEMA)}\n\nMap overview:\n${clip(Q.overview())}`;
-  const turns = [{ role: 'user', content: rules }, ...(flow ? [] : askState.turns.slice(-6)), { role: 'user', content: question }];
+  // a flow or quiz request stands alone: it gets no earlier questions, and isn't added to them
+  const [instructions, schema] = { flow: [floorplanFlowInstructions, FLOORPLAN_FLOW_SCHEMA], quiz: [floorplanQuizInstructions, FLOORPLAN_QUIZ_SCHEMA] }[mode] || [floorplanAskInstructions, FLOORPLAN_ANSWER_SCHEMA];
+  const own = mode !== 'ask';
+  const rules = `${instructions(G, 'app')}\nThe JSON must match this schema:\n${JSON.stringify(schema)}\n\nMap overview:\n${clip(Q.overview())}`;
+  const turns = [{ role: 'user', content: rules }, ...(own ? [] : askState.turns.slice(-6)), { role: 'user', content: question }];
   const answer = await askState.sample.json(turns, { tools, signal: askState.ctl.signal });
-  if (flow) return answer || {};
+  if (own) return answer || {};
   askState.turns.push({ role: 'user', content: question }, { role: 'assistant', content: JSON.stringify({ title: answer?.title, answer: answer?.answer }) });
   return answer || {};
+}
+
+/** An extension's own request to the agent in one of its modes ('quiz'): the raw JSON answer. The Ask bar's
+ *  Stop button cancels it, which rejects with an AbortError. */
+async function requestAgent(mode, prompt, progress = () => {}) {
+  if (!askState.engine) throw { code: window.FLOORPLAN_SERVER ? 'cli_missing' : 'no_engine' };
+  if (askState.busy) cancelAsk();
+  setBusy(true);
+  askState.ctl = new AbortController();
+  try { return askState.engine === 'cli' ? await askViaCli(prompt, progress, mode) : await askViaApp(prompt, progress, mode); }
+  finally { setBusy(false); }
 }
 
 askState.context = [];
@@ -2343,6 +2356,7 @@ window.Floorplan = Object.freeze({
   closeMenus: () => { closeMenu(); fm.classList.remove('open'); legendEl.classList.remove('open'); },
   // asking
   addAskContext, ask: (text) => { closeSheet(); askInput.value = text; submitAsk(); }, askEngine: () => askState.engine,
+  requestAgent, cancelAgent: () => { if (askState.busy) cancelAsk(); },
   // a blueprint's Change mode: whether it's available here, and putting a request in the Ask bar to finish and send
   canChange: () => canChange(),
   draftChange(text) {

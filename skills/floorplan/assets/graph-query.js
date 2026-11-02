@@ -200,6 +200,21 @@ const FLOORPLAN_FLOW_SCHEMA = {
   required: ['title', 'steps'],
 };
 
+// Requested quiz questions: multiple choice, each about one map item (JSON Schema).
+const FLOORPLAN_QUIZ_SCHEMA = {
+  type: 'object',
+  properties: {
+    questions: { type: 'array', description: '3-6 new multiple-choice questions.', items: { type: 'object', properties: {
+      question: { type: 'string', description: 'The question in plain words, at most 20 words.' },
+      choices: { type: 'array', description: '3 or 4 short answers, at most 8 words each, exactly one of them right.', items: { type: 'string' } },
+      answer: { type: 'string', description: 'The right answer, copied exactly from choices.' },
+      id: { type: 'string', description: 'The map item that shows the answer, highlighted after answering.' },
+      explain: { type: 'string', description: 'Why that answer is right, one or two plain sentences, at most 35 words.' },
+    }, required: ['question', 'choices', 'answer', 'id', 'explain'] } },
+  },
+  required: ['questions'],
+};
+
 // A requested change to a blueprint: the whole updated plan.json and architecture.json, and what changed
 // (JSON Schema). The documents travel as JSON text so the schema stays the same for every engine.
 const FLOORPLAN_CHANGE_SCHEMA = {
@@ -238,6 +253,20 @@ function floorplanFlowInstructions(G, engine) {
     'Use 3-9 steps. Prefer the most specific item that tells the story (an endpoint over its file, a file over its module), and make consecutive steps things that really call or import each other.',
     'Reply with JSON only: {"title", "description", "steps": [{"id", "note"}]}. Only use ids the map gave you.',
   ].join('\n');
+}
+
+function floorplanQuizInstructions(G, engine) {
+  return [
+    `You write quiz questions for an interactive architecture map of the codebase "${G.project.name}". The quiz checks that someone exploring the map understood how the app fits together: what each part is for, what talks to what, and what happens when someone uses it.`,
+    engine === 'cli'
+      ? 'Find the items with `node floorplan/query.mjs overview`, `find "<words>"`, `show <id>` and `path <fromId> <toId>`; read source files when a question needs a detail the map does not have.'
+      : 'Find the items with the tools find_items, get_item and dependency_path. You cannot read source files, so ask only about what the map shows.',
+    G.meta?.blueprint ? 'This map is a blueprint: a plan of a system that has not been built yet. Ask about what would be built and why.' : '',
+    'Each question is about one map item (module n:..., file f:..., endpoint r:..., or export s:...), which is highlighted on the map after answering, so pick the item that best shows the answer.',
+    'Write for the app\'s owner, who may never read the code: plain words, and no jargon or file names in the question unless the request asks for a developer quiz. Ask what things are for and how they connect, not trivia like line counts or file types.',
+    'Give 3 or 4 choices with exactly one right, and make the wrong ones believable, using real parts of this app where you can. Copy the right one into answer exactly, and say why it is right in explain.',
+    'Do not repeat a question the request says the person already has. Reply with JSON only: {"questions": [{"question", "choices", "answer", "id", "explain"}]}. Only use ids the map gave you.',
+  ].filter(Boolean).join('\n');
 }
 
 function floorplanAskInstructions(G, engine) {
