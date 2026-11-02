@@ -93,10 +93,15 @@ Replays the one-minute tour that runs the first time you open a map.
 ### Quiz
 Checks that you understood the map: multiple-choice questions like "which part takes card payments?", one at a time. After each answer the card that shows it is highlighted on the map, with a sentence on why, and at the end you can retry the ones you missed. Press **1**–**4** to answer, **Enter** for the next question and **Esc** to stop.
 
-The quiz is about what you're looking at: the whole app on the overview, or the part you've opened or selected on the map (**Whole app instead** switches back). Pick how deep to go: **Big picture** (the main parts and how they connect), **Details** (files, endpoints and the smaller parts inside) or **Mixed**. Rounds are up to 10 questions, ones you haven't answered right yet first, and the quiz remembers in this browser what you've got right.
+Choose what you're asked:
+- **Part of the app:** starts on what you're looking at on the map, and you can pick any other part or the whole app;
+- **How deep:** **Big picture** (the main parts and how they connect), **Details** (files, endpoints and the smaller parts inside) or **Mixed**;
+- **Questions:** 5, 10, 20 or all of them. Ones you haven't answered right yet come first; the quiz remembers in this browser what you've got right.
+
+**Or** type your own topic and Claude or Codex writes questions on it (see below).
 
 The starter questions are written with the map. With the Ask bar connected, Claude or Codex can write more:
-- **New questions** adds ones about what you're looking at, at the depth you picked, covering what the quiz hasn't asked yet. Claude Code and Codex can read your code, so their questions can go past the map, like what happens when a payment fails; in the Claude app they come from the map alone.
+- Under **or**, type a topic ("sign-in", "what happens when a payment fails") and press **Write**. Left empty, **Write** adds new questions about the part and depth you picked, covering what the quiz hasn't asked yet. Claude Code and Codex can read your code, so their questions can go past the map, like what happens when a payment fails; in the Claude app they come from the map alone.
 - **Quiz me on this**, from a card's right-click menu or its details, asks about just that card.
 - **Recent work** asks about what was just changed, to check you could explain the change yourself.
 - Or type it in the Ask bar: "quiz me", "give me quiz questions about payments", "test me on the recent changes". The quiz opens with questions on what you asked for.

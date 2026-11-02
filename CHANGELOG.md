@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Quiz:** a new header button asks multiple-choice questions about the map, like "which part takes card payments?", and highlights the card that shows each answer, with a sentence on why. It asks about what you're looking at on the map, as **Big picture**, **Details** or **Mixed**; questions you haven't got right yet come first, and your best round is kept. The starter questions are written with the map; with the Ask bar connected, Claude or Codex writes more: **New questions**, **Quiz me on this** from a card's right-click menu, **Recent work** to check you can explain a change, or just ask in the Ask bar ("quiz me on payments"). Exports keep the starter questions along with flows and the tour. Suggested and built by @WilltheRanger in #56.
+- **Quiz:** a new header button asks multiple-choice questions about the map, like "which part takes card payments?", and highlights the card that shows each answer, with a sentence on why. Choose the part of the app (it starts on what you're looking at), **Big picture**, **Details** or **Mixed**, and 5, 10, 20 or all questions; ones you haven't got right yet come first. Or type your own topic. The starter questions are written with the map; with the Ask bar connected, Claude or Codex writes more: on a topic you type, **Quiz me on this** from a card's right-click menu, **Recent work** to check you can explain a change, or just ask in the Ask bar ("quiz me on payments"). Exports keep the starter questions along with flows and the tour. Suggested and built by @WilltheRanger in #56.
 
 ## 0.6.1 (2026-11-01)
 
