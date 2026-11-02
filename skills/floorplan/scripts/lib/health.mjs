@@ -323,7 +323,8 @@ function pyRoutes(src, f, out) {
   }
 
   for (const r of f.routes || []) {
-    if (r.framework === 'django') continue;
+    // django: no per-route checks to read; table: sign-in is checked by the dispatcher or inside the handler
+    if (r.framework === 'django' || r.framework === 'table') continue;
     const i0 = r.line - 1;
     // decorators above the route decorator (wrong place in Flask/FastAPI: the route registers the unwrapped function)
     const above = [];
@@ -384,6 +385,7 @@ function jsRoutes(src, f, out) {
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
 
   routes.forEach((r, idx) => {
+    if (r.framework === 'table') return; // sign-in is checked by the dispatcher or inside the handler
     const rec = { k: 'route', line: r.line, method: r.method };
     if (r.framework === 'firebase') {
       // a callable checks request.auth (v1: context.auth) or turns on App Check; an onRequest function

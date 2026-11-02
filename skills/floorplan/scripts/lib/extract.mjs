@@ -20,6 +20,46 @@ const stripHash = (src) => src.replace(/(^|\s)#[^\n]*/g, (m, pre) => pre + blank
 
 const all = (re, s) => [...s.matchAll(re)];
 
+// ---------- route tables keyed by "METHOD /path" ----------
+
+// Servers without a framework often keep their endpoints in a lookup keyed by method and path, and
+// a dispatcher picks the handler: { "GET /api/orders": listOrders } in JS, or
+// { "POST /v1/claim": claim_draft, "GET /v1/paths/{slug}": lambda e, s: get_path(s, e) } in Python.
+// There's no app.get(...) to find, so these keys are the endpoints. A value counts when it names a
+// function (`listOrders`, `oauth.register`), is a short inline function that calls one, or wraps one
+// (`requireAuth(listOrders)`). Tables of other things keyed the same way (access levels, docs, status
+// codes, ALL_CAPS constants) are left alone, and a file needs two such entries before they count.
+const TABLE_KEY = /^[ \t]*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|ANY|ALL)[ \t]+(\/[^"'`\s]*)["'`][ \t]*:[ \t]*([^\n]*)/gm;
+const NOT_A_HANDLER = /^(?:[A-Z][A-Z0-9_]*|true|false|null|undefined|None|True|False|await|new|return|lambda|function|async)$/;
+
+function tableHandler(raw) {
+  const v = raw.trim().replace(/,\s*$/, '').trim();
+  const last = (dotted) => dotted.split('.').pop();
+  const ref = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.exec(v);
+  if (ref) return NOT_A_HANDLER.test(last(v)) ? null : { handler: last(v) };
+  // lambda e, s: get_path(s, e)  ·  (req) => getPath(req)  ·  async function (req) { return getPath(req) }
+  const inline = /^(?:lambda\b[^:]*:|(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|(?:async\s+)?function\b[^{]*\{)([\s\S]*)$/.exec(v);
+  if (inline) {
+    const call = [...inline[1].matchAll(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g)].map((m) => last(m[1])).find((n) => !NOT_A_HANDLER.test(n));
+    return { handler: call || null };
+  }
+  // requireAuth(listOrders), login_required(views.orders): the wrapped function is the handler
+  const wrap = /^[A-Za-z_$][\w$.]*\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*[,)]/.exec(v);
+  if (wrap && !NOT_A_HANDLER.test(last(wrap[1]))) return { handler: last(wrap[1]) };
+  return null; // a string, number, object, list, or a call on a constant: not a route table
+}
+
+function keyedRouteTable(code, at) {
+  const out = [];
+  for (const m of all(TABLE_KEY, code)) {
+    const h = tableHandler(m[3]);
+    if (!h) continue;
+    const method = m[1] === 'ALL' ? 'ANY' : m[1];
+    out.push({ method, path: m[2], var: null, line: at(m.index), framework: 'table', ...(h.handler ? { handler: h.handler } : {}) });
+  }
+  return out.length >= 2 ? out : [];
+}
+
 // ---------- HTTP call literals ----------
 
 const HTTP_CONTEXT = /\b(fetch|axios|ky|got|request|requests|httpx|aiohttp|session|client|http|https|api|Api|API|endpoint|Endpoint|url|Url|URL|BASE|base)\b|\.(get|post|put|patch|delete|head)\s*(<[^>]*>)?\s*\(|(?<![.\w$])(get|post|put|patch|delete)\s*\(\s*[rf]?["'`]\//;
@@ -202,6 +242,8 @@ function extractJs(src, filePath) {
     for (const method of methods.length ? methods : ['ANY']) routes.push({ method, path: p, var: null, line: 1, framework: 'next' });
   }
 
+  routes.push(...keyedRouteTable(code, at));
+
   const triggers = /firebase-functions/.test(code) ? firebaseFunctions(code, at, routes, mounts) : [];
 
   const serverLine = /\b\w+\.(use|route)\(\s*["'`]\/|\b(?:app|server|fastify|hono|routes?|router|[a-z]+Router)\.(?:get|post|put|patch|delete|all|options|head)\(\s*["'`]\//;
@@ -373,6 +415,7 @@ function extractPy(src) {
     }
     for (const method of methods) routes.push({ method, path: m[3], var: m[1], line: at(m.index) });
   }
+  routes.push(...keyedRouteTable(code, at));
   // Django urls.py
   for (const m of all(/\b(?:re_)?path\(\s*r?["']([^"']*)["']\s*,\s*(?!include)/g, code)) routes.push({ method: 'ANY', path: '/' + m[1].replace(/^\^|\$$/g, ''), var: null, line: at(m.index), framework: 'django' });
 
@@ -583,6 +626,7 @@ function addDocs(src, lang, r) {
   const syms = (r.symbols || []).filter((s) => !fbNames.has(s.name)).sort((a, b) => a.line - b.line);
   for (const rt of r.routes || []) {
     if (rt.framework === 'next') { rt.handler = rt.method; continue; }
+    if (rt.framework === 'table') { const d = r.symbols?.find((s) => s.name === rt.handler)?.doc; if (d) rt.doc = d; continue; }
     if (rt.framework === 'firebase') { const d = r.symbols.find((s) => s.name === rt.handler)?.doc || commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     const h = syms.find((s) => s.line >= rt.line && s.line - rt.line <= 12);
     if (h) { rt.handler = h.name; if (h.doc) rt.doc = h.doc; }
