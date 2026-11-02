@@ -54,16 +54,23 @@ const cleanDismissal = (d) => ({
 const EXPORT_PARTS = ['flows', 'notes', 'recent', 'health'];
 const EXPORT_DEFAULT = ['flows', 'notes'];
 const DATA_START = '<script>window.FLOORPLAN = ';
-function exportMap(include, extraFlows = [], { embed = false } = {}) {
+function exportMap(include, extraFlows = [], { embed = false, startView = 'root', showDescription = false } = {}) {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
   const a = html.indexOf(DATA_START), b = html.indexOf(';</script>', a);
   if (a < 0 || b < 0) throw Object.assign(new Error('This map is too old to export. Ask Claude or Codex to update the floorplan first.'), { plain: true });
   const g = JSON.parse(html.slice(a + DATA_START.length, b));
   const on = EXPORT_PARTS.filter((p) => include.includes(p));
+  // a docs copy opens on the overview or on one part ('n:<id>', nested parts included); anything else is refused, not guessed at
+  if (embed) {
+    if (startView !== 'root' && !(typeof startView === 'string' && startView.startsWith('n:') && (g.nodes || []).some((n) => 'n:' + n.id === startView)))
+      throw Object.assign(new Error('That starting view isn’t a part of this map. Choose the overview or one of its parts.'), { plain: true, bad: true });
+    if (typeof showDescription !== 'boolean')
+      throw Object.assign(new Error('Showing the project description must be on or off.'), { plain: true, bad: true });
+  }
   const out = {
     ...g,
     // the remote can carry a sign-in token; the folder path is this computer's
-    meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on, ...(embed ? { embed: true } : {}) } },
+    meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on, ...(embed ? { embed: true, startView, showDescription } : {}) } },
     flows: on.includes('flows') ? [...g.flows, ...extraFlows.filter((f) => !g.flows.some((x) => x.id === f.id))] : [],
     tour: on.includes('flows') ? g.tour : [],
     files: on.includes('notes') ? g.files : g.files.map(({ note, ...f }) => f),
@@ -611,10 +618,13 @@ const server = http.createServer((req, res) => {
       req.on('end', () => {
         let body = {}; try { body = JSON.parse(raw); } catch {}
         try {
-          const x = exportMap(Array.isArray(body.include) ? body.include.map(String) : EXPORT_DEFAULT, cleanFlows(body.flows));
+          const docs = body.embed === true; // the docs-copy settings only count for a docs copy
+          const x = exportMap(Array.isArray(body.include) ? body.include.map(String) : EXPORT_DEFAULT, cleanFlows(body.flows),
+            docs ? { embed: true, ...(body.startView !== undefined ? { startView: body.startView } : {}), ...(body.showDescription !== undefined ? { showDescription: body.showDescription } : {}) } : {});
           res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Content-Disposition': `attachment; filename="${x.name}"`, 'Cache-Control': 'no-store' });
           res.end(x.html);
         } catch (e) {
+          if (e.bad) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: e.message })); }
           console.error(`✗ Couldn't export the map: ${e.message}`);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: e.plain ? e.message : 'The map’s server couldn’t export it. The details are in its output.' }));

@@ -26,6 +26,7 @@ before(async () => {
   const arch = readJson(path.join(root, 'floorplan', 'architecture.json'));
   writeJson(path.join(root, 'floorplan', 'architecture.json'), {
     ...arch,
+    nodes: [...arch.nodes, { id: 'api.orders', parent: 'api', label: 'Orders', kind: 'feature', paths: ['shop-api/routes/orders.js'] }], // a part nested inside another
     annotations: [{ path: 'shop-api/config.js', note: 'Moving to the secrets manager next sprint.' }],
     flows: [{ id: 'refund', title: 'Refund', description: 'A customer asks for a refund.', steps: [{ node: 'web', note: 'The website asks.' }, { node: 'api', note: 'The server refunds.' }] }],
   });
@@ -131,4 +132,48 @@ test('the Export button downloads the copy, with flows requested since the last 
   assert.ok(g.files.every((f) => !('note' in f)), 'notes weren’t ticked');
   assert.equal(g.recent, undefined);
   assert.ok(g.health);
+});
+
+test('the Export button can make a docs copy that opens on one part and shows the description', async () => {
+  const r = await api({ include: ['flows'], embed: true, startView: 'n:api', showDescription: true }, { 'x-floorplan-token': token });
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  assert.match(html, /^<!doctype html>\s*<html data-embed lang="en">/i);
+  const g = dataOf(html);
+  assert.equal(g.meta.exported.embed, true);
+  assert.equal(g.meta.exported.startView, 'n:api');
+  assert.equal(g.meta.exported.showDescription, true);
+});
+
+test('a docs copy starts on the overview with the description hidden unless told otherwise', async () => {
+  const g = dataOf(await (await api({ include: ['flows'], embed: true }, { 'x-floorplan-token': token })).text());
+  assert.equal(g.meta.exported.startView, 'root');
+  assert.equal(g.meta.exported.showDescription, false);
+});
+
+test('a docs copy only opens on a part that exists, nested ones included', async () => {
+  const nested = readJson(path.join(root, 'floorplan', 'graph.json')).nodes.find((n) => n.id === 'api.orders');
+  assert.equal(nested?.parent, 'api', 'the fixture has a part nested inside another');
+  const r = await api({ embed: true, startView: 'n:api.orders' }, { 'x-floorplan-token': token });
+  assert.equal(r.status, 200);
+  assert.equal(dataOf(await r.text()).meta.exported.startView, 'n:api.orders');
+  for (const bad of [{ startView: 'n:nope' }, { startView: 'f:web/app.js' }, { startView: 'api' }, { startView: 7 }, { showDescription: 'yes' }, { showDescription: 1 }]) {
+    const r = await api({ embed: true, ...bad }, { 'x-floorplan-token': token });
+    assert.equal(r.status, 400, JSON.stringify(bad));
+    const { error } = await r.json();
+    assert.match(error, /^[A-Z].*[.]$/);
+    assert.doesNotMatch(error, /undefined|\bat \w+\.mjs/);
+  }
+});
+
+test('the docs-copy settings are ignored without embed, and an ordinary export is unchanged', async () => {
+  const r = await api({ include: ['flows'], startView: 'n:api', showDescription: true }, { 'x-floorplan-token': token });
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  assert.doesNotMatch(html, /^<!doctype html>\s*<html data-embed/i);
+  const g = dataOf(html);
+  assert.equal(g.meta.exported.embed, undefined);
+  assert.equal(g.meta.exported.startView, undefined);
+  assert.equal(g.meta.exported.showDescription, undefined);
+  assert.equal((await api({ startView: 'n:nope', showDescription: 'x' }, { 'x-floorplan-token': token })).status, 200);
 });

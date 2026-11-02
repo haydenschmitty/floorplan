@@ -171,11 +171,11 @@ test('a marked export opened on its own still saves its theme', () => {
 test('an embed hides the overview description unless requested, while other descriptions remain', () => {
   const start = embedded.indexOf('function renderContext() {');
   const end = embedded.indexOf('/** On a phone the description', start);
-  function context({ embed, search = '', container = 'root' }) {
+  function context({ embed, search = '', container = 'root', exported = null }) {
     const element = {};
     const state = { container, view: {} };
     const code = embedded.slice(start, end) + '\nrenderContext();';
-    vm.runInNewContext(code, { state, EMBED: embed, location: { search }, URLSearchParams,
+    vm.runInNewContext(code, { state, EMBED: embed, EXPORTED: exported, location: { search }, URLSearchParams,
       $: () => element, info: () => ({ name: 'Example', desc: 'Description', type: 'node', kind: 'service' }),
       h: (s) => s, colorOf: () => '', icon: () => '', iconKey: () => '', foldContext: () => {} });
     return element.innerHTML;
@@ -192,7 +192,7 @@ test('#v= opens the part named by its id as written, with or without the n: pref
   const file = dataOf(embedded).files[0].p;
   const read = (hash) => {
     const parentOf = new Map([['n:api', 'root'], ['n:web', 'root'], ['f:' + file, 'n:api']]);
-    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf });
+    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf, EMBED: false, EXPORTED: null });
   };
   assert.equal(read('#v=api').v, 'n:api');
   assert.equal(read('#v=n:api').v, 'n:api');
@@ -200,4 +200,68 @@ test('#v= opens the part named by its id as written, with or without the n: pref
   assert.equal(read('').v, 'root');
   assert.equal(read('#v=' + file).v, 'root', 'a bare file path is not a part');
   assert.equal(read('#v=api&s=n:web').s, 'n:web');
+});
+
+test('the description setting chosen at export decides whether the overview shows it', () => {
+  const start = embedded.indexOf('function renderContext() {');
+  const end = embedded.indexOf('/** On a phone the description', start);
+  const context = ({ embed, exported, search = '' }) => {
+    const element = {};
+    vm.runInNewContext(embedded.slice(start, end) + '\nrenderContext();', { state: { container: 'root', view: {} }, EMBED: embed, EXPORTED: exported, location: { search }, URLSearchParams,
+      $: () => element, info: () => ({ name: 'Example', desc: 'Description', type: 'node', kind: 'service' }),
+      h: (s) => s, colorOf: () => '', icon: () => '', iconKey: () => '', foldContext: () => {} });
+    return element.innerHTML;
+  };
+  assert.doesNotMatch(context({ embed: true, exported: { embed: true, showDescription: false } }), /Description/, 'off by default');
+  assert.match(context({ embed: true, exported: { embed: true, showDescription: true } }), /Description/);
+  assert.match(context({ embed: true, exported: { embed: true, showDescription: false }, search: '?description=show' }), /Description/);
+  assert.match(context({ embed: false, exported: { embed: true, showDescription: false } }), /Description/, 'outside a frame it is an ordinary export');
+});
+
+test('a docs copy opens on the part chosen at export unless the address says otherwise', () => {
+  const start = embedded.indexOf('function readHash() {');
+  const end = embedded.indexOf('window.addEventListener', start);
+  const read = (hash, { embed = true, startView } = {}) => {
+    const parentOf = new Map([['n:api', 'root'], ['n:web', 'root']]);
+    const exported = startView === undefined ? { embed: true } : { embed: true, startView };
+    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf, EMBED: embed, EXPORTED: exported }).v;
+  };
+  assert.equal(read('', { startView: 'n:api' }), 'n:api', 'no v: the saved part');
+  assert.equal(read('#s=n:web', { startView: 'n:api' }), 'n:api');
+  assert.equal(read('#v=web', { startView: 'n:api' }), 'n:web', 'an explicit bare id wins');
+  assert.equal(read('#v=n:web', { startView: 'n:api' }), 'n:web');
+  assert.equal(read('#v=nope', { startView: 'n:api' }), 'root', 'an invalid explicit v opens the overview');
+  assert.equal(read('', { startView: 'n:gone' }), 'root', 'a saved part that no longer exists');
+  assert.equal(read('', { startView: 'root' }), 'root');
+  assert.equal(read('', {}), 'root');
+  assert.equal(read('', { embed: false, startView: 'n:api' }), 'root', 'outside a frame it is an ordinary export');
+});
+
+test('the CLI docs copy records the defaults', () => {
+  const g = dataOf(embedded);
+  assert.equal(g.meta.exported.startView, 'root');
+  assert.equal(g.meta.exported.showDescription, false);
+  assert.equal(dataOf(plain).meta.exported.startView, undefined);
+});
+
+test('the overview of a docs copy with a saved start view is written as v=root, so a reload stays there', () => {
+  const start = embedded.indexOf('function setHash(container, sel) {');
+  const end = embedded.indexOf('function readHash() {', start);
+  const rstart = end, rend = embedded.indexOf('window.addEventListener', rstart);
+  const written = (container, { embed = true, startView } = {}) => {
+    const calls = [];
+    const exported = startView === undefined ? { embed: true } : { embed: true, startView };
+    const ctx = { location: { hash: '#v=zzz', pathname: '/p', search: '' }, URLSearchParams, EMBED: embed, EXPORTED: exported,
+      history: { replaceState: (a, b, u) => calls.push(u), pushState: (a, b, u) => calls.push(u) }, parentOf: new Map([['n:api', 'root']]) };
+    vm.runInNewContext(embedded.slice(start, end) + `\nsetHash(${JSON.stringify(container)});`, ctx);
+    return calls[0];
+  };
+  const back = written('root', { startView: 'n:api' });
+  assert.equal(back, '#v=root');
+  const read = (hash) => vm.runInNewContext(embedded.slice(rstart, rend) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf: new Map([['n:api', 'root']]), EMBED: true, EXPORTED: { embed: true, startView: 'n:api' } }).v;
+  assert.equal(read(back), 'root');
+  assert.equal(written('n:api', { startView: 'n:api' }), '#v=n%3Aapi');
+  assert.equal(written('root', {}), '/p', 'no saved start view: unchanged');
+  assert.equal(written('root', { startView: 'root' }), '/p');
+  assert.equal(written('root', { embed: false, startView: 'n:api' }), '/p', 'ordinary page: unchanged');
 });

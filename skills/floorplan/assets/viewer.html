@@ -1372,7 +1372,8 @@ $('#z-fit').onclick = () => fit(true);
 function setHash(container, sel) {
   if (container.startsWith('q:')) return; // answer views are transient
   const p = new URLSearchParams();
-  if (container !== 'root') p.set('v', container);
+  // a docs copy that opens on a saved part writes v=root for the overview, so a reload stays on the overview
+  if (container !== 'root' || (EMBED && EXPORTED?.startView && EXPORTED.startView !== 'root')) p.set('v', container);
   if (sel && typeof sel === 'string') p.set('s', sel);
   const s = p.toString();
   // in a docs page each click would be a step for the page's back button, so the address is updated in place
@@ -1380,7 +1381,9 @@ function setHash(container, sel) {
 }
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
-  let v = p.get('v') || 'root', s = p.get('s');
+  let v = p.get('v'), s = p.get('s');
+  // a docs copy opens on the part chosen at export when the address names none; an explicit #v= always wins
+  if (!v) v = EMBED && EXPORTED?.startView && parentOf.has(EXPORTED.startView) ? EXPORTED.startView : 'root';
   // docs and the export hint say #v=<part id>; the viewer keys parts as n:<id>, so a bare id is promoted when it names a part
   if (v !== 'root' && !parentOf.has(v)) v = parentOf.has('n:' + v) ? 'n:' + v : 'root';
   if (s && !parentOf.has(s) && !s.startsWith('x:') && !s.startsWith('m:')) s = null;
@@ -1471,7 +1474,7 @@ function renderContext() {
     return;
   }
   const i = info(state.container);
-  const showDescription = !(EMBED && state.container === 'root') || new URLSearchParams(location.search).get('description') === 'show';
+  const showDescription = !(EMBED && state.container === 'root') || EXPORTED?.showDescription === true || new URLSearchParams(location.search).get('description') === 'show';
   const kind = state.container === 'root' ? 'Overview' : i.type === 'node' ? i.kind.charAt(0).toUpperCase() + i.kind.slice(1) : i.type === 'dir' ? 'Folder' : i.type === 'file' ? 'File' : i.type;
   const badge = state.container === 'root' ? '' : `<span class="ico" style="--c:${colorOf(i)}">${icon(iconKey(i))}</span>`;
   $('#context').innerHTML = `<div class="k">${badge}${h(kind)}</div><h1>${h(i.name)}</h1>${i.desc && showDescription ? `<p class="cd" id="ctx-desc">${h(i.desc)}</p>` : ''}${state.view?.hidden ? `<p class="cx" style="color:var(--text-3);font-size:12.5px;margin-top:8px">${state.view.hidden} more exports aren't imported by name anywhere; they're listed in the details panel.</p>` : ''}${i.desc && showDescription ? '<button type="button" class="ctx-more" aria-controls="ctx-desc" hidden></button>' : ''}`;
