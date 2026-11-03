@@ -26,7 +26,7 @@ flowchart TD
 
 Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro files), Python, Go, Rust, Java, Kotlin, Scala and Groovy, and Shopify themes (Liquid), with lighter support for others.
 
-**Shopify themes.** A folder with a `layout/theme.liquid` is read as a theme. Its files reach each other by name rather than by path, so Floorplan follows `{% render 'price' %}` to `snippets/price.liquid`, `{% section %}` and `{% sections %}` to `sections/`, `{% content_for 'block', type: … %}` to `blocks/`, and `'theme.js' | asset_url` to `assets/`. JSON templates and section groups use the sections and theme blocks they list, including Liquid typed into a template's custom-code settings. Apps added as app blocks or app embeds show up as outside packages named `shopify-app:<app>`. Comments and `{% doc %}` examples are skipped. Elsewhere, a `.liquid` file is a page template like `.njk`.
+**Shopify themes.** A folder with a `layout/theme.liquid` is read as a theme. Its files reach each other by name rather than by path, so Floorplan follows `{% render 'price' %}` to `snippets/price.liquid`, `{% section %}` and `{% sections %}` to `sections/`, `{% content_for 'block', type: … %}` to `blocks/`, and `'theme.js' | asset_url` to `assets/`. JSON templates and section groups use the sections and theme blocks they list, including Liquid typed into a template's custom-code settings. Apps added as app blocks or app embeds show up as outside packages named `shopify-app:<app>`. Comments and `{% doc %}` examples are skipped. Outside a theme, `.liquid` files and `templates/*.json` are left as they were.
 
 ## 2. Connecting requests to endpoints
 

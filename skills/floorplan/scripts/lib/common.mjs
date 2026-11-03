@@ -78,7 +78,6 @@ const LANG_BY_EXT = {
   '.sql': 'sql', '.tf': 'terraform', '.proto': 'protobuf', '.graphql': 'graphql', '.gql': 'graphql',
   '.css': 'css', '.scss': 'css', '.sass': 'css', '.less': 'css',
   '.html': 'html', '.htm': 'html', '.ejs': 'html', '.hbs': 'html', '.jinja': 'html', '.j2': 'html', '.njk': 'html',
-  '.liquid': 'html',
 };
 // Inside a Shopify theme, Liquid files and the JSON templates, section groups and settings_data (which lists the
 // app embeds) are read as 'liquid': they say which sections, snippets and apps a page is built from

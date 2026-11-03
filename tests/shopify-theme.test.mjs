@@ -1,7 +1,7 @@
 // Shopify themes: Liquid files reach each other by name ({% render %}, {% section %}, {% sections %},
 // asset_url), JSON templates list their sections and blocks by type, apps show up as shopify://apps/… blocks,
 // and each template is a storefront page on the Screens list. Only inside a theme (a folder with
-// layout/theme.liquid): elsewhere .liquid is a page template like .njk, and templates/*.json is data.
+// layout/theme.liquid): elsewhere .liquid files and templates/*.json are left as they were.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -77,7 +77,7 @@ test('a theme is a folder with layout/theme.liquid; only there are Liquid and pa
   assert.deepEqual(classify('storefront/snippets/price.liquid', 100, { themes }), { category: 'code', lang: 'liquid' });
   assert.equal(classify('storefront/locales/en.default.json', 100, { themes }).category, 'data');
   assert.equal(classify('api/templates/welcome.json', 100, { themes }).category, 'data');
-  assert.deepEqual(classify('api/templates/page.liquid', 100, { themes }), { category: 'code', lang: 'html' });
+  assert.deepEqual(classify('api/templates/page.liquid', 100, { themes }), { category: 'other', lang: null });
   assert.deepEqual(classify('templates/product.json', 100), { category: 'data', lang: null });
 });
 
