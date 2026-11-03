@@ -11,12 +11,55 @@ const RUST_STD = new Set(['std', 'core', 'alloc', 'crate', 'self', 'super']);
 
 const JS_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.vue', '.svelte', '.d.ts', '.json'];
 
+/** What `*` stands for when `spec` matches `pattern` ('' for an exact match), or null if it doesn't match. */
+function matchStarPattern(pattern, spec) {
+  const star = pattern.indexOf('*');
+  if (star === -1) return spec === pattern ? '' : null;
+  const prefix = pattern.slice(0, star);
+  const suffix = pattern.slice(star + 1);
+  if (spec.length < prefix.length + suffix.length || !spec.startsWith(prefix) || !spec.endsWith(suffix)) return null;
+  return spec.slice(star, spec.length - suffix.length);
+}
+
+/**
+ * The package.json "imports" entry Node would use for `spec`: an exact key first, otherwise the
+ * matching `*` key with the longest text before the `*` (then the longest key).
+ */
+function bestSubpathImport(entries, spec) {
+  const exact = entries.find(([key]) => key === spec);
+  if (exact) return { target: exact[1], matched: '' };
+  let best = null;
+  for (const [key, target] of entries) {
+    if (!key.includes('*')) continue;
+    const matched = matchStarPattern(key, spec);
+    if (matched === null) continue;
+    const prefixLength = key.indexOf('*');
+    if (!best || prefixLength > best.prefixLength || (prefixLength === best.prefixLength && key.length > best.key.length)) {
+      best = { key, target, matched, prefixLength };
+    }
+  }
+  return best;
+}
+
+/**
+ * Every path an "imports" target can point to, in order. Which conditions apply isn't known
+ * statically, so all are tried; "types" goes last because Node never picks it, but it is often
+ * the only target that points at source rather than a build folder.
+ */
+function subpathTargets(target) {
+  if (typeof target === 'string') return [target];
+  if (Array.isArray(target)) return target.flatMap(subpathTargets);
+  if (!target || typeof target !== 'object') return [];
+  const conditions = Object.entries(target);
+  return [...conditions.filter(([c]) => c !== 'types'), ...conditions.filter(([c]) => c === 'types')].flatMap(([, t]) => subpathTargets(t));
+}
+
 export function createResolver(root, files) {
   const fileSet = new Set(files.map((f) => f.path));
   const byPath = new Map(files.map((f) => [f.path, f]));
   const dirsWith = (name) => files.filter((f) => P.basename(f.path) === name).map((f) => P.dirname(f.path));
 
-  // ---- JS: tsconfig/jsconfig paths + workspace packages ----
+  // ---- JS: tsconfig/jsconfig paths, package.json imports, workspace packages ----
   const tsconfigCache = new Map();
   const loadTsconfig = (file) => {
     if (tsconfigCache.has(file)) return tsconfigCache.get(file);
@@ -49,11 +92,9 @@ export function createResolver(root, files) {
     nearestCache.set(dir, found);
     return found;
   };
+  const packageJsons = new Map(dirsWith('package.json').map((dir) => [dir, readJsonLoose(path.join(root, dir, 'package.json'))]));
   const workspacePkgs = new Map();
-  for (const dir of dirsWith('package.json')) {
-    const pj = readJsonLoose(path.join(root, dir, 'package.json'));
-    if (pj?.name) workspacePkgs.set(pj.name, { dir, pj });
-  }
+  for (const [dir, pj] of packageJsons) if (pj?.name) workspacePkgs.set(pj.name, { dir, pj });
 
   const tryJsFile = (p) => {
     p = P.normalize(p);
@@ -65,17 +106,40 @@ export function createResolver(root, files) {
     return null;
   };
 
+  // Node subpath imports ("#lib/x") resolve through the "imports" field of the nearest package.json.
+  const subpathScopeCache = new Map();
+  const nearestPackageScope = (dir) => {
+    if (subpathScopeCache.has(dir)) return subpathScopeCache.get(dir);
+    let scope = null;
+    if (packageJsons.has(dir)) scope = { dir, imports: Object.entries(packageJsons.get(dir)?.imports || {}) };
+    else if (dir !== '.' && dir !== '') scope = nearestPackageScope(P.dirname(dir));
+    subpathScopeCache.set(dir, scope);
+    return scope;
+  };
+  const resolveSubpathImport = (from, spec) => {
+    const scope = nearestPackageScope(P.dirname(from));
+    const entry = scope && bestSubpathImport(scope.imports, spec);
+    if (!entry) return null;
+    for (const t of subpathTargets(entry.target)) {
+      const hit = tryJsFile(P.join(scope.dir, t.split('*').join(entry.matched)));
+      if (hit) return hit;
+    }
+    return null;
+  };
+
   const resolveJs = (from, spec) => {
     if (spec.startsWith('.')) {
       const hit = tryJsFile(P.join(P.dirname(from), spec));
       return hit ? { file: hit } : { unresolved: true };
     }
+    if (spec.startsWith('#')) {
+      const hit = resolveSubpathImport(from, spec);
+      if (hit) return { file: hit };
+    }
     const cfg = nearestTsconfig(P.dirname(from));
     if (cfg) {
       for (const [pattern, targets] of cfg.paths) {
-        const star = pattern.indexOf('*');
-        const matched = star === -1 ? (spec === pattern ? '' : null)
-          : (spec.startsWith(pattern.slice(0, star)) && spec.endsWith(pattern.slice(star + 1)) ? spec.slice(star, spec.length - (pattern.length - star - 1)) : null);
+        const matched = matchStarPattern(pattern, spec);
         if (matched === null) continue;
         for (const t of targets) {
           const hit = tryJsFile(P.join(cfg.baseDir, t.split('*').join(matched)));
