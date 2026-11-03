@@ -86,6 +86,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `django.test.mjs` | Django: an app's `urls.py` included under a prefix, and the website's requests matched to it |
 | `fastify.test.mjs` | Fastify: plugins registered with a prefix, nested registers, and the website's requests reaching the right plugin (sample in `fixtures/`) |
 | `route-table-keys.test.mjs` | route tables keyed by `"METHOD /path"` in JavaScript and Python: which tables count, each entry's handler, the website's requests reaching them, and Health staying quiet about their sign-in (sample in `fixtures/`) |
+| `shopify-theme.test.mjs` | Shopify themes: what counts as a theme, Liquid tags, asset_url and JSON templates linking files by name, apps as outside packages, templates as Screens, snippets nothing renders, and look-alikes outside a theme left alone |
 | `firebase.test.mjs` | Firebase Cloud Functions: callables and onRequest functions as endpoints, the website's calls to them, Screens, Health, background functions (React + Firebase sample in `fixtures/`) |
 | `blueprint.test.mjs` | a map planned from a PRD before any code exists: plan.json errors, endpoints and calls, Screens, the design review, refreshing and switching to the real code (sample PRD in `fixtures/`) |
 | `blueprint-change.test.mjs` | changing a blueprint from the map: the agent's updated plan is checked, saved and highlighted, retried once when it fails the checks, and undone (stand-in CLI in `fixtures/fake-cli/`) |
