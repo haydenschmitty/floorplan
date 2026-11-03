@@ -1,10 +1,11 @@
-// Which coding agent is running the skill: Claude Code or Codex. The map records it, so its Ask bar and
+// Which coding agent is running the skill: Claude Code, Codex, or Antigravity. The map records it, so its Ask bar and
 // "Fix with …" prompts name the right one, and serve.mjs answers through the same CLI.
 // --agent <name> (or FLOORPLAN_AGENT) decides; otherwise each agent is recognised by the variables it sets
 // for every command it runs, and anything else is taken to be Claude Code. Adding an agent is an entry here.
 const DETECT = {
   claude: () => false, // the default
   codex: (env) => !!(env.CODEX_THREAD_ID || env.CODEX_SESSION_ID),
+  antigravity: (env) => !!(env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_CONVERSATION_ID || env.GEMINI_CLI),
 };
 export const AGENTS = Object.keys(DETECT);
 
