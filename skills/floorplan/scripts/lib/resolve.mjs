@@ -8,6 +8,19 @@ const P = path.posix;
 const NODE_BUILTINS = new Set(['assert', 'async_hooks', 'buffer', 'child_process', 'cluster', 'console', 'constants', 'crypto', 'dgram', 'dns', 'domain', 'events', 'fs', 'http', 'http2', 'https', 'inspector', 'module', 'net', 'os', 'path', 'perf_hooks', 'process', 'punycode', 'querystring', 'readline', 'repl', 'stream', 'string_decoder', 'timers', 'tls', 'tty', 'url', 'util', 'v8', 'vm', 'wasi', 'worker_threads', 'zlib', 'test']);
 const PY_STDLIB = new Set('__future__ abc argparse array ast asyncio atexit base64 bisect builtins bz2 calendar cgi cmath codecs collections colorsys concurrent configparser contextlib contextvars copy csv ctypes curses dataclasses datetime decimal difflib dis email encodings enum errno faulthandler fcntl filecmp fileinput fnmatch fractions ftplib functools gc getopt getpass gettext glob graphlib gzip hashlib heapq hmac html http imaplib importlib inspect io ipaddress itertools json keyword linecache locale logging lzma mailbox math mimetypes mmap multiprocessing netrc numbers operator optparse os pathlib pdb pickle pkgutil platform plistlib poplib posixpath pprint profile pstats pty queue quopri random re readline reprlib resource rlcompleter runpy sched secrets select selectors shelve shlex shutil signal site smtplib socket socketserver sqlite3 ssl stat statistics string stringprep struct subprocess sys sysconfig syslog tarfile tempfile termios textwrap threading time timeit tkinter token tokenize tomllib trace traceback tracemalloc tty turtle types typing typing_extensions unicodedata unittest urllib uuid venv warnings wave weakref webbrowser winreg wsgiref xml xmlrpc zipfile zipimport zlib zoneinfo'.split(' '));
 const RUST_STD = new Set(['std', 'core', 'alloc', 'crate', 'self', 'super']);
+// Modules that come with Swift or Apple's SDKs: imported everywhere, never part of the codebase.
+const SWIFT_SYSTEM = new Set(('Swift Foundation FoundationEssentials FoundationNetworking Dispatch Darwin Glibc Musl WinSDK ObjectiveC os OSLog Observation Synchronization ' +
+  'RegexBuilder Distributed Cxx CxxStdlib System MachO XCTest Testing PackageDescription PackagePlugin SwiftUI SwiftData UIKit AppKit Cocoa Carbon WatchKit ' +
+  'Combine CoreGraphics CoreFoundation CoreData CoreImage CoreText CoreML CoreLocation CoreMedia CoreVideo CoreAudio CoreAudioKit CoreAudioTypes CoreBluetooth ' +
+  'CoreServices CoreSpotlight CoreTransferable CoreWLAN CoreMotion CoreMIDI CoreHaptics CoreNFC CoreTelephony QuartzCore Quartz ApplicationServices ColorSync ' +
+  'AVFoundation AVFAudio AVKit AudioToolbox AudioUnit Accelerate Accessibility AppIntents AuthenticationServices BackgroundTasks Charts CloudKit Contacts ContactsUI ' +
+  'CryptoKit CommonCrypto DeveloperToolsSupport DiskArbitration EventKit EventKitUI ExtensionFoundation ExtensionKit FileProvider FoundationModels GameController ' +
+  'GameKit GameplayKit HealthKit HomeKit Hypervisor IOKit IOBluetooth IOSurface ImageIO ImageCaptureCore InputMethodKit Intents IntentsUI LinkPresentation ' +
+  'LocalAuthentication MapKit MediaPlayer MessageUI Metal MetalKit MetalPerformanceShaders MultipeerConnectivity MusicKit NaturalLanguage Network NetworkExtension ' +
+  'NotificationCenter OpenDirectory OSAKit PDFKit Photos PhotosUI QuickLook QuickLookThumbnailing QuickLookUI RealityKit ReplayKit SafariServices SceneKit ' +
+  'ScreenCaptureKit ScriptingBridge Security SecurityFoundation SecurityInterface ServiceManagement ShazamKit SoundAnalysis Speech SpriteKit StoreKit ' +
+  'SystemConfiguration SystemExtensions TipKit Translation UniformTypeIdentifiers UserNotifications UserNotificationsUI VideoToolbox Virtualization Vision ' +
+  'VisionKit WebKit WidgetKit ARKit Automator zlib SQLite3 simd MetricKit CoreMediaIO').split(' '));
 
 const JS_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.vue', '.svelte', '.d.ts', '.json'];
 
@@ -226,6 +239,92 @@ export function createResolver(root, files) {
     return { external: parts.slice(0, Math.min(3, parts.length - 1)).join('.'), eco: 'maven' };
   };
 
+  // ---- Swift ----
+  // A Swift import names a module (a Swift package target), so it links to that target's folder,
+  // the way a Go import links to its package. Targets come from every Package.swift: `path:` when
+  // given, else Sources/<name> (Tests/<name> for test targets). Xcode-only code without a package
+  // falls back to a folder named like the module.
+  const swiftModules = new Map();
+  for (const dir of dirsWith('Package.swift')) {
+    let txt;
+    try { txt = fs.readFileSync(path.join(root, dir, 'Package.swift'), 'utf8'); } catch { continue; }
+    txt = txt.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:"\\])\/\/[^\n]*/g, '$1');
+    let skipUntil = -1; // `.target(name: "B")` inside another target's dependencies is a reference, not a target
+    for (const m of txt.matchAll(/\.(target|executableTarget|testTarget|macro|plugin|systemLibrary|binaryTarget)\s*\(/g)) {
+      if (m.index < skipUntil) continue;
+      const body = balancedArgs(txt, m.index + m[0].length - 1);
+      skipUntil = m.index + m[0].length + body.length;
+      const name = /\bname\s*:\s*"([^"]+)"/.exec(body)?.[1];
+      if (!name || swiftModules.has(name)) continue;
+      const given = /\bpath\s*:\s*"([^"]+)"/.exec(body)?.[1];
+      const base = m[1] === 'testTarget' ? 'Tests' : m[1] === 'plugin' ? 'Plugins' : 'Sources';
+      swiftModules.set(name, P.normalize(P.join(dir, given ?? `${base}/${name}`)));
+    }
+  }
+  const swiftDirByName = new Map();
+  for (const f of files) if (f.path.endsWith('.swift')) {
+    for (let d = P.dirname(f.path); d && d !== '.'; d = P.dirname(d)) {
+      const b = P.basename(d);
+      if (!swiftDirByName.has(b)) swiftDirByName.set(b, d);
+      else if (swiftDirByName.get(b) !== d) swiftDirByName.set(b, null);
+    }
+  }
+  const moduleFile = new Map();
+  const fileForDir = (dir, name) => {
+    if (moduleFile.has(dir)) return moduleFile.get(dir);
+    const inside = files.map((f) => f.path).filter((p) => p.startsWith(dir + '/'));
+    const swift = inside.filter((p) => p.endsWith('.swift'));
+    const list = swift.length ? swift : inside;
+    const pick = list.find((p) => P.basename(p, '.swift') === name)
+      || list.sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b))[0] || null;
+    moduleFile.set(dir, pick);
+    return pick;
+  };
+  // type name -> files declaring it, per module folder
+  const typeIndex = new Map();
+  const inPackage = (p) => (sortedDirs ??= moduleDirs()).some((d) => p.startsWith(d + '/'));
+  const typesIn = (dir) => {
+    if (typeIndex.has(dir)) return typeIndex.get(dir);
+    const idx = new Map();
+    const app = !swiftModulesDirs().has(dir); // an Xcode app or loose code: its files, minus the packages'
+    for (const f of files) if (f.lang === 'swift' && (dir === '.' || f.path.startsWith(dir + '/')) && !(app && inPackage(f.path))) for (const s of f.symbols || []) if (!s.local) {
+      if (!idx.has(s.name)) idx.set(s.name, []);
+      idx.get(s.name).push(f.path);
+    }
+    typeIndex.set(dir, idx);
+    return idx;
+  };
+  // The files of `dir` declaring a type this file mentions; else, for an import, the module's main file.
+  const linkModule = (from, dir, imp, name) => {
+    const idx = typesIn(dir);
+    const hits = [...new Set((imp.uses || []).flatMap((n) => idx.get(n) || []))].filter((p) => p !== from);
+    if (hits.length) return { files: hits.sort() };
+    if (imp.kind === 'own-module') return { builtin: true };
+    const file = fileForDir(dir, name);
+    return file ? { file } : { unresolved: true };
+  };
+  const swiftModulesDirs = () => new Set(swiftModules.values());
+  const moduleDirs = () => [...swiftModulesDirs()].sort((a, b) => b.length - a.length);
+  let sortedDirs = null;
+  // Code outside any package belongs to the Xcode project around it (the folder holding the
+  // .xcodeproj), else to its repo: a whole app target is one module, whatever its folders.
+  const xcodeRoots = files.map((f) => /^(?:(.*)\/)?[^/]+\.xcodeproj\/project\.pbxproj$/.exec(f.path)).filter(Boolean)
+    .map((m) => m[1] || '.').sort((a, b) => b.length - a.length);
+  const resolveSwift = (from, imp) => {
+    const spec = imp.spec;
+    if (imp.kind === 'own-module') {
+      const own = (sortedDirs ??= moduleDirs()).find((d) => from.startsWith(d + '/'))
+        || xcodeRoots.find((d) => d === '.' || from.startsWith(d + '/'))
+        || byPath.get(from)?.repo || '.';
+      return linkModule(from, own, imp, P.basename(own));
+    }
+    if (swiftModules.has(spec)) return linkModule(from, swiftModules.get(spec), imp, spec);
+    if (SWIFT_SYSTEM.has(spec) || spec.startsWith('_')) return { builtin: true };
+    const dir = swiftDirByName.get(spec);
+    if (dir) return linkModule(from, dir, imp, spec);
+    return { external: spec, eco: 'swiftpm' };
+  };
+
   // ---- generic relative (C, Ruby, PHP, CSS) ----
   const byBasename = new Map();
   for (const f of files) { const b = P.basename(f.path); byBasename.set(b, byBasename.has(b) ? null : f.path); }
@@ -245,10 +344,23 @@ export function createResolver(root, files) {
       case 'go': return resolveGo(file.path, imp.spec);
       case 'rust': return resolveRust(file.path, imp);
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file.path, imp.spec);
+      case 'swift': return resolveSwift(file.path, imp);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
       default: return resolveRelative(file.path, imp.spec, []);
     }
   };
+}
+
+// The text between the parenthesis at `open` and its match, skipping strings.
+function balancedArgs(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"') { i++; while (i < src.length && src[i] !== '"' && src[i] !== '\n') i += src[i] === '\\' ? 2 : 1; continue; }
+    if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) return src.slice(open + 1, i);
+  }
+  return src.slice(open + 1);
 }

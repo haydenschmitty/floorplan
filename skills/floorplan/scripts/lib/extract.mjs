@@ -495,6 +495,36 @@ function extractGo(src) {
   return { imports, symbols, routes, mounts: [], calls, hosts };
 }
 
+// ---------- Swift ----------
+
+// Swift imports name a module, not a file: `import Core`, `@testable import Core`,
+// `import struct Core.Settings`. The resolver maps the module to its Swift package target.
+function extractSwift(src) {
+  const code = stripCStyle(src);
+  const at = lineIndex(code);
+  const imports = [];
+  const IMPORT = /^[ \t]*(?:@[\w]+(?:\([^)\n]*\))?[ \t]+)*import[ \t]+(?:(?:typealias|struct|class|enum|protocol|let|var|func|actor)[ \t]+)?([A-Za-z_]\w*)/gm;
+  for (const m of all(IMPORT, code)) imports.push({ spec: m[1], names: [], line: at(m.index) });
+  const symbols = [];
+  const DECL = /^[ \t]*(?:@[\w]+(?:\([^)\n]*\))?[ \t]+)*(?:(?:public|open|internal|package|fileprivate|private|final|indirect|nonisolated|(?:private|fileprivate|internal|public)\(set\))[ \t]+)*(class|struct|enum|protocol|actor)[ \t]+([A-Za-z_]\w*)/gm;
+  for (const m of all(DECL, code)) {
+    if (m[1] === 'class' && /^(func|var|let)$/.test(m[2])) continue; // `class func`, `class var`
+    // Nested types (Row, Kind, State…) repeat across files and are named through their parent, and
+    // private ones can't be seen from other files: only the rest link files together.
+    const local = /^[ \t]/.test(m[0]) || /\b(?:private|fileprivate)\b(?!\(set\))/.test(m[0]);
+    symbols.push({ name: m[2], kind: m[1], line: at(m.index), ...(local ? { local: true } : {}) });
+  }
+  // Files of one module see each other's types without importing them, so the type names a file
+  // mentions are what links it to the files that declare them, in its own module and in the ones it imports.
+  const declared = new Set(symbols.map((s) => s.name));
+  const uses = [...new Set(all(/\b([A-Z][A-Za-z0-9_]*)\b/g, stripStrings(code)).map((m) => m[1]))].filter((n) => !declared.has(n));
+  imports.push({ spec: '.', kind: 'own-module', names: [], line: 1, uses });
+  for (const imp of imports) imp.uses = uses;
+  const { calls, hosts } = extractCalls(code, at);
+  return { imports, symbols, routes: [], mounts: [], calls, hosts };
+}
+const stripStrings = (code) => code.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+
 // ---------- Rust ----------
 
 function extractRust(src) {
@@ -544,7 +574,7 @@ function extractSimple(src, lang) {
   const symbols = [];
   if (lang === 'ruby') for (const m of all(/^\s*(class|module)\s+([A-Z][\w:]*)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
   if (lang === 'csharp') for (const m of all(/^\s*public\s+(?:static\s+|abstract\s+|sealed\s+|partial\s+)*(class|interface|enum|record|struct)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
-  const { calls, hosts } = ['ruby', 'php', 'csharp', 'swift', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
+  const { calls, hosts } = ['ruby', 'php', 'csharp', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
   return { imports, symbols, routes: [], mounts: [], calls, hosts };
 }
 
@@ -554,6 +584,7 @@ function extractByLang(src, lang, filePath) {
     case 'python': return extractPy(src);
     case 'go': return extractGo(src);
     case 'rust': return extractRust(src);
+    case 'swift': return extractSwift(src);
     case 'java': case 'kotlin': case 'scala': case 'groovy': return extractJvm(src);
     default: return extractSimple(src, lang);
   }
