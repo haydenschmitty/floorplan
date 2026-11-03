@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Code-quality colouring:** every box on the map can now be coloured from green (mostly good) through yellow (worth a look) to red (high risk), with a "Risk" score on its card. Turn it on with **Colour by code quality** in the filters menu; it's off by default. The score blends how tangled the code is (very long functions, many decisions, deep nesting), how big and readable each file is, code copied between files, signs of careless or machine-written code (comments that repeat the line below, unfinished stubs, swallowed errors, commented-out code, throwaway names), and files nothing uses. Modules and folders show their average, pulled toward their worst file. Clicking a box says why and names the riskiest file inside. Scores are quick automatic estimates, not verdicts, and they're left out of shared copies unless you tick **Code-quality scores** when exporting.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

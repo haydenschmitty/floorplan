@@ -155,6 +155,7 @@ It writes `floorplan/<project>-map.html` unless given a file. `--include` defaul
 
 ### What else the map gives them (automatic)
 
+- **Code quality.** `graph.quality` scores every file and module from 0 (healthy) to 100 (risky): tangled functions, file size and readability, copied code, careless or machine-written code, unused files. A switch in the filters menu (**Colour by code quality**, off by default) tints each box green to red and shows a Risk score. Mention it in the report, and name the riskiest file or two from the build output's `QUALITY` line when something is high risk. Say the scores are rough estimates.
 - **Health.** A header button, with a count of important issues, opens a plain-language list of problems the scan found:
   - passwords and API keys written into the code or a committed `.env`;
   - secret keys in variables the browser gets (`NEXT_PUBLIC_`, `VITE_` and the like);

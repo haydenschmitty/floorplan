@@ -51,6 +51,14 @@ Drag the panel's left edge to resize it.
 
 ## Header buttons
 
+### Code quality
+
+Open the filters menu and switch on **Colour by code quality** to tint every box from green (mostly good) through yellow (worth a look) to red (high risk). Each card gets a **Risk** score from 0 (healthy) to 100 (risky). Click a box to see why: a bar for each measure and plain-language reasons, plus the riskiest file inside a module or folder. The overview lists the ten files most worth a look.
+
+The score blends five things: **tangled code** (very long functions, many decisions in one function, deep nesting), **size and readability** (huge files, few comments, very long lines), **copied code** (the same lines in more than one file, including across repos), **careless code** (comments that only repeat the line below, TODO or "not implemented" stubs, errors caught and ignored, old code left commented out, throwaway names like `handleData`) and **unused files** (nothing in the app uses them, so an unused file is never better than yellow). A module's score is the average of its files, weighted by size and pulled toward its worst file, so one bad file isn't hidden by many good ones.
+
+These are quick automatic estimates, not verdicts: a long function can be fine and a short one a mess. Tests, examples, generated and vendored code aren't scored, and neither are blueprints. The thresholds and weights are in `scripts/lib/quality.mjs`. Shared copies leave the scores out unless you tick **Code-quality scores** in Export.
+
 ### Health
 A count of important issues, and a plain-language list of problems the scan found:
 - passwords and keys written into the code, or into a committed `.env` file;

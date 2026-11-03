@@ -62,6 +62,7 @@ By default everything is written for the app's owner, not an engineer: what each
 
 - connects the parts, using imports, matched requests and the AI's explicit connections;
 - runs the **Health** check;
+- scores **code quality** for every file and module (tangled code, size, copied code, careless code, unused files);
 - detects **screens**: Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack;
 - writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one.
 

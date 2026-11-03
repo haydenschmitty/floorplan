@@ -5,7 +5,7 @@
 // usage: node floorplan/serve.mjs [--port 4378] [--engine claude|codex] [--model <model>] [--claude <path>] [--codex <path>]
 //                                 [--no-open] [--idle-exit <minutes>]
 //        node floorplan/serve.mjs --stop
-//        node floorplan/serve.mjs --export [<file>] [--include flows,notes,recent,health]   (a copy to share; default flows,notes)
+//        node floorplan/serve.mjs --export [<file>] [--include flows,notes,recent,health,quality]   (a copy to share; default flows,notes)
 //
 // The server listens on 127.0.0.1 only. Each question runs in the codebase root, on your own account:
 // `claude -p` with read-only tools (Read, Grep, Glob, and Bash limited to floorplan/query.mjs), or
@@ -48,7 +48,7 @@ const cleanDismissal = (d) => ({
 // ---------- export: a copy of the map to share ----------
 // The same self-contained page, marked as exported: no Ask bar, no requests for Claude or Codex, no links into
 // this computer, and only the extras asked for. Used by the map's Export button and by --export.
-const EXPORT_PARTS = ['flows', 'notes', 'recent', 'health'];
+const EXPORT_PARTS = ['flows', 'notes', 'recent', 'health', 'quality'];
 const EXPORT_DEFAULT = ['flows', 'notes'];
 const DATA_START = '<script>window.FLOORPLAN = ';
 function exportMap(include, extraFlows = []) {
@@ -66,6 +66,7 @@ function exportMap(include, extraFlows = []) {
     files: on.includes('notes') ? g.files : g.files.map(({ note, ...f }) => f),
   };
   if (!on.includes('recent')) delete out.recent;
+  if (!on.includes('quality')) delete out.quality;
   if (!on.includes('health')) delete out.health;
   // dismissals made since the last build travel with the copy (the page applies them; no reasons, which are notes to self)
   else if (out.health) { const list = readDismissed().map(({ reason, ...d }) => d); if (list.length) out.health = { ...out.health, dismissed: list }; else delete out.health.dismissed; }
@@ -89,7 +90,7 @@ if (has('export')) {
     const file = path.resolve(dest && !dest.startsWith('--') ? dest : path.join(here, x.name));
     fs.writeFileSync(file, x.html);
     console.log(`Exported the map to ${file}`);
-    const label = { flows: 'flows and the tour', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
+    const label = { flows: 'flows and the tour', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check', quality: 'code-quality scores' };
     console.log(`Includes: the map${x.include.map((p) => ', ' + label[p]).join('')}. One file that opens in any browser, with no Ask bar.`);
     if (x.include.includes('health') && !x.plan) console.log('It includes the health check: which endpoints are open and where secrets sit in the code (never their values). Share it only with people you trust.');
     process.exit(0);
