@@ -22,7 +22,7 @@ function boot({ saved, deviceLight = false, storageThrows = false } = {}) {
   const listeners = {}, events = [];
   const mq = { matches: deviceLight, addEventListener: (_, f) => { mq.change = f; } };
   const win = {
-    document: { documentElement: { setAttribute: (k, v) => { attrs[k] = v; }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } } },
+    document: { documentElement: { hasAttribute: () => false, setAttribute: (k, v) => { attrs[k] = v; }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } } },
     matchMedia: () => mq,
     localStorage: { getItem: (k) => { if (storageThrows) throw new Error('blocked'); return store.get(k) ?? null; }, setItem: (k, v) => { if (storageThrows) throw new Error('blocked'); store.set(k, v); } },
     addEventListener: (t, f) => { listeners[t] = f; },

@@ -112,6 +112,8 @@ The map's server answers each question with the AI on your computer, in your pro
 
 It uses whichever made the map, and the other one if that isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
 
+**Keep this board** saves an answer board in `floorplan/boards.json` (only the map's server writes it), and `build.mjs` folds the kept boards into `graph.json`, dropping cards whose code is gone and boards left empty.
+
 In the Claude app, the map asks Claude through the app instead, with the same lookups but no access to your source.
 
 The same lookups help ordinary Claude Code sessions. If you say yes after your first map, the short section Floorplan adds to `CLAUDE.local.md` tells them to check the map (`query.mjs find`, `show`, `path`, `overview`) before searching the code from scratch.

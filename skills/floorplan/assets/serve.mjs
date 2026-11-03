@@ -5,7 +5,8 @@
 // usage: node floorplan/serve.mjs [--port 4378] [--engine claude|codex] [--model <model>] [--claude <path>] [--codex <path>]
 //                                 [--no-open] [--idle-exit <minutes>]
 //        node floorplan/serve.mjs --stop
-//        node floorplan/serve.mjs --export [<file>] [--include flows,notes,recent,health]   (a copy to share; default flows,notes)
+//        node floorplan/serve.mjs --export [<file>] [--include flows,boards,notes,recent,health]   (a copy to share; default flows,boards,notes)
+//                                 [--embed]   (made to sit in an iframe in a docs site: see docs/embedding.md)
 //
 // The server listens on 127.0.0.1 only. Each question runs in the codebase root, on your own account:
 // `claude -p` with read-only tools (Read, Grep, Glob, and Bash limited to floorplan/query.mjs), or
@@ -48,31 +49,58 @@ const cleanDismissal = (d) => ({
 // ---------- export: a copy of the map to share ----------
 // The same self-contained page, marked as exported: no Ask bar, no requests for Claude or Codex, no links into
 // this computer, and only the extras asked for. Used by the map's Export button and by --export.
-const EXPORT_PARTS = ['flows', 'notes', 'recent', 'health'];
-const EXPORT_DEFAULT = ['flows', 'notes'];
+// `embed` marks it for an iframe in someone's docs (<html data-embed>, read before anything is drawn): the
+// details start closed, the page's scroll wheel isn't taken over, and clicks don't fill the docs' back button.
+const EXPORT_PARTS = ['flows', 'boards', 'notes', 'recent', 'health'];
+const EXPORT_DEFAULT = ['flows', 'boards', 'notes'];
 const DATA_START = '<script>window.FLOORPLAN = ';
-function exportMap(include, extraFlows = []) {
+function exportMap(include, extraFlows = [], { embed = false, startView = 'root', showDescription = false, boards = null } = {}) {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
   const a = html.indexOf(DATA_START), b = html.indexOf(';</script>', a);
   if (a < 0 || b < 0) throw Object.assign(new Error('This map is too old to export. Ask Claude or Codex to update the floorplan first.'), { plain: true });
   const g = JSON.parse(html.slice(a + DATA_START.length, b));
   const on = EXPORT_PARTS.filter((p) => include.includes(p));
+  // a docs copy opens on the overview, on one part ('n:<id>', nested parts included) or on a kept board ('b:<id>', in the copy); anything else is refused, not guessed at
+  if (embed) {
+    // a kept board counts only if it's one of the boards going into this copy
+    const exporting = on.includes('boards') ? (Array.isArray(boards) ? boards : g.boards || []) : [];
+    const isPart = typeof startView === 'string' && startView.startsWith('n:') && (g.nodes || []).some((n) => 'n:' + n.id === startView);
+    const isBoard = typeof startView === 'string' && startView.startsWith('b:') && exporting.some((b) => 'b:' + b.id === startView);
+    if (startView !== 'root' && !isPart && !isBoard)
+      throw Object.assign(new Error('That starting view isn’t in this copy. Choose the overview, one of its parts, or a kept board that’s included.'), { plain: true, bad: true });
+    if (typeof showDescription !== 'boolean')
+      throw Object.assign(new Error('Showing the project description must be on or off.'), { plain: true, bad: true });
+  }
   const out = {
     ...g,
     // the remote can carry a sign-in token; the folder path is this computer's
-    meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on } },
+    meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on, ...(embed ? { embed: true, startView, showDescription } : {}) } },
     flows: on.includes('flows') ? [...g.flows, ...extraFlows.filter((f) => !g.flows.some((x) => x.id === f.id))] : [],
     tour: on.includes('flows') ? g.tour : [],
+    // `boards` null: the built list. An array (the page's own, already on live refs): exactly those, so boards
+    // changed or deleted since the build are as the page shows them.
+    boards: on.includes('boards') ? (Array.isArray(boards) ? boards : g.boards || []) : [],
     files: on.includes('notes') ? g.files : g.files.map(({ note, ...f }) => f),
   };
   if (!on.includes('recent')) delete out.recent;
   if (!on.includes('health')) delete out.health;
   // dismissals made since the last build travel with the copy (the page applies them; no reasons, which are notes to self)
   else if (out.health) { const list = readDismissed().map(({ reason, ...d }) => d); if (list.length) out.health = { ...out.health, dismissed: list }; else delete out.health.dismissed; }
-  const json = JSON.stringify(out).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  // every < as \u003c (still valid JSON): text like `<!-- <script>` in an answer can't end or derail the script
+  const json = JSON.stringify(out).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   const slug = String(g.project?.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'floorplan';
-  return { html: html.slice(0, a + DATA_START.length) + json + html.slice(b), name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint };
+  let page = html.slice(0, a + DATA_START.length) + json + html.slice(b);
+  if (embed) page = page.replace(/<html\b/i, '<html data-embed');
+  return { html: page, name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint, embed };
 }
+// The request limits follow from what cleanBoard and cleanFlows keep, so every collection they accept fits:
+// a board is at most ~84 000 characters as JSON (8 000 of answer, 2 000 of question, 90 cards and steps of up
+// to 800), a flow at most ~150 000 (60 steps with 2 000-character notes), and an export carries up to 200 boards and 50 flows.
+const MAX_BOARDS = 200, BOARD_BODY_MAX = 100000, FLOWS_BODY_MAX = 50 * 150000;
+const EXPORT_BODY_MAX = MAX_BOARDS * BOARD_BODY_MAX + FLOWS_BODY_MAX + 10000;
+/** The boards the page sends with an export (all it has now), as the page sends them: size-limited, built shape only. */
+const cleanBoards = (list) => (Array.isArray(list) ? list : []).slice(0, MAX_BOARDS).map(cleanBoard).filter(Boolean)
+  .map(({ id, title, question, answer, items, steps }) => ({ id, title, question, answer, items, steps }));
 /** Flows requested from the map since it was last built, as the page sends them: checked and trimmed. */
 const cleanFlows = (list) => (Array.isArray(list) ? list : []).slice(0, 50)
   .filter((f) => f && typeof f.id === 'string' && Array.isArray(f.steps))
@@ -85,12 +113,16 @@ if (has('export')) {
   const dest = opt('export');
   const include = String(opt('include', EXPORT_DEFAULT.join(','))).split(',').map((s) => s.trim().toLowerCase());
   try {
-    const x = exportMap(include);
+    const stale = ['boards.json', 'custom-flows.json'].some((n) => { try { return fs.statSync(path.join(here, n)).mtimeMs > fs.statSync(path.join(here, 'index.html')).mtimeMs; } catch { return false; } });
+    const x = exportMap(include, [], { embed: has('embed') });
     const file = path.resolve(dest && !dest.startsWith('--') ? dest : path.join(here, x.name));
+    fs.mkdirSync(path.dirname(file), { recursive: true }); // e.g. docs/_static/ in a docs site that has none yet
     fs.writeFileSync(file, x.html);
     console.log(`Exported the map to ${file}`);
-    const label = { flows: 'flows and the tour', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
+    if (stale) console.log('Boards or flows were saved after the map was last built, so they are not in this copy: run build.mjs, then export again.');
+    const label = { flows: 'flows and the tour', boards: 'kept boards', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
     console.log(`Includes: the map${x.include.map((p) => ', ' + label[p]).join('')}. One file that opens in any browser, with no Ask bar.`);
+    if (x.embed) console.log(`Made for an iframe in your docs, e.g. <iframe src="${path.basename(file)}" style="width:100%;height:600px;border:0" title="Architecture map" loading="lazy" allowfullscreen></iframe>. The overview description is hidden to leave room for the map; add ?description=show to show it. Add #v=<part id> to open on one part, #b=<board id> to open on a kept board, ?theme=light or dark to fix the colours.`);
     if (x.include.includes('health') && !x.plan) console.log('It includes the health check: which endpoints are open and where secrets sit in the code (never their values). Share it only with people you trust.');
     process.exit(0);
   } catch (e) { console.error(`✗ Couldn't export the map: ${e.message}`); process.exit(1); }
@@ -224,6 +256,38 @@ fs.watchFile(path.join(here, 'index.html'), { interval: 1000 }, (cur, prev) => {
 if (idleExit) setInterval(() => { if (!tabs.size && !running.size && Date.now() - lastTab > idleExit) process.exit(0); }, 60000).unref();
 const flowsFile = path.join(here, 'custom-flows.json');
 const readFlows = () => { try { return JSON.parse(fs.readFileSync(flowsFile, 'utf8')).flows || []; } catch { return []; } };
+
+// Kept boards: answer boards saved from the Ask bar, stored next to the map (build.mjs folds them into the page).
+/** Collects a request's body as text up to `max` characters; over it, answers 413 in plain words instead of dropping the connection. */
+function readBody(req, res, max, done) {
+  let raw = '', big = false;
+  req.setEncoding('utf8'); // a character split across two pieces of the body still decodes
+  req.on('data', (d) => { if (big) return; raw += d; if (raw.length > max) { big = true; raw = ''; } });
+  req.on('end', () => {
+    if (!big) return done(raw);
+    res.writeHead(413, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'That’s too big for the map’s server to take in one go. Export with fewer kept boards, or delete some you no longer need.' }));
+  });
+}
+const boardsFile = path.join(here, 'boards.json');
+const readBoards = () => { try { const l = JSON.parse(fs.readFileSync(boardsFile, 'utf8')).boards; return Array.isArray(l) ? l : []; } catch { return []; } };
+const clip = (v, n) => (typeof v === 'string' ? v : '').slice(0, n);
+// cards and steps without a usable ref are dropped
+const cleanRefs = (list, max) => list.slice(0, max).map((i) => ({ ref: clip(i?.ref, 300), note: clip(i?.note, 500) })).filter((i) => i.ref);
+/** A board as the page sends it, checked and trimmed (text is kept as written; the page escapes it). null if it has no usable id or items.
+ *  createdAt/updatedAt aren't needed: the server stamps them when it saves. */
+function cleanBoard(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+  if (typeof b.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(b.id)) return null;
+  if (!Array.isArray(b.items) || (b.steps !== undefined && !Array.isArray(b.steps))) return null;
+  const items = cleanRefs(b.items, 30);
+  if (!items.length) return null;
+  return {
+    id: b.id, title: clip(b.title, 200), question: clip(b.question, 2000), answer: clip(b.answer, 8000),
+    items, steps: cleanRefs(b.steps || [], 60),
+    createdAt: clip(b.createdAt, 40), updatedAt: clip(b.updatedAt, 40),
+  };
+}
 
 // ---------- Floorplan Cloud waitlist (opt-in) ----------
 // The map may ask, once, whether you want an email when Floorplan Cloud launches. Nothing is sent unless
@@ -541,6 +605,27 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/status') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ tabs: tabs.size, pid: process.pid, hash: selfHash, root })); }
     if (req.method === 'GET' && url.pathname === '/api/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ cli: !!cli, engine, want, version, path: cli?.path || null })); }
+    if (url.pathname === '/api/boards') {
+      const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+      if (req.method === 'GET') return send(200, { boards: readBoards() });
+      if (req.method === 'POST' || req.method === 'DELETE') {
+        readBody(req, res, BOARD_BODY_MAX, (raw) => {
+          let body; try { body = JSON.parse(raw); } catch { return send(400, { error: 'Unreadable request.' }); }
+          let boards = readBoards();
+          if (req.method === 'DELETE') boards = boards.filter((x) => x.id !== body?.id);
+          else {
+            const b = cleanBoard(body?.board);
+            if (!b) return send(400, { error: 'That board has no usable id or items.' });
+            const now = new Date().toISOString(), old = boards.find((x) => x.id === b.id);
+            const next = { ...b, createdAt: old?.createdAt || now, updatedAt: now };
+            boards = old ? boards.map((x) => (x.id === b.id ? next : x)) : [...boards, next];
+          }
+          fs.writeFileSync(boardsFile, JSON.stringify({ boards }, null, 2) + '\n');
+          send(200, { boards });
+        });
+        return;
+      }
+    }
     // requested flows are saved next to the map; build.mjs folds them into graph.json
     if (url.pathname === '/api/flows') {
       if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ flows: readFlows() })); }
@@ -599,15 +684,18 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/cancel') { for (const c of running.values()) c.kill(); res.writeHead(204); return res.end(); }
     if (req.method === 'POST' && url.pathname === '/api/export') {
-      let raw = '';
-      req.on('data', (d) => { raw += d; if (raw.length > 500000) req.destroy(); });
-      req.on('end', () => {
+      readBody(req, res, EXPORT_BODY_MAX, (raw) => {
         let body = {}; try { body = JSON.parse(raw); } catch {}
         try {
-          const x = exportMap(Array.isArray(body.include) ? body.include.map(String) : EXPORT_DEFAULT, cleanFlows(body.flows));
+          const docs = body.embed === true; // the docs-copy settings only count for a docs copy
+          const x = exportMap(Array.isArray(body.include) ? body.include.map(String) : EXPORT_DEFAULT, cleanFlows(body.flows), {
+            boards: Array.isArray(body.boards) ? cleanBoards(body.boards) : null,
+            ...(docs ? { embed: true, ...(body.startView !== undefined ? { startView: body.startView } : {}), ...(body.showDescription !== undefined ? { showDescription: body.showDescription } : {}) } : {}),
+          });
           res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Content-Disposition': `attachment; filename="${x.name}"`, 'Cache-Control': 'no-store' });
           res.end(x.html);
         } catch (e) {
+          if (e.bad) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: e.message })); }
           console.error(`✗ Couldn't export the map: ${e.message}`);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: e.plain ? e.message : 'The map’s server couldn’t export it. The details are in its output.' }));

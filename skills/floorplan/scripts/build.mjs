@@ -220,30 +220,48 @@ flows.forEach((fl, i) => {
 });
 // Flows people requested from the map (saved by serve.mjs). Steps use stable refs —
 // "route:METHOD /path" and "sym:<file>#<name>" — so they survive rebuilds; stale steps are dropped.
+const routeAt = new Map(routesIn.map((r, i) => [routeKey(r), i]));
+// Turns a stored ref (custom flows and kept boards) into a live id, or null when that code is gone.
+const resolveStoredRef = (ref) => {
+  if (typeof ref !== 'string') return null;
+  if (ref.startsWith('route:')) { const i = routeAt.get(ref.slice(6)); return i == null ? null : `r:${i}`; }
+  if (ref.startsWith('sym:')) {
+    const [p, name] = [ref.slice(4, ref.lastIndexOf('#')), ref.slice(ref.lastIndexOf('#') + 1)];
+    const i = (fileByPath.get(p)?.symbols || []).findIndex((s) => s.name === name);
+    return includedSet.has(p) && i >= 0 ? `s:${p}#${i}` : null;
+  }
+  if (ref.startsWith('n:')) return byId.has(ref.slice(2)) ? ref : null;
+  if (ref.startsWith('f:')) return includedSet.has(ref.slice(2)) ? ref : null;
+  return null;
+};
 const customFile = path.join(outDir, 'custom-flows.json');
 if (fs.existsSync(customFile)) {
   let custom = [];
   try { custom = JSON.parse(fs.readFileSync(customFile, 'utf8')).flows || []; } catch (e) { warn(`custom-flows.json is not valid JSON: ${e.message}`); }
-  const routeAt = new Map(routesIn.map((r, i) => [routeKey(r), i]));
-  const resolveStep = (ref) => {
-    if (typeof ref !== 'string') return null;
-    if (ref.startsWith('route:')) { const i = routeAt.get(ref.slice(6)); return i == null ? null : `r:${i}`; }
-    if (ref.startsWith('sym:')) {
-      const [p, name] = [ref.slice(4, ref.lastIndexOf('#')), ref.slice(ref.lastIndexOf('#') + 1)];
-      const i = (fileByPath.get(p)?.symbols || []).findIndex((s) => s.name === name);
-      return includedSet.has(p) && i >= 0 ? `s:${p}#${i}` : null;
-    }
-    if (ref.startsWith('n:')) return byId.has(ref.slice(2)) ? ref : null;
-    if (ref.startsWith('f:')) return includedSet.has(ref.slice(2)) ? ref : null;
-    return null;
-  };
   let dropped = 0;
   for (const fl of custom) {
-    const steps = (fl.steps || []).map((s) => ({ ref: resolveStep(s.ref), note: s.note || '' })).filter((s) => s.ref);
+    const steps = (fl.steps || []).map((s) => ({ ref: resolveStoredRef(s.ref), note: s.note || '' })).filter((s) => s.ref);
     dropped += (fl.steps || []).length - steps.length;
     if (steps.length >= 2 && isStr(fl.id) && !outFlows.some((x) => x.id === fl.id)) outFlows.push({ id: fl.id, title: fl.title || 'Flow', description: fl.description || '', steps, custom: true });
   }
   if (dropped) warn(`${dropped} step(s) in custom-flows.json point at code that no longer exists and were left out.`);
+}
+// Kept boards (answer boards saved from the Ask bar, floorplan/boards.json): same stable refs; cards
+// whose code is gone are dropped, and a board left with no cards is dropped.
+const outBoards = [];
+const boardsFile = path.join(outDir, 'boards.json');
+if (fs.existsSync(boardsFile)) {
+  let kept = [];
+  try { kept = JSON.parse(fs.readFileSync(boardsFile, 'utf8')).boards || []; } catch (e) { warn(`boards.json is not valid JSON: ${e.message}`); }
+  let dropped = 0;
+  const live = (list) => (Array.isArray(list) ? list : []).map((c) => ({ ref: resolveStoredRef(c?.ref), note: c?.note || '' }));
+  for (const b of Array.isArray(kept) ? kept : []) {
+    if (!isStr(b?.id)) continue;
+    const items = live(b.items).filter((c) => c.ref), steps = live(b.steps).filter((c) => c.ref);
+    dropped += (Array.isArray(b.items) ? b.items.length : 0) - items.length + (Array.isArray(b.steps) ? b.steps.length : 0) - steps.length;
+    if (items.length) outBoards.push({ id: b.id, title: b.title || '', question: b.question || '', answer: b.answer || '', items, steps });
+  }
+  if (dropped) warn(`${dropped} card(s) in boards.json point at code that no longer exists and were left out.`);
 }
 // "Start here" tour: 3-8 narrated stops (node id or file path), written by Claude in architecture.json
 const outTour = [];
@@ -410,6 +428,7 @@ const graph = {
   }),
   links: [...links.values()],
   flows: outFlows,
+  boards: outBoards,
   tour: outTour,
   ...(outRecent?.items.length ? { recent: outRecent } : {}),
 };
@@ -443,7 +462,8 @@ const page = (g) => template
   .replace('/*__GRAPH_QUERY__*/', () => graphQuery.replace(/<\/script/gi, '<\\/script'))
   .replace('<!--__ELK_SCRIPT__-->', () => elkTag)
   .replace('/*__FONTS__*/', () => fontCss)
-  .replace('/*__FLOORPLAN_DATA__*/null', () => JSON.stringify(g).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'))
+  // every < written as \u003c (still valid JSON), so text like `<!-- <script>` in an answer can't end or derail the script
+  .replace('/*__FLOORPLAN_DATA__*/null', () => JSON.stringify(g).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'))
   .replace(/__FLOORPLAN_TITLE__/g, () => escapeHtml(`${arch.project.name} map`))
   .replace(/__FLOORPLAN_LOGO__/g, () => dataUri('logo.png'))
   .replace(/__FLOORPLAN_FAVICON__/g, () => dataUri('favicon.png'))

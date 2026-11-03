@@ -83,11 +83,14 @@ Every page of your app that Floorplan detected. Pick one to see everything behin
 Saves a copy of the map to send to anyone, such as a teammate, a client, or someone without Claude or Codex. It's one HTML file that opens in any browser with nothing to install. The copy has the whole map, search, screens, the tour and flows, but no Ask bar, no **Fix with Claude** or **Build this** requests, no editor links, and nothing about your computer, like its folder path. An **Exported** label beside the title shows the date, and a small **Made with Floorplan** link at the bottom leads here.
 
 You choose what goes in:
-- **Flows and the tour**, and **notes pinned to files**, on by default;
+- **Flows and the tour**, **kept boards** (answers you saved, see [Keeping an answer](#keeping-an-answer)), and **notes pinned to files**, on by default;
 - **Recent work**, off by default;
-- **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust.
+- **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust;
+- **For a docs page**, off by default: a copy made to sit inside a page of your docs. Tick it to choose which part the map **Opens on** and whether to **Show project description**. Every part is still in the copy. See [Putting the map in your docs](embedding.md).
 
-Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan".
+Kept boards carry their answer text into the copy. The button exports your kept boards as the page has them, including any you updated or deleted since the last build. Kept boards in an exported copy open read-only, with no Keep, Update or delete.
+
+Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), plus the answers you kept, which can quote the code they explain, but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan". To put the map inside your project's docs site, see [Putting the map in your docs](embedding.md).
 
 ### Start here
 Replays the one-minute tour that runs the first time you open a map.
@@ -111,6 +114,16 @@ Type into the Ask bar at the bottom and press **Enter**. Claude or Codex answers
 - **Right-click → Ask about this** on any card or line adds it to your question as context.
 - The label in the bar shows what's answering. **Claude Code** means the Claude Code CLI and **Codex** means Codex, both running on your computer and able to read your source code. **Claude** means the map was opened in the Claude app, which answers from the map alone.
 - If neither is available, the bar explains what's needed. See [Troubleshooting](troubleshooting.md).
+
+### Keeping an answer
+
+An answer you want to come back to, or put in your docs, can be kept. On an answer board, press **Keep this board** and give it a name (it starts as the answer's title). It's saved and opens as a board of its own. Kept boards are listed under **Saved boards** in the **Flows** menu, open like any other board, and can be deleted there. Once you've kept an answer, it doesn't offer Keep again.
+
+To refine one, open it and ask again (say, "now without the refund emails"). The new answer offers **Update "<title>"**, which replaces that board, and **Keep as new board**, which saves it next to the first.
+
+- When the map is served, kept boards are saved in `floorplan/boards.json`. A map opened straight from its file keeps them in that browser only. If saving to the server fails, the map says "Saved in this browser only".
+- `#b=<board id>` after the map's address opens that board, also in exported and embedded copies. An id the map doesn't know opens the overview. A board's id is its name in lowercase with dashes (`refund-flow`, then `refund-flow-2` for a second one with the same name).
+- When you update the map, a card whose code is gone is dropped from its board with a warning, and a board left with no cards is dropped.
 
 ## Blueprints
 
