@@ -79,6 +79,10 @@ const LANG_BY_EXT = {
   '.css': 'css', '.scss': 'css', '.sass': 'css', '.less': 'css',
   '.html': 'html', '.htm': 'html', '.ejs': 'html', '.hbs': 'html', '.jinja': 'html', '.j2': 'html', '.njk': 'html',
 };
+const THEME_JSON = /^(templates\/(customers\/|metaobject\/)?[^/]+|sections\/[^/]+|config\/settings_data)\.json$/;
+const THEME_FILE = 'layout/theme.liquid';
+/** Shopify theme folders as path prefixes ('' for the root): every theme has a layout/theme.liquid. */
+export const themeRoots = (paths) => new Set(paths.filter((p) => p === THEME_FILE || p.endsWith('/' + THEME_FILE)).map((p) => p.slice(0, -THEME_FILE.length)));
 const CONFIG_EXT = new Set(['.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.xml', '.gradle', '.properties', '.env']);
 const CONFIG_NAMES = /^(dockerfile.*|makefile|procfile|justfile|\.env\..*|\.?[\w-]*rc|gemfile|rakefile|cargo\.toml|go\.mod|pyproject\.toml|setup\.cfg|requirements.*\.txt)$/i;
 const JSON_CONFIG = /^(package|tsconfig.*|jsconfig|composer|manifest|app|components|turbo|nx|lerna|angular|firebase|vercel|now|renovate|tslint|.?eslintrc|.?babelrc|.?prettierrc|.*.config|.*rc|settings|launch|tasks|deno|biome|project|workspace|devcontainer|cdk|serverless|appsettings.*|openapi|swagger).json$/i;
@@ -134,9 +138,11 @@ export function mapDir(root, { migrate = true } = {}) {
 /** Extra directories skipped when walking outside of git (where .gitignore can't help). */
 export const WALK_IGNORE_DIRS = new Set([...HARD_IGNORE_DIRS, 'dist', 'build', 'out', 'target', 'coverage', '.cache', 'vendor', 'bin', 'obj', 'env', '.vscode', '.claude']);
 
-export function classify(relPath, bytes) {
+export function classify(relPath, bytes, { themes } = {}) {
   const base = path.posix.basename(relPath).toLowerCase();
   const ext = path.posix.extname(base);
+  const theme = themes && [...themes].find((r) => relPath.startsWith(r));
+  if (theme !== undefined && (ext === '.liquid' || (ext === '.json' && THEME_JSON.test(relPath.slice(theme.length))))) return { category: 'code', lang: 'liquid' };
   if (GENERATED.test(relPath)) return { category: 'generated', lang: null };
   if (LOCK_NAMES.test(base)) return { category: 'lock', lang: null };
   if (ext === '.log' || base.endsWith('.log')) return { category: 'log', lang: null };

@@ -1,6 +1,10 @@
 // Per-language, regex-based extraction of imports, exported symbols, HTTP routes and HTTP calls.
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
 
+import path from 'node:path';
+
+const P = path.posix;
+
 const lineIndex = (src) => {
   const starts = [0];
   for (let i = 0; i < src.length; i++) if (src.charCodeAt(i) === 10) starts.push(i + 1);
@@ -548,8 +552,103 @@ function extractSimple(src, lang) {
   return { imports, symbols, routes: [], mounts: [], calls, hosts };
 }
 
+// ---------- Shopify themes (Liquid) ----------
+// Theme files reach each other by name ({% render 'price' %} is snippets/price.liquid), turned here into relative paths.
+
+const THEME_ROOT = /^((?:.*\/)?)(?:layout|templates|sections|snippets|blocks|assets|config|locales)\//;
+// {% doc %} too: its @example renders aren't real
+const LIQUID_SKIP = /\{%-?\s*(comment|raw|doc)\s*-?%\}[\s\S]*?\{%-?\s*end\1\s*-?%\}|\{%-?\s*#[^%]*%\}/g;
+const LIQUID_TAG = /(?:\{%-?\s*|\n[ \t]*)(render|include|section|sections|content_for)\s+(['"])([^'"\n]+)\2(?:\s*,\s*type:\s*(['"])([^'"\n]+)\4)?/g;
+const LIQUID_ASSET = /(['"])([^'"\n{}]+\.(?:js|css|scss)(?:\.liquid)?)\1\s*\|\s*asset_url/g;
+const LIQUID_REQUEST = /\bfetch\s*\(|\$\.(ajax|get|post|getJSON)\s*\(|\bXMLHttp\w+|\baxios\b/;
+const APP_BLOCK = /shopify:(?:\\?\/){2}apps(?:\\?\/)([\w-]+)/g;
+
+function extractLiquid(src, filePath) {
+  const root = THEME_ROOT.exec(filePath)?.[1] ?? '';
+  const dir = P.dirname(filePath);
+  const rel = (target) => { const r = P.relative(dir, root + target); return r.startsWith('.') ? r : './' + r; };
+  const imports = [], symbols = [];
+  const seen = new Set();
+  const add = (spec, line, kind) => { if (seen.has(spec)) return; seen.add(spec); imports.push({ spec, names: [], line, ...(kind ? { kind } : {}) }); };
+  const at = lineIndex(src);
+  const lineOf = (s) => { const i = src.indexOf(s); return i < 0 ? 1 : at(i); };
+  const addTags = (code, at) => {
+    for (const m of all(LIQUID_TAG, code)) {
+      const [, tag, , name, , type] = m;
+      const line = at(m.index + (m[0].startsWith('\n') ? 1 : 0));
+      if (tag === 'render' || tag === 'include') add(rel(`snippets/${name}.liquid`), line);
+      else if (tag === 'section') add(rel(`sections/${name}.liquid`), line);
+      else if (tag === 'sections') add(rel(`sections/${name}.json`), line);
+      else if (name === 'block' && type) add(rel(`blocks/${type}.liquid`), line);
+    }
+  };
+  // an app's block, a file in blocks/, or a block defined in its section's schema
+  const addBlock = (type, line) => {
+    if (!type || type.startsWith('@')) return;
+    const app = /^shopify:\/\/apps\/([\w-]+)/.exec(type);
+    if (app) add(`shopify://apps/${app[1]}`, line);
+    else add(rel(`blocks/${type}.liquid`), line, 'theme-block');
+  };
+
+  if (filePath.endsWith('.json')) {
+    for (const m of all(APP_BLOCK, src)) add(`shopify://apps/${m[1]}`, at(m.index));
+    if (/(^|\/)config\//.test(filePath)) return { imports, symbols, routes: [], mounts: [], calls: [], hosts: [] };
+    let data = null;
+    try { data = JSON.parse(src.replace(/^\s*\/\*[\s\S]*?\*\//, '')); } catch {}
+    const walkBlocks = (blocks) => { for (const b of Object.values(blocks || {})) { addBlock(b?.type, lineOf(`"${b?.type}"`)); walkBlocks(b?.blocks); } };
+    for (const s of Object.values(data?.sections || {})) {
+      if (typeof s?.type !== 'string') continue;
+      if (s.type.startsWith('shopify://')) { addBlock(s.type, 1); continue; }
+      const line = lineOf(`"type":"${s.type}"`);
+      // Shopify supplies _-prefixed sections like _blocks when the theme doesn't
+      add(rel(`sections/${s.type}.liquid`), line, s.type.startsWith('_') ? 'theme-block' : undefined);
+      if (!symbols.some((x) => x.name === s.type)) symbols.push({ name: s.type, kind: 'section', line });
+      walkBlocks(s.blocks);
+    }
+    // Liquid typed into custom-code settings, JSON-escaped
+    const settings = src.replace(/\\"/g, '"').replace(LIQUID_SKIP, blank);
+    addTags(settings, lineIndex(settings));
+    return { imports, symbols, routes: [], mounts: [], calls: [], hosts: [] };
+  }
+
+  const code = src.replace(LIQUID_SKIP, blank);
+  addTags(code, at);
+  for (const m of all(LIQUID_ASSET, code)) add(rel(`assets/${m[2]}`), at(m.index));
+  for (const m of all(APP_BLOCK, code)) add(`shopify://apps/${m[1]}`, at(m.index));
+
+  const schema = /\{%-?\s*schema\s*-?%\}([\s\S]*?)\{%-?\s*endschema\s*-?%\}/.exec(code);
+  if (schema) {
+    let s = null;
+    try { s = JSON.parse(schema[1]); } catch {}
+    const line = at(schema.index);
+    if (typeof s?.name === 'string' && !s.name.startsWith('t:')) symbols.push({ name: s.name, kind: 'section', line });
+    for (const b of Array.isArray(s?.blocks) ? s.blocks : []) if (typeof b?.type === 'string' && !b.type.startsWith('@')) symbols.push({ name: b.type, kind: 'block', line });
+  }
+  for (const m of all(/@param\s+(?:\{[^}]*\}\s+)?\[?([\w-]+)/g, src)) symbols.push({ name: m[1], kind: 'param', line: at(m.index) });
+  const accepts = /\{%-?\s*comment\s*-?%\}[\s\S]*?\b(?:Accepts|Arguments|Receives|Parameters|Params):?\s*\n([\s\S]*?)\{%-?\s*endcomment/i.exec(src);
+  if (accepts) for (const m of all(/^\s*-\s*([\w-]+)\s*:/gm, accepts[1])) symbols.push({ name: m[1], kind: 'param', line: at(accepts.index) });
+
+  // a theme is full of page links and SVG namespaces, so only real requests count
+  const lines = code.split('\n');
+  const { calls, hosts } = extractCalls(code, at);
+  return {
+    imports, symbols, routes: [], mounts: [],
+    calls: calls.filter((c) => !c.path.includes('{{') && LIQUID_REQUEST.test(lines[c.line - 1] || '')),
+    hosts: hosts.filter((h) => !/(^|\.)(w3|schema)\.org$/.test(h.host)),
+  };
+}
+
+/** A Liquid file's description: its leading {% comment %} or {% doc %}, up to its parameter list. */
+function liquidDoc(src) {
+  const m = /^(?:\s|\{%-?\s*#[^%]*%\})*\{%-?\s*(comment|doc)\s*-?%\}([\s\S]*?)\{%-?\s*end\1\s*-?%\}/.exec(src);
+  if (!m || /theme-check|prettier-ignore/i.test(m[2])) return null;
+  const head = m[2].split(/\n\s*(?:-\s|(?:snippet\s+)?(?:accepts|arguments|receives|usage|parameters|params|example)\b)|@param\b/i)[0];
+  return cleanDoc(head);
+}
+
 function extractByLang(src, lang, filePath) {
   switch (lang) {
+    case 'liquid': return extractLiquid(src, filePath);
     case 'typescript': case 'javascript': case 'vue': case 'svelte': case 'astro': return extractJs(src, filePath);
     case 'python': return extractPy(src);
     case 'go': return extractGo(src);
@@ -650,7 +749,8 @@ function headerComment(lines) {
 
 function addDocs(src, lang, r) {
   const lines = src.split('\n');
-  r.doc = lang === 'python' ? pyDocAfter(lines, -1) : HASH_LANGS.has(lang) ? hashHeader(lines) : headerComment(lines);
+  r.doc = lang === 'python' ? pyDocAfter(lines, -1) : lang === 'liquid' ? liquidDoc(src) : HASH_LANGS.has(lang) ? hashHeader(lines) : headerComment(lines);
+  if (lang === 'liquid') return;
   for (const s of r.symbols || []) {
     const d = lang === 'python' ? pyDocAfter(lines, s.line - 1) : commentBefore(lines, s.line - 1);
     if (d) s.doc = d;

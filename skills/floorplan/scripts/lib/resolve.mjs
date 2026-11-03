@@ -237,6 +237,15 @@ export function createResolver(root, files) {
     return { unresolved: true };
   };
 
+  // ---- Shopify themes ----
+  const resolveLiquid = (from, imp) => {
+    const app = /^shopify:\/\/apps\/([\w-]+)/.exec(imp.spec);
+    if (app) return { external: app[1], eco: 'shopify-app' };
+    const p = P.normalize(P.join(P.dirname(from), imp.spec));
+    for (const c of [p, p + '.liquid']) if (fileSet.has(c)) return { file: c };
+    return imp.kind === 'theme-block' ? { builtin: true } : { unresolved: true }; // a block from its section's schema has no file
+  };
+
   return function resolve(file, imp) {
     const lang = file.lang;
     switch (lang) {
@@ -247,6 +256,7 @@ export function createResolver(root, files) {
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file.path, imp.spec);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
+      case 'liquid': return resolveLiquid(file.path, imp);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
       default: return resolveRelative(file.path, imp.spec, []);
     }

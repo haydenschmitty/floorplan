@@ -12,7 +12,7 @@
 //
 // Supported: Next.js (app + pages router), React Router (JSX <Route> and route objects, v5–v7 incl.
 // routes.ts config), Vue Router, Angular routes, TanStack Router (createFileRoute), SvelteKit, Remix
-// (flat + nested routes), Nuxt, Astro, Expo Router.
+// (flat + nested routes), Nuxt, Astro, Expo Router, Shopify theme templates.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,7 +22,25 @@ const JS_LANGS = new Set(['typescript', 'javascript', 'vue', 'svelte', 'astro'])
 
 // ======================= scan side =======================
 
+// Shopify themes: an alternate template (collection.sale.json) is opened with ?view=sale
+const THEME_URLS = {
+  index: '/', product: '/products/:handle', collection: '/collections/:handle', 'list-collections': '/collections',
+  cart: '/cart', search: '/search', page: '/pages/:handle', blog: '/blogs/:blog', article: '/blogs/:blog/:article',
+  404: '/404', password: '/password', gift_card: '/gift_cards/:id',
+  'customers/account': '/account', 'customers/login': '/account/login', 'customers/register': '/account/register',
+  'customers/order': '/account/orders/:id', 'customers/addresses': '/account/addresses',
+  'customers/activate_account': '/account/activate/:id', 'customers/reset_password': '/account/reset/:id',
+};
+function themeScreen(p) {
+  const m = /(?:^|\/)templates\/((?:customers\/|metaobject\/)?[^/.]+)(?:\.([^/]+?))?\.(?:json|liquid)$/.exec(p);
+  if (!m) return null;
+  const [, type, alt] = m;
+  const url = type.startsWith('metaobject/') ? `/pages/${type.slice(11)}/:handle` : THEME_URLS[type];
+  return url ? { fw: 'shopify-theme', url: alt ? `${url}?view=${alt}` : url } : null;
+}
+
 export function findScreens(src, file) {
+  if (file.category === 'code' && file.lang === 'liquid') { const s = themeScreen(file.path); return s ? [s] : []; }
   if (file.category !== 'code' || !JS_LANGS.has(file.lang)) return [];
   const p = file.path;
   const out = [];
@@ -624,7 +642,8 @@ export function buildScreens({ graph, scan, root }) {
   for (const c of candidates) {
     if (!files.has(c.file) || isTest(c.file)) continue;
     const app = appOf(c.file);
-    const url = normalizeUrl(c.url) || '/';
+    // alternate theme templates are separate pages that differ only by ?view=
+    const url = c.fw === 'shopify-theme' ? c.url : normalizeUrl(c.url) || '/';
     const id = `screen:${app}:${url}`;
     if (screens.has(id)) continue;
     const f = files.get(c.file);
