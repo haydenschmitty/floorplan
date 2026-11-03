@@ -55,7 +55,7 @@ claude plugin install floorplan@floorplan
 
 A plugin installed from a local folder runs straight from it, so edits apply in the next session with no update step.
 
-To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
+To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex|acp` on serve.mjs let you try either agent's map from anywhere. `--engine acp --acp gemini` (or another known name, `zed:<name>`, or `--acp '<command>'`) answers through an [ACP agent](acp.md).
 
 The scripts also run on their own, which is the fastest way to work on them:
 
@@ -94,7 +94,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
-| `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
+| `ask.test.mjs` | asking through Claude Code, Codex or an ACP agent: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
@@ -122,7 +122,7 @@ There are two lists, and an agent can be on one or both:
 - **The agent that built the map**, in `scripts/lib/agent.mjs`: an entry in `DETECT` that recognises it from the variables it sets for every command it runs. The map records it, so its prompts name the right agent.
 - **The agent that answers questions**, in `assets/serve.mjs`: an entry in `ENGINES` with its name, where to get it, `find` (where its CLI lives, plus a `--<name> <path>` override) and `run` (the arguments and how to read its output into progress and an answer).
 
-An engine must be read-only in a way its CLI enforces, not only because the prompt asks; if it can't be, say so plainly in the docs. Set `structured: true` only when the CLI holds answers to the schema, because changing a blueprint from the map relies on it; without it, the map doesn't offer Change. Never take the command to run from the page or from saved settings. Add a stand-in CLI to `tests/fixtures/fake-cli/` and tests like `ask.test.mjs`.
+An engine must be read-only in a way its CLI enforces, not only because the prompt asks; if it can't be, say so plainly in the docs. Set `structured: true` only when the CLI holds answers to the schema, because changing a blueprint from the map relies on it; without it, the map doesn't offer Change. The ACP entry is `structured: false` for that reason. Its program is one of a fixed list, or an agent Zed is already set up with. A custom command is only `--acp` on the command line. The Ask bar may switch among agents the server can find, and a star may remember one, but only as an engine id and a known name or `zed:<name>`. Never take the command to run from the page or from saved settings. Add a stand-in CLI to `tests/fixtures/fake-cli/` and tests like `ask.test.mjs`.
 
 ## Guidelines
 

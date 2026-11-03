@@ -12,6 +12,7 @@ For what the plugin itself can and can't do on your computer (no hooks, MCP serv
 | The map's server (`serve.mjs`) | your computer, listening on `127.0.0.1` only | nothing on its own |
 | Asking questions (Claude Code CLI) | a `claude -p` session on your computer, with your account | your question, and the files Claude chooses to read |
 | Asking questions (Codex) | a `codex exec` run on your computer, with your ChatGPT sign-in, not saved to your Codex history | your question, and the files Codex chooses to read |
+| Asking questions (ACP) | a known ACP agent on your computer, or a command you typed with `--acp` when starting the server, on that agent's own sign-in | your question, and whatever that agent reads. How read-only it is depends on the agent. See [ACP agents](acp.md) |
 | Changing a blueprint from the map | the same as asking questions, with Claude Code or Codex; the map's server then writes only the plan's files in `floorplan/` | your request, and the files the AI chooses to read |
 | Asking questions (Claude app) | your claude.ai account | the map (names, descriptions, structure), never your source code. Claude asks before publishing it there |
 | Exporting a copy | your computer: the map's server writes one HTML file | nothing. You decide who gets the file. It holds the map, plus Health or recent work only if you tick them, and never your folder path, git remotes or source code |
@@ -28,6 +29,7 @@ The layout engine ([elkjs](https://github.com/kieler/elkjs) 0.9.3, EPL-2.0) and 
 - It answers only to `127.0.0.1` and `localhost` at its own port, so a website that points its own domain at your computer (DNS rebinding) can't load the map or its token.
 - Questions run Claude with **read-only** tools: reading files, searching, and the map's own lookup script. It can't edit files or run other commands.
 - With Codex, questions run in Codex's **read-only** sandbox: it can read and search, but not write files.
+- With an ACP agent, the server starts that agent's own read-only mode where it has one, and on the connection itself it refuses file writes and any terminal command except the map's lookup script. It does not try every sign-in method the agent advertises. An agent can still use tools of its own, so the guarantee depends on the agent. See [ACP agents](acp.md).
 - On a blueprint (a map planned from a PRD), **Change** requests run the same read-only way. The agent replies with the updated plan, and the server itself writes only `floorplan/plan.json`, `floorplan/architecture.json` and `floorplan/recent-work.json`, after checking them, keeping the old copies for Undo.
 - It stops by itself two hours after the last tab closes, and `node floorplan/serve.mjs --stop` stops it immediately.
 
@@ -55,7 +57,7 @@ Nothing is sent unless you click **Notify me**.
 - Click **Don't ask again**, or
 - set the environment variable `FLOORPLAN_NO_PROMPTS=1`.
 
-Your answer is kept in `~/.floorplan/settings.json`.
+Your answer is kept in `~/.floorplan/settings.json`. The same file can remember which agent the Ask bar uses: Claude Code, Codex, or a known ACP name (or `zed:<name>`). It never stores a command.
 
 **How the service is protected:** its address is in Floorplan's public code, so it's built to be harmless if abused.
 - It only accepts new sign-ups, and never returns anything from the list.

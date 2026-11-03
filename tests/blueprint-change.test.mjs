@@ -29,8 +29,15 @@ async function served(replies, root) {
   writeJson(changes, replies);
   const log = path.join(root, 'fake.log');
   const port = 20000 + Math.floor(Math.random() * 20000);
+  const home = path.join(root, 'home');
   const server = spawn(process.execPath, [path.join(root, 'floorplan', 'serve.mjs'), '--port', String(port), '--no-open'], {
-    cwd: root, env: { ...process.env, FLOORPLAN_NO_PROMPTS: '1', FLOORPLAN_ENGINE: '', FLOORPLAN_CLAUDE: FAKE, FAKE_LOG: log, FAKE_CHANGES: changes }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: {
+      ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'),
+      FLOORPLAN_NO_PROMPTS: '1', FLOORPLAN_ENGINE: '', FLOORPLAN_ACP: '',
+      FLOORPLAN_ACP_GEMINI: '', FLOORPLAN_ACP_OPENCODE: '', FLOORPLAN_ACP_DEVIN: '',
+      FLOORPLAN_ACP_CLAUDE_CODE_ACP: '', FLOORPLAN_ACP_CLAUDE_AGENT_ACP: '', FLOORPLAN_ACP_CODEX_ACP: '',
+      FLOORPLAN_CLAUDE: FAKE, FAKE_LOG: log, FAKE_CHANGES: changes,
+    }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   servers.push(server);
   const base = await new Promise((resolve, reject) => {

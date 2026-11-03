@@ -4,6 +4,7 @@
 |---|---|
 | [Getting started](getting-started.md) | Installing, making your first map, keeping it updated, planning an app before it exists, updating and removing the plugin |
 | [Floorplan in Codex](codex.md) | Installing and using Floorplan in Codex, and what's different from Claude Code |
+| [ACP agents](acp.md) | Asking questions on the map through Gemini, OpenCode, Devin, or another ACP agent |
 | [Using the map](using-the-map.md) | Every button, view, panel, shortcut and right-click menu, and what a blueprint adds |
 | [How it works](how-it-works.md) | The pipeline from scan to map, how connections are found, how updates stay cheap, how blueprints are drawn and changed |
 | [What's in your project](project-files.md) | Every file Floorplan creates, which ones you can edit, and how it stays out of git |
