@@ -5,6 +5,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { spawn, execFileSync } from 'node:child_process';
 import { shopApp, run, readJson, writeJson, cleanup, FAKE_PASSWORD } from './helpers.mjs';
 
@@ -26,6 +27,7 @@ before(async () => {
   const arch = readJson(path.join(root, 'floorplan', 'architecture.json'));
   writeJson(path.join(root, 'floorplan', 'architecture.json'), {
     ...arch,
+    nodes: [...arch.nodes, { id: 'api.orders', parent: 'api', label: 'Orders', kind: 'feature', paths: ['shop-api/routes/orders.js'] }], // a part nested inside another
     annotations: [{ path: 'shop-api/config.js', note: 'Moving to the secrets manager next sprint.' }],
     flows: [{ id: 'refund', title: 'Refund', description: 'A customer asks for a refund.', steps: [{ node: 'web', note: 'The website asks.' }, { node: 'api', note: 'The server refunds.' }] }],
   });
@@ -131,4 +133,188 @@ test('the Export button downloads the copy, with flows requested since the last 
   assert.ok(g.files.every((f) => !('note' in f)), 'notes weren’t ticked');
   assert.equal(g.recent, undefined);
   assert.ok(g.health);
+});
+
+test('the Export button can make a docs copy that opens on one part and shows the description', async () => {
+  const r = await api({ include: ['flows'], embed: true, startView: 'n:api', showDescription: true }, { 'x-floorplan-token': token });
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  assert.match(html, /^<!doctype html>\s*<html data-embed lang="en">/i);
+  const g = dataOf(html);
+  assert.equal(g.meta.exported.embed, true);
+  assert.equal(g.meta.exported.startView, 'n:api');
+  assert.equal(g.meta.exported.showDescription, true);
+});
+
+test('a docs copy starts on the overview with the description hidden unless told otherwise', async () => {
+  const g = dataOf(await (await api({ include: ['flows'], embed: true }, { 'x-floorplan-token': token })).text());
+  assert.equal(g.meta.exported.startView, 'root');
+  assert.equal(g.meta.exported.showDescription, false);
+});
+
+test('a docs copy only opens on a part that exists, nested ones included', async () => {
+  const nested = readJson(path.join(root, 'floorplan', 'graph.json')).nodes.find((n) => n.id === 'api.orders');
+  assert.equal(nested?.parent, 'api', 'the fixture has a part nested inside another');
+  const r = await api({ embed: true, startView: 'n:api.orders' }, { 'x-floorplan-token': token });
+  assert.equal(r.status, 200);
+  assert.equal(dataOf(await r.text()).meta.exported.startView, 'n:api.orders');
+  for (const bad of [{ startView: 'n:nope' }, { startView: 'f:web/app.js' }, { startView: 'api' }, { startView: 7 }, { showDescription: 'yes' }, { showDescription: 1 }]) {
+    const r = await api({ embed: true, ...bad }, { 'x-floorplan-token': token });
+    assert.equal(r.status, 400, JSON.stringify(bad));
+    const { error } = await r.json();
+    assert.match(error, /^[A-Z].*[.]$/);
+    assert.doesNotMatch(error, /undefined|\bat \w+\.mjs/);
+  }
+});
+
+test('the docs-copy settings are ignored without embed, and an ordinary export is unchanged', async () => {
+  const r = await api({ include: ['flows'], startView: 'n:api', showDescription: true }, { 'x-floorplan-token': token });
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  assert.doesNotMatch(html, /^<!doctype html>\s*<html data-embed/i);
+  const g = dataOf(html);
+  assert.equal(g.meta.exported.embed, undefined);
+  assert.equal(g.meta.exported.startView, undefined);
+  assert.equal(g.meta.exported.showDescription, undefined);
+  assert.equal((await api({ startView: 'n:nope', showDescription: 'x' }, { 'x-floorplan-token': token })).status, 200);
+});
+
+// ---- the Export dialog (assets/ui/60-export.js) run against a pretend page ----
+const EXPORT_UI = fs.readFileSync(new URL('../skills/floorplan/assets/ui/60-export.js', import.meta.url), 'utf8');
+const escapeHtml = (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** Loads the dialog script into a pretend page showing this graph; returns what it did. */
+function pretendPage(graph) {
+  const sent = [];
+  const modals = [];
+  const buttons = [];
+  const toasts = [];
+  const win = { FLOORPLAN_SERVER: { token: 'tok' } };
+  win.Floorplan = {
+    graph, h: escapeHtml, children: (id) => (graph.nodes.some((n) => 'n:' + n.id === id && n.kind === 'external') ? [] : [...graph.nodes.filter((n) => n.parent && 'n:' + n.parent === id).map((n) => 'n:' + n.id), ...(id === 'n:empty' ? [] : ['f:x'])]), icons: {}, copy() {}, toast: (t) => toasts.push(t),
+    addHeaderButton: (b) => buttons.push(b),
+    modal(opts) {
+      // the controls the script looks up, found in the html it gave the dialog
+      const stub = (checked) => ({ checked, hidden: false, value: 'root', listeners: {}, addEventListener(t, f) { (this.listeners[t] ||= []).push(f); } });
+      const docs = stub(false), desc = stub(false), start = stub(false), opts2 = stub(false), err = stub(false);
+      opts2.hidden = /data-xp-docs-opts[^>]*hidden/.test(opts.html);
+      err.hidden = true;
+      const content = [...opts.html.matchAll(/<input type="checkbox" data-xp="(\w+)"( checked)?>/g)].map((x) => ({ ...stub(!!x[2]), dataset: { xp: x[1] } }));
+      // a control exists only if the dialog's html really has it, so renaming an attribute breaks the test
+      const by = Object.fromEntries(Object.entries({ '[data-xp-docs]': docs, '[data-xp-start]': start, '[data-xp-desc]': desc, '[data-xp-docs-opts]': opts2, '.xp-err': err })
+        .filter(([sel]) => sel === '.xp-err' || opts.html.includes(sel.slice(1, -1))));
+      const el = {
+        querySelector: (sel) => by[sel] || null,
+        querySelectorAll: (sel) => (sel === '[data-xp]' ? content : []),
+        addEventListener: () => {},
+      };
+      const m = { el, opts, docs, desc, start, docsOpts: opts2, err, content };
+      modals.push(m);
+      return m;
+    },
+  };
+  const doc = {
+    head: { appendChild() {} }, body: { appendChild() {} },
+    createElement: () => ({ click() {}, remove() {} }),
+  };
+  const ctx = {
+    window: win, document: doc, location: { protocol: 'http:' }, URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} }, setTimeout() {},
+    fetch: async (url, init) => { sent.push({ url, body: JSON.parse(init.body) }); return { status: 200, ok: true, headers: { get: () => 'attachment; filename="x.html"' }, blob: async () => ({}) }; },
+  };
+  vm.runInNewContext(EXPORT_UI, ctx);
+  const open = () => { buttons[0].onClick(); return modals[modals.length - 1]; };
+  /** ticking a box in the dialog, as a click would */
+  const tick = (box, on) => { box.checked = on; (box.listeners.change || []).forEach((f) => f({ target: box })); };
+  const download = async (m) => { await m.opts.actions[0].onClick(() => {}); await new Promise((r) => setImmediate(r)); return sent[sent.length - 1].body; };
+  return { open, tick, download, sent, graph };
+}
+const shopGraph = () => ({
+  meta: {}, project: { name: 'Shop' }, files: [], flows: [{ id: 'f1', title: 'Flow', steps: [] }], tour: [],
+  nodes: [
+    { id: 'web', parent: null, label: 'Website' },
+    { id: 'api', parent: null, label: 'Server' },
+    { id: 'api.orders', parent: 'api', label: 'Orders' },
+    { id: 'api.orders.refunds', parent: 'api.orders', label: 'Refunds' },
+    { id: 'api.x', parent: 'api', label: 'A <b>&"quoted"' },
+    { id: 'jobs', parent: null, label: 'Orders' },
+    { id: 'pay', parent: null, label: 'Payments', kind: 'external' },
+    { id: 'empty', parent: null, label: 'Empty part' },
+    { id: 'pay.hook', parent: 'pay', label: 'Hook' },
+  ],
+});
+const options = (html) => [...html.matchAll(/<option value="([^"]*)"( selected)?>(.*?)<\/option>/g)].map((x) => ({ value: x[1], selected: !!x[2], label: x[3] }));
+
+test('the dialog hides the docs controls until “For a docs page” is ticked', () => {
+  const p = pretendPage(shopGraph());
+  const m = p.open();
+  assert.match(m.opts.html, /For a docs page/);
+  assert.match(m.opts.html, /Show project description/);
+  assert.match(m.opts.html, /data-xp-docs-opts[^>]*hidden/);
+  assert.equal(m.docs.checked, false);
+  assert.equal(m.desc.checked, false);
+  p.tick(m.docs, true);
+  assert.equal(m.docsOpts.hidden, false);
+  p.tick(m.docs, false);
+  assert.equal(m.docsOpts.hidden, true);
+  assert.doesNotMatch(m.opts.html, /data-xp="docs"/, 'the docs box isn’t one of the content choices');
+});
+
+test('the starting-view list is Overview, then every part that opens, in tree order, labelled with where it sits and escaped', () => {
+  const m = pretendPage(shopGraph()).open();
+  assert.deepEqual(options(m.opts.html), [
+    { value: 'root', selected: true, label: 'Overview' },
+    { value: 'n:web', selected: false, label: 'Website' },
+    { value: 'n:api', selected: false, label: 'Server' },
+    { value: 'n:api.orders', selected: false, label: 'Server › Orders' },
+    { value: 'n:api.orders.refunds', selected: false, label: 'Server › Orders › Refunds' },
+    { value: 'n:api.x', selected: false, label: 'Server › A &lt;b&gt;&amp;&quot;quoted&quot;' },
+    { value: 'n:jobs', selected: false, label: 'Orders' },
+    { value: 'n:pay.hook', selected: false, label: 'Payments › Hook' }, // Payments itself is an outside service and Empty part has nothing in it: neither is offered
+  ]);
+  assert.doesNotMatch(m.opts.html, /<b>&"/);
+});
+
+test('a docs copy sends the docs settings along with the content choices', async () => {
+  const p = pretendPage(shopGraph());
+  const m = p.open();
+  p.tick(m.docs, true);
+  m.start.value = 'n:api.orders';
+  p.tick(m.desc, true);
+  const body = await p.download(m);
+  assert.deepEqual(body, { include: ['flows'], flows: [], embed: true, startView: 'n:api.orders', showDescription: true });
+});
+
+test('a docs copy starts on the overview with the description hidden by default', async () => {
+  const p = pretendPage(shopGraph());
+  const m = p.open();
+  p.tick(m.docs, true);
+  const body = await p.download(m);
+  assert.deepEqual(body, { include: ['flows'], flows: [], embed: true, startView: 'root', showDescription: false });
+});
+
+test('unticking “For a docs page” sends an ordinary export', async () => {
+  const p = pretendPage(shopGraph());
+  const m = p.open();
+  p.tick(m.docs, true);
+  m.start.value = 'n:api';
+  p.tick(m.desc, true);
+  p.tick(m.docs, false);
+  assert.deepEqual(await p.download(m), { include: ['flows'], flows: [] });
+});
+
+test('an ordinary export is exactly what it was', async () => {
+  const p = pretendPage(shopGraph());
+  assert.deepEqual(await p.download(p.open()), { include: ['flows'], flows: [] });
+});
+
+test('the dialog lists what the page has when it opens, so parts and flows added later appear', () => {
+  const g = shopGraph();
+  g.flows = [];
+  const p = pretendPage(g);
+  assert.doesNotMatch(p.open().opts.html, /Flows and the tour/);
+  g.nodes.push({ id: 'late', parent: 'web', label: 'Late part' });
+  g.flows.push({ id: 'f2', title: 'New', steps: [], custom: true });
+  const html = p.open().opts.html;
+  assert.match(html, /Flows and the tour/);
+  assert.ok(options(html).some((o) => o.value === 'n:late' && o.label === 'Website › Late part'));
 });

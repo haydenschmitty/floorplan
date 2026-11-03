@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Put the map in your docs:** the Export dialog's **For a docs page** option (or `serve.mjs --export --embed`) makes a copy to sit in an iframe on a Read the Docs, Sphinx, MkDocs or Docusaurus page. In the dialog you choose which part it **Opens on** and whether to **Show project description** (hidden by default; `?description=show` shows it); the whole map stays in the copy. It starts with the details closed, lets the page scroll past it, leaves the page's back button alone, can be pointed at a part with `#v=<part>` (the bare id works too), takes its colours from `?theme=` or the docs site's own light/dark switch, and has a **Full screen** button that keeps its place and colours, with Esc or the same button to leave. See [Putting the map in your docs](docs/embedding.md).
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

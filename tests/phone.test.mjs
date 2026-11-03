@@ -80,7 +80,7 @@ test('tapping a box on a phone opens the details; going into or out of a box, or
   assert.match(html, /closeSheet\(\);\n  go\(item, \{ zoomFrom: item \}\);/);
   assert.match(html, /function up\(\) \{ if \(state\.container === 'root'\) return; closeSheet\(\);/);
   // the choice on a phone is not saved, so it can't close the side panel on a desktop that shares the storage
-  assert.match(html, /if \(!isPhone\(\)\) store\.set\('panel', on\);/);
+  assert.match(html, /if \(!isPhone\(\) && !EMBED\) store\.set\('panel', on\);/);
 });
 
 test('the top bar height is measured, and everything under it follows', () => {
@@ -100,7 +100,8 @@ function startUp({ phone, hash = '' }) {
   vm.runInNewContext(script, {
     matchMedia: (q) => ({ matches: phone && q.includes('max-width: 700px') }),
     location: { hash },
-    document: { body: { classList: { add: (c) => classes.add(c) } } },
+    window: { self: 1, top: 1 },
+    document: { documentElement: { hasAttribute: () => false }, body: { classList: { add: (c) => classes.add(c), contains: (c) => classes.has(c) } } },
   });
   return classes;
 }
