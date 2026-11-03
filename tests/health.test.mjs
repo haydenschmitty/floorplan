@@ -81,6 +81,15 @@ test('FastAPI: checks added where a router is included count as sign-in checks',
   assert.deepEqual(openEndpoints(graph), ['POST /orders']);
 });
 
+test('Fastify: route-object hooks guard only their own route, not schema or neighbors', () => {
+  const graph = buildFixture('fastify-object-guards');
+  assert.deepEqual(openEndpoints(graph), [
+    'POST /api/neighbor-open',
+    'POST /api/object-open',
+    'POST /api/object-schema-only',
+  ]);
+});
+
 test('Express: a check before a named handler counts, and each route is judged on its own arguments', () => {
   const graph = buildFixture('express-named-handlers');
   assert.equal(graph.routes.length, 5, `expected the sample's 5 endpoints, found ${graph.routes.length}`);

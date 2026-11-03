@@ -419,7 +419,12 @@ function jsRoutes(src, f, out) {
       const fn = /(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(own);
       args = fn ? own.slice(0, fn.index) : own.slice(0, Math.max(0, own.lastIndexOf(',')));
     }
-    const mw = (args.match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isGuardName);
+    const objectMw = (r.guardOptions || [])
+      .flatMap((option) => option.match(/[A-Za-z_$][\w$.]*/g) || [])
+      .map((name) => name.split('.').pop())
+      .find((name) => isGuardName(name) || /^(?:authenticate|authorize)$/i.test(name));
+    const mw = objectMw || (args.match(/[A-Za-z_$][\w$.]*/g) || [])
+      .map((name) => name.split('.').pop()).find(isGuardName);
     const next = routes[idx + 1]?.line || r.line + 60;
     const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
     const prior = uses.find((u) => u.v === r.var && u.line < r.line);

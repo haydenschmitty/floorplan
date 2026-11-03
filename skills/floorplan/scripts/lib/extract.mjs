@@ -224,7 +224,13 @@ function extractJs(src, filePath) {
     const list = /(?:^|,)\s*method\s*:\s*\[([^\]]*)\]/.exec(top)?.[1];
     const methods = single ? [single] : list == null ? [] : [...list.matchAll(/(["'\x60])([A-Za-z-]+)\1/g)].map((x) => x[2]);
     if (list != null && list.replace(/(["'\x60])[A-Za-z-]+\1/g, '').replace(/[\s,]/g, '') !== '') continue;
-    for (const method of methods) routes.push({ method: method.toUpperCase(), path: url, var: m[1], line: at(m.index) });
+    // Only top-level lifecycle options count; nested schema keys are blanked above.
+    const guardOptions = [...top.matchAll(/(?:^|,)\s*(?:preHandler|onRequest|preValidation)\s*:\s*(\[[^\]]*\]|[^,\n}]+)/g)]
+      .map((match) => match[1]);
+    for (const method of methods) routes.push({
+      method: method.toUpperCase(), path: url, var: m[1], line: at(m.index),
+      ...(guardOptions.length ? { guardOptions } : {}),
+    });
   }
 
   // Next.js app/pages API routes, derived from the file path
