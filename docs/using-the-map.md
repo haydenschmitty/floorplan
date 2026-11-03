@@ -83,7 +83,7 @@ Every page of your app that Floorplan detected. Pick one to see everything behin
 Saves a copy of the map to send to anyone, such as a teammate, a client, or someone without Claude or Codex. It's one HTML file that opens in any browser with nothing to install. The copy has the whole map, search, screens, the tour and flows, but no Ask bar, no **Fix with Claude** or **Build this** requests, no editor links, and nothing about your computer, like its folder path. An **Exported** label beside the title shows the date, and a small **Made with Floorplan** link at the bottom leads here.
 
 You choose what goes in:
-- **Flows and the tour**, and **notes pinned to files**, on by default;
+- **Flows, the tour and the quiz**, and **notes pinned to files**, on by default;
 - **Recent work**, off by default;
 - **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust.
 
@@ -91,6 +91,24 @@ Every copy shows how the app fits together (each part, file and endpoint, with n
 
 ### Start here
 Replays the one-minute tour that runs the first time you open a map.
+
+### Quiz
+Checks that you understood the map: multiple-choice questions like "which part takes card payments?", one at a time. After each answer the card that shows it is highlighted on the map, with a sentence on why, and at the end you can retry the ones you missed. Press **1**–**4** to answer, **Enter** for the next question and **Esc** to stop.
+
+Choose what you're asked:
+- **Part of the app:** starts on what you're looking at on the map, and you can pick any other part or the whole app;
+- **How deep:** **Big picture** (the main parts and how they connect), **Details** (files, endpoints and the smaller parts inside) or **Mixed**;
+- **Questions:** 5, 10, 20 or all of them. Ones you haven't answered right yet come first; the quiz remembers in this browser what you've got right.
+
+**Or** type your own topic and Claude or Codex writes questions on it (see below).
+
+The starter questions are written with the map. With the Ask bar connected, Claude or Codex can write more:
+- Under **or**, type a topic ("sign-in", "what happens when a payment fails") and press **Write**. Left empty, **Write** adds new questions about the part and depth you picked, covering what the quiz hasn't asked yet. Claude Code and Codex can read your code, so their questions can go past the map, like what happens when a payment fails; in the Claude app they come from the map alone.
+- **Quiz me on this**, from a card's right-click menu or its details, asks about just that card.
+- **Recent work** asks about what was just changed, to check you could explain the change yourself.
+- Or type it in the Ask bar: "quiz me", "give me quiz questions about payments", "test me on the recent changes". The quiz opens with questions on what you asked for.
+
+Questions that point at something not on the map, or whose answer isn't one of the choices, are left out. New questions last until you close the page; an exported copy keeps only the starter ones.
 
 ### Flows
 Guided walkthroughs of the app's main jobs, like "Checkout" or "Sign up". A flow moves across the board step by step, with a narration at each stop. Use **←** / **→** or the flow bar's buttons to step through, and **Esc** to stop.

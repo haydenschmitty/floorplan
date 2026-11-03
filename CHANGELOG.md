@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Quiz:** a new header button asks multiple-choice questions about the map, like "which part takes card payments?", and highlights the card that shows each answer, with a sentence on why. Choose the part of the app (it starts on what you're looking at), **Big picture**, **Details** or **Mixed**, and 5, 10, 20 or all questions; ones you haven't got right yet come first. Or type your own topic. The starter questions are written with the map; with the Ask bar connected, Claude or Codex writes more: on a topic you type, **Quiz me on this** from a card's right-click menu, **Recent work** to check you can explain a change, or just ask in the Ask bar ("quiz me on payments"). Exports keep the starter questions along with flows and the tour. Suggested and built by @WilltheRanger in #56.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

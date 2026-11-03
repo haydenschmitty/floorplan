@@ -32,7 +32,7 @@ skills/floorplan/
     lib/           extraction, import resolution, route matching, Health, screens, which agent is running, helpers
   assets/
     viewer.html    the map (template the build fills in)
-    ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
+    ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, quiz, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
     serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
     query-cli.mjs  becomes floorplan/query.mjs
@@ -93,6 +93,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
+| `quiz.test.mjs` | the Quiz: starter questions checked by the build and kept in exports with flows, and More questions asking the agent in its quiz mode, held to the quiz schema (stand-in CLI in `fixtures/fake-cli/`) |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
@@ -109,7 +110,8 @@ When you fix a bug in what Floorplan detects, add a sample that shows it, and ch
 Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order. They talk to the viewer only through `window.Floorplan`, which offers:
 - the graph and lookups;
 - navigation (`go`, `open`, `reveal`, `showBoard`, `playFlow`);
-- `addHeaderButton` and `addPanelSection('overview' | 'item', fn)`;
+- `addHeaderButton`, `addPanelSection('overview' | 'item', fn)` and `addMenuItem(fn)` (a card's right-click menu);
+- the agent: `onAsk(fn)` to take a request typed in the Ask bar, and `requestAgent(mode, prompt, onProgress)` to ask in one of serve.mjs's modes (`cancelAgent` stops it);
 - `modal`, `toast`, `store`;
 - events (`on('ready' | 'render' | 'panel' | 'technical')`);
 - `exported`, set in an exported copy: leave out anything there that needs Claude, Codex or the map's server.

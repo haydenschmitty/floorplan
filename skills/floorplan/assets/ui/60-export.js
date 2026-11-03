@@ -29,7 +29,7 @@
 
   // only what this map has; the extras that say how the app could be attacked are off unless ticked
   const PARTS = [
-    { id: 'flows', label: 'Flows and the tour', hint: 'The guided walkthroughs, including ones you requested.', on: true, has: G.flows.length > 0 || (G.tour || []).length > 0 },
+    { id: 'flows', label: 'Flows, the tour and the quiz', hint: 'The guided walkthroughs, including ones you requested, and the quiz’s starter questions.', on: true, has: G.flows.length > 0 || (G.tour || []).length > 0 || (G.quiz || []).length > 0 },
     { id: 'notes', label: 'Notes pinned to files', hint: 'The notes shown on file cards.', on: true, has: G.files.some((f) => f.note) },
     { id: 'recent', label: 'Recent work', hint: 'What was just changed, and why.', on: false, has: !!G.recent?.items?.length },
     PLAN

@@ -200,6 +200,21 @@ const FLOORPLAN_FLOW_SCHEMA = {
   required: ['title', 'steps'],
 };
 
+// Requested quiz questions: multiple choice, each about one map item (JSON Schema).
+const FLOORPLAN_QUIZ_SCHEMA = {
+  type: 'object',
+  properties: {
+    questions: { type: 'array', description: '3-6 new multiple-choice questions.', items: { type: 'object', properties: {
+      question: { type: 'string', description: 'The question in plain words, at most 20 words.' },
+      choices: { type: 'array', description: '3 or 4 short answers, at most 8 words each, exactly one of them right.', items: { type: 'string' } },
+      answer: { type: 'string', description: 'The right answer, copied exactly from choices.' },
+      id: { type: 'string', description: 'The map item that shows the answer, highlighted after answering.' },
+      explain: { type: 'string', description: 'Why that answer is right, one or two plain sentences, at most 35 words.' },
+    }, required: ['question', 'choices', 'answer', 'id', 'explain'] } },
+  },
+  required: ['questions'],
+};
+
 // A requested change to a blueprint: the whole updated plan.json and architecture.json, and what changed
 // (JSON Schema). The documents travel as JSON text so the schema stays the same for every engine.
 const FLOORPLAN_CHANGE_SCHEMA = {
@@ -221,7 +236,7 @@ function floorplanChangeInstructions(G) {
     `You change a blueprint: an interactive map of "${G.project.name}", a system that is planned but not built yet. The person looking at it asks for a change, addition or removal ("also plan out payments", "drop the admin page", "staff should sign in with Google"), and you update the plan.`,
     `Read floorplan/plan.json and floorplan/architecture.json first${src ? `, and ${src} (the PRD it was planned from) when the request touches what the PRD says` : ''}. You can look things up on the map with \`node floorplan/query.mjs find "<words>"\` and \`show <id>\`.`,
     'plan.json format: { source, stack[], assumptions[], questions[{question, about[]}], files[{path, name, description, screen?, uses[], calls["METHOD /path"], services[node ids], data[node ids]}], endpoints[{method, path, file, name, description, access: public|signed-in|team|webhook|internal, who?, publicBecause?}] }. Every endpoint\'s file is a planned file, every call matches a planned endpoint exactly, and services/data name nodes in architecture.json.',
-    'architecture.json: { project, nodes[{id, label, kind, parent?, summary, paths[globs]}], edges[], flows[{id, title, steps[{node, note}]}], tour[] }. Kinds: ui service worker library feature data config test script infra external. External nodes (outside services, the database) own no files. Every planned file must fall under some node\'s paths, so add or widen globs for new folders. Flow and tour steps point at node ids or planned file paths.',
+    'architecture.json: { project, nodes[{id, label, kind, parent?, summary, paths[globs]}], edges[], flows[{id, title, steps[{node, note}]}], tour[], quiz[{question, choices, answer, node, explain}] }. Kinds: ui service worker library feature data config test script infra external. External nodes (outside services, the database) own no files. Every planned file must fall under some node\'s paths, so add or widen globs for new folders. Flow and tour steps and quiz questions point at node ids or planned file paths; drop or rewrite a quiz question whose answer the change makes wrong.',
     'Change only what the request needs, the way the rest of the plan is written: same stack and conventions, plain language for everyone, real file paths. Keep every other file, endpoint, id and description exactly as it is. If the PRD or plan already decided something, follow it; record a new choice in assumptions and a real open decision in questions. If the request removes something, remove everything that only it used. If it answers one of plan.json\'s questions, remove that question, build the answer into the plan, and record it in assumptions; if it settles who may use an endpoint, set access (and who or publicBecause). Many requests come from the map\'s design review: settle exactly what it names.',
     'Reply with JSON only: {"title", "summary", "plan", "architecture", "changes", "followups"}. plan and architecture are the complete updated files as JSON text, not just the changed parts. changes lists every new or changed file, endpoint ("METHOD /path") or node id with a note on how it serves the request.',
     'Do not edit any files yourself: the map server checks your JSON, saves it and redraws the map.',
@@ -238,6 +253,22 @@ function floorplanFlowInstructions(G, engine) {
     'Use 3-9 steps. Prefer the most specific item that tells the story (an endpoint over its file, a file over its module), and make consecutive steps things that really call or import each other.',
     'Reply with JSON only: {"title", "description", "steps": [{"id", "note"}]}. Only use ids the map gave you.',
   ].join('\n');
+}
+
+function floorplanQuizInstructions(G, engine) {
+  return [
+    `You write quiz questions for an interactive architecture map of the codebase "${G.project.name}". The quiz checks that someone exploring the map understood how the app fits together: what each part is for, what talks to what, and what happens when someone uses it.`,
+    engine === 'cli'
+      ? `Find the items with \`node floorplan/query.mjs overview\`, \`find "<words>"\`, \`show <id>\` and \`path <fromId> <toId>\`. ${G.meta?.blueprint
+        ? `This map is a blueprint: a plan of a system that hasn't been built yet, so its files don't exist. Read floorplan/plan.json${G.meta.blueprint.source ? ` and ${G.meta.blueprint.source} (what it was planned from)` : ''} when you need more than the map, and ask about what would be built and why.`
+        : 'You can read the source, so go past what the map shows when it helps someone really understand the app: what happens when a step fails, which check guards it, where the data ends up. Read just enough files to be sure of every answer.'}`
+      : `Find the items with the tools find_items, get_item and dependency_path. You cannot read source files, so ask only about what the map shows.${G.meta?.blueprint ? ' This map is a blueprint: a plan of a system that hasn\'t been built yet. Ask about what would be built and why.' : ''}`,
+    'Each question is about one map item (module n:..., file f:..., endpoint r:..., or export s:...), which is highlighted on the map after answering, so pick the item that best shows the answer.',
+    'Write for the app\'s owner, who may never read the code: plain words, and no jargon or file names in the question unless the request asks for a developer quiz. Ask what things are for and how they connect, not trivia like line counts or file types.',
+    'Make each question take real understanding, not matching words. Never let the question give the answer away: if a part is called "Payments", don\'t ask "which part handles payments?". Ask instead about what happens (a scenario: "a customer\'s card is declined at checkout; what do they see next?"), what depends on what ("if the email service is down, what still works?"), why something is built the way it is, or what a change would affect. Keep the card\'s own name and its key words out of the question.',
+    'Give 3 or 4 choices with exactly one right. The wrong ones must be believable to someone who hasn\'t studied the map: real parts or real behaviour of this app, about as long and as specific as the right one, never jokes or obviously wrong. Copy the right one into answer exactly, and say why it is right in explain.',
+    'Do not repeat a question the request says the person already has. Reply with JSON only: {"questions": [{"question", "choices", "answer", "id", "explain"}]}. Only use ids the map gave you.',
+  ].filter(Boolean).join('\n');
 }
 
 function floorplanAskInstructions(G, engine) {
