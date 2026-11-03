@@ -160,6 +160,15 @@ const ENGINES = {
     find: () => resolveCli(given('codex') || [...which('codex'), ...codexApp()], ['@openai', 'codex', 'bin', 'codex.js']),
     run: codexRun,
   },
+  antigravity: {
+    name: 'Antigravity', site: 'https://antigravity.google/', structured: true, schemaFile: true,
+    find: () => resolveCli(given('antigravity') || [
+      ...which('agy'),
+      ...which('antigravity'),
+      path.join(HOME, '.local', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy'),
+    ], []),
+    run: codexRun,
+  },
 };
 // --engine (or FLOORPLAN_ENGINE) decides; otherwise the agent that built the map, then the others in order
 const builtBy = (() => { try { return JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8')).meta?.agent; } catch { return null; } })();
@@ -169,10 +178,10 @@ const want = isEngine(asked) ? asked : isEngine(builtBy) ? builtBy : 'claude';
 let engine = null, cli = null;
 for (const k of isEngine(asked) ? [asked] : [want, ...Object.keys(ENGINES).filter((k) => k !== want)]) { cli = ENGINES[k].find(); if (cli) { engine = k; break; } }
 const canChange = !engine || ENGINES[engine].structured;
-// Started from inside a Claude Code or Codex session? Don't let the CLI think it's nested in it.
+// Started from inside a Claude Code, Codex, or Antigravity session? Don't let the CLI think it's nested in it.
 function cliEnv() {
   const env = { ...process.env };
-  for (const k of Object.keys(env)) if (/^CLAUDE_?CODE_(SESSION|ENTRYPOINT|CHILD|MESSAGING|HOST|SDK)|^CLAUDECODE$|^CODEX_(THREAD_ID|SESSION_ID|TOOL_CALL_ID|CI$|SANDBOX)/.test(k)) delete env[k];
+  for (const k of Object.keys(env)) if (/^CLAUDE_?CODE_(SESSION|ENTRYPOINT|CHILD|MESSAGING|HOST|SDK)|^CLAUDECODE$|^CODEX_(THREAD_ID|SESSION_ID|TOOL_CALL_ID|CI$|SANDBOX)|^ANTIGRAVITY_(TRAJECTORY_ID|CONVERSATION_ID|SOURCE_METADATA)/.test(k)) delete env[k];
   return env;
 }
 let version = null;

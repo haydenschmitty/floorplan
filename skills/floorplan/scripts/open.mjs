@@ -81,6 +81,7 @@ else shown = openBrowser(s.url) ? 'opened in the browser' : 'could not open a br
 
 console.log(`FLOORPLAN  ${s.url}  (${shown})`);
 const CLI = {
+  antigravity: { name: 'Antigravity', docs: 'https://antigravity.google/' },
   claude: { name: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code' },
   codex: { name: 'Codex', docs: 'https://developers.openai.com/codex' },
 };

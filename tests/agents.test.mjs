@@ -15,10 +15,18 @@ test('Codex is recognised by the variables it sets for every command', () => {
   assert.equal(detectAgent({}, { CLAUDECODE: '1' }), 'claude');
 });
 
+test('Antigravity is recognised by the variables it sets for every command', () => {
+  assert.equal(detectAgent({}, { ANTIGRAVITY_AGENT: '1' }), 'antigravity');
+  assert.equal(detectAgent({}, { ANTIGRAVITY_CONVERSATION_ID: 'abc' }), 'antigravity');
+  assert.equal(detectAgent({}, { GEMINI_CLI: '1' }), 'antigravity');
+});
+
 test('--agent and FLOORPLAN_AGENT override the guess, and nonsense is ignored', () => {
   assert.equal(detectAgent({ agent: 'codex' }, {}), 'codex');
+  assert.equal(detectAgent({ agent: 'antigravity' }, {}), 'antigravity');
   assert.equal(detectAgent({ agent: 'Claude' }, { CODEX_THREAD_ID: 'abc' }), 'claude');
   assert.equal(detectAgent({}, { FLOORPLAN_AGENT: 'codex' }), 'codex');
+  assert.equal(detectAgent({}, { FLOORPLAN_AGENT: 'antigravity' }), 'antigravity');
   assert.equal(detectAgent({ agent: 'gpt' }, { CODEX_THREAD_ID: 'abc' }), 'codex');
 });
 
@@ -29,6 +37,18 @@ test('a map built under Codex records it, and leaves the project notes alone', (
     const out = run('build.mjs', root, '--agent', 'codex');
     assert.equal(readGraph(root).meta.agent, 'codex');
     assert.match(out, /AGENT {2}Codex/);
+    assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no CLAUDE.local.md');
+    assert.ok(!fs.existsSync(path.join(root, 'AGENTS.md')), 'no AGENTS.md');
+  } finally { cleanup(root); }
+});
+
+test('a map built under Antigravity records it, and leaves the project notes alone', () => {
+  const root = shopApp();
+  try {
+    run('scan.mjs', root);
+    const out = run('build.mjs', root, '--agent', 'antigravity');
+    assert.equal(readGraph(root).meta.agent, 'antigravity');
+    assert.match(out, /AGENT {2}Antigravity/);
     assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no CLAUDE.local.md');
     assert.ok(!fs.existsSync(path.join(root, 'AGENTS.md')), 'no AGENTS.md');
   } finally { cleanup(root); }
