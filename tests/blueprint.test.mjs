@@ -54,6 +54,24 @@ test('screens call endpoints, and files reach outside services and the database'
   ]);
 });
 
+test('blueprint builds report that files are planned under both coding agents', async (t) => {
+  for (const agent of ['codex', 'claude']) {
+    await t.test(agent, () => {
+      const r = makeProject({});
+      try {
+        fs.cpSync(FIXTURE, r, { recursive: true });
+        run('plan.mjs', r, '--agent', agent);
+        const output = run('build.mjs', r, '--agent', agent, '--claude-md');
+        assert.equal(readGraph(r).meta.agent, agent);
+        assert.match(output, /BLUEPRINT {2}planned, not built yet/);
+        if (agent === 'codex') assert.match(output, /AGENT {2}Codex/);
+        assert.doesNotMatch(output, /CLAUDE\.LOCAL\.MD/);
+        assert.ok(!fs.existsSync(path.join(r, 'CLAUDE.local.md')), 'blueprints do not add project notes');
+      } finally { cleanup(r); }
+    });
+  }
+});
+
 test('Screens show what each planned page relies on, down to Stripe', () => {
   assert.deepEqual(graph.screens.map((s) => s.url).sort(), ['/', '/book/:walkerId', '/bookings', '/login', '/schedule']);
   const book = graph.screens.find((s) => s.url === '/book/:walkerId');

@@ -74,6 +74,19 @@ test('web requests: fetch with template strings and axios with a method', () => 
   assert.ok(calls.includes('POST /api/orders/'), calls.join(', '));
 });
 
+test('comments: a /* inside a string is not a comment, so the code after it is still read', () => {
+  const r = extract([
+    `import { Hono } from 'hono';`,
+    `const app = new Hono();`,
+    `app.use('/api/*', cors());`,
+    `app.get('/api/items', list);`,
+    `app.post('/api/items', create);`,
+    `/** Health check. */`,
+    `app.get('/health', ok); // for the load balancer`,
+  ].join('\n'), 'typescript', 'server/src/index.ts');
+  assert.deepEqual(r.routes.map((x) => `${x.method} ${x.path} :${x.line}`), ['GET /api/items :4', 'POST /api/items :5', 'GET /health :7']);
+});
+
 test('flattenTemplates replaces every ${…} with a placeholder, nested or not', () => {
   assert.equal(flattenTemplates('fetch(`${API}/users/${id}`)'), 'fetch(`${x}/users/${x}`)');
 });
