@@ -31,6 +31,7 @@ before(async () => {
     annotations: [{ path: 'shop-api/config.js', note: 'Moving to the secrets manager next sprint.' }],
     flows: [{ id: 'refund', title: 'Refund', description: 'A customer asks for a refund.', steps: [{ node: 'web', note: 'The website asks.' }, { node: 'api', note: 'The server refunds.' }] }],
   });
+  writeJson(path.join(root, 'floorplan', 'boards.json'), { boards: [{ id: 'refund-view', title: 'Refund view', question: 'How do refunds work?', answer: 'Through the API.', items: [{ ref: 'f:shop-api/routes/orders.js', note: 'The route.' }], steps: [], createdAt: 'x', updatedAt: 'x' }] });
   writeJson(path.join(root, 'floorplan', 'recent-work.json'), { tasks: [{ title: 'Refunds', summary: 'Added refunds.', items: [{ ref: 'shop-api/routes/orders.js', change: 'changed', note: 'Refund endpoint.' }] }] });
   run('scan.mjs', root);
   run('build.mjs', root, '--no-claude-md');
@@ -61,13 +62,13 @@ test('the map has health, recent work, a note, a flow and a remote to leave out'
   assert.ok(g.meta.root);
 });
 
-test('by default the export keeps flows and notes, and leaves out health, recent work and this computer', () => {
+test('by default the export keeps flows, kept boards and notes, and leaves out health, recent work and this computer', () => {
   const { html, file, out } = exportCli();
   assert.equal(path.basename(file), 'shop-map.html');
   assert.equal(path.dirname(file), path.join(fs.realpathSync(root), 'floorplan'));
   const g = dataOf(html);
   assert.match(g.meta.exported.at, /^\d{4}-\d\d-\d\dT/);
-  assert.deepEqual(g.meta.exported.include, ['flows', 'notes']);
+  assert.deepEqual(g.meta.exported.include, ['flows', 'boards', 'notes']);
   assert.equal(g.health, undefined);
   assert.equal(g.recent, undefined);
   assert.equal(g.flows.length, 1);
@@ -317,4 +318,54 @@ test('the dialog lists what the page has when it opens, so parts and flows added
   const html = p.open().opts.html;
   assert.match(html, /Flows and the tour/);
   assert.ok(options(html).some((o) => o.value === 'n:late' && o.label === 'Website › Late part'));
+});
+
+test('kept boards go in by default and can be left out; the command line exports the built ones', () => {
+  assert.deepEqual(dataOf(exportCli().html).boards.map((b) => b.id), ['refund-view']);
+  assert.deepEqual(dataOf(exportCli(path.join(root, 'noboards.html'), '--include', 'flows,notes').html).boards, []);
+});
+
+const asBuilt = (b) => ({ id: b.id, title: b.title, question: b.question, answer: b.answer, items: b.items, steps: b.steps });
+const exportWith = async (boards, more = {}) => {
+  const r = await api({ include: ['boards'], boards, ...more }, { 'x-floorplan-token': token });
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  return { html, g: dataOf(html) };
+};
+
+test('the Export button sends the page’s boards, which go into a docs copy too', async () => {
+  const built = dataOf(exportCli().html).boards[0];
+  const added = { id: 'new-view', title: 'New view', question: 'Q?', answer: 'A.', kept: true, junk: 1, items: [{ ref: 'n:api', note: 'x' }], steps: [] };
+  const { html, g } = await exportWith([asBuilt(built), added, { id: 'Bad Id', items: [] }], { embed: true });
+  assert.equal(g.meta.exported.embed, true);
+  assert.match(html, /^<!doctype html>\s*<html data-embed/i);
+  assert.deepEqual(g.boards.map((b) => b.id), ['refund-view', 'new-view']);
+  assert.deepEqual(Object.keys(g.boards[1]).sort(), ['answer', 'id', 'items', 'question', 'steps', 'title']);
+});
+
+test('a board updated on the page since the build is exported in its new form', async () => {
+  const built = dataOf(exportCli().html).boards[0];
+  const { g } = await exportWith([{ ...asBuilt(built), title: 'Renamed', answer: 'Changed.' }]);
+  assert.equal(g.boards.length, 1);
+  assert.equal(g.boards[0].title, 'Renamed');
+  assert.equal(g.boards[0].answer, 'Changed.');
+});
+
+test('a board deleted on the page since the build is absent from the export', async () => {
+  assert.deepEqual((await exportWith([])).g.boards, []);
+});
+
+test('with no boards in the request, the built ones are exported', async () => {
+  const r = await api({ include: ['boards'] }, { 'x-floorplan-token': token });
+  assert.deepEqual(dataOf(await r.text()).boards.map((b) => b.id), ['refund-view']);
+});
+
+test('--export warns when boards or flows were saved after the last build', () => {
+  const f = path.join(root, 'floorplan', 'boards.json');
+  const later = new Date(Date.now() + 60000);
+  fs.utimesSync(f, later, later);
+  try {
+    const { out } = exportCli(path.join(root, 'warn.html'));
+    assert.match(out, /run build\.mjs, then export again/);
+  } finally { const now = new Date(Date.now() - 120000); fs.utimesSync(f, now, now); }
 });

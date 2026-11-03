@@ -34,6 +34,7 @@
   // only what this map has, as it is when the dialog opens; the extras that say how the app could be attacked are off unless ticked
   const exportParts = () => [
     { id: 'flows', label: 'Flows and the tour', hint: 'The guided walkthroughs, including ones you requested.', on: true, has: G.flows.length > 0 || (G.tour || []).length > 0 },
+    { id: 'boards', label: 'Kept boards', hint: 'Views you kept from answers.', on: true, has: (G.boards || []).length > 0 },
     { id: 'notes', label: 'Notes pinned to files', hint: 'The notes shown on file cards.', on: true, has: G.files.some((f) => f.note) },
     { id: 'recent', label: 'Recent work', hint: 'What was just changed, and why.', on: false, has: !!G.recent?.items?.length },
     PLAN
@@ -68,7 +69,9 @@
     const include = [...el.querySelectorAll('[data-xp]')].filter((c) => c.checked).map((c) => c.dataset.xp);
     // flows requested since the map was last built live only on this page so far
     const flows = G.flows.filter((f) => f.custom).map((f) => ({ id: f.id, title: f.title, description: f.description, steps: f.steps }));
-    const body = { include, flows };
+    // every board the page has now (kept, changed or deleted since the build), in the built shape
+    const boards = (G.boards || []).map((b) => ({ id: b.id, title: b.title, question: b.question, answer: b.answer, items: b.items, steps: b.steps }));
+    const body = { include, flows, ...(include.includes('boards') ? { boards } : {}) }; // the boards only travel when they're going in the copy
     if (el.querySelector('[data-xp-docs]')?.checked) {
       body.embed = true;
       body.startView = el.querySelector('[data-xp-start]')?.value || 'root';

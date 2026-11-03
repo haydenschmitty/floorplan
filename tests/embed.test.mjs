@@ -9,7 +9,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { shopApp, scanAndBuild, cleanup } from './helpers.mjs';
+import { shopApp, scanAndBuild, cleanup, writeJson } from './helpers.mjs';
 
 let root, embedded, plain, printed;
 const dataOf = (html) => JSON.parse(/<script>window\.FLOORPLAN = (.*?);<\/script>/s.exec(html)[1]);
@@ -19,6 +19,7 @@ function exportCli(...args) {
 }
 before(() => {
   root = shopApp();
+  writeJson(path.join(root, 'floorplan', 'boards.json'), { boards: [{ id: 'evil', title: '</script><b>x', question: 'Q', answer: '</SCRIPT>', items: [{ ref: 'n:api', note: '</script>' }], steps: [] }] });
   scanAndBuild(root);
   ({ html: embedded, out: printed } = exportCli(path.join(root, 'docs', '_static', 'docs-map.html'), '--embed')); // a folder that doesn't exist yet
   ({ html: plain } = exportCli(path.join(root, 'plain.html')));
@@ -30,7 +31,7 @@ test('--embed marks the copy, before anything is drawn, and keeps what an export
   assert.doesNotMatch(plain, /data-embed(?!'\))/, 'an ordinary export is not marked');
   const g = dataOf(embedded);
   assert.equal(g.meta.exported.embed, true);
-  assert.deepEqual(g.meta.exported.include, ['flows', 'notes']);
+  assert.deepEqual(g.meta.exported.include, ['flows', 'boards', 'notes']);
   assert.equal(g.health, undefined);
   assert.equal(g.recent, undefined);
   assert.equal(g.meta.root, null);
@@ -359,4 +360,11 @@ test('the CLI hint says the overview description is hidden and how to show it, w
   assert.match(printed, /loading="lazy"/);
   assert.match(printed, /\?description=show/);
   assert.match(printed, /description.*hidden|hidden.*description/i);
+});
+
+test('a board title with </script> still leaves a page that parses', () => {
+  const scripts = [...embedded.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.ok(scripts.length >= 2);
+  for (const code of scripts) assert.doesNotThrow(() => new Function(code));
+  assert.equal(dataOf(embedded).boards[0].title, '</script><b>x');
 });

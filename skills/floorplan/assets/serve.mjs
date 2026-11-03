@@ -5,7 +5,7 @@
 // usage: node floorplan/serve.mjs [--port 4378] [--engine claude|codex] [--model <model>] [--claude <path>] [--codex <path>]
 //                                 [--no-open] [--idle-exit <minutes>]
 //        node floorplan/serve.mjs --stop
-//        node floorplan/serve.mjs --export [<file>] [--include flows,notes,recent,health]   (a copy to share; default flows,notes)
+//        node floorplan/serve.mjs --export [<file>] [--include flows,boards,notes,recent,health]   (a copy to share; default flows,boards,notes)
 //                                 [--embed]   (made to sit in an iframe in a docs site: see docs/embedding.md)
 //
 // The server listens on 127.0.0.1 only. Each question runs in the codebase root, on your own account:
@@ -51,10 +51,10 @@ const cleanDismissal = (d) => ({
 // this computer, and only the extras asked for. Used by the map's Export button and by --export.
 // `embed` marks it for an iframe in someone's docs (<html data-embed>, read before anything is drawn): the
 // details start closed, the page's scroll wheel isn't taken over, and clicks don't fill the docs' back button.
-const EXPORT_PARTS = ['flows', 'notes', 'recent', 'health'];
-const EXPORT_DEFAULT = ['flows', 'notes'];
+const EXPORT_PARTS = ['flows', 'boards', 'notes', 'recent', 'health'];
+const EXPORT_DEFAULT = ['flows', 'boards', 'notes'];
 const DATA_START = '<script>window.FLOORPLAN = ';
-function exportMap(include, extraFlows = [], { embed = false, startView = 'root', showDescription = false } = {}) {
+function exportMap(include, extraFlows = [], { embed = false, startView = 'root', showDescription = false, boards = null } = {}) {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
   const a = html.indexOf(DATA_START), b = html.indexOf(';</script>', a);
   if (a < 0 || b < 0) throw Object.assign(new Error('This map is too old to export. Ask Claude or Codex to update the floorplan first.'), { plain: true });
@@ -73,6 +73,9 @@ function exportMap(include, extraFlows = [], { embed = false, startView = 'root'
     meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on, ...(embed ? { embed: true, startView, showDescription } : {}) } },
     flows: on.includes('flows') ? [...g.flows, ...extraFlows.filter((f) => !g.flows.some((x) => x.id === f.id))] : [],
     tour: on.includes('flows') ? g.tour : [],
+    // `boards` null: the built list. An array (the page's own, already on live refs): exactly those, so boards
+    // changed or deleted since the build are as the page shows them.
+    boards: on.includes('boards') ? (Array.isArray(boards) ? boards : g.boards || []) : [],
     files: on.includes('notes') ? g.files : g.files.map(({ note, ...f }) => f),
   };
   if (!on.includes('recent')) delete out.recent;
@@ -85,6 +88,9 @@ function exportMap(include, extraFlows = [], { embed = false, startView = 'root'
   if (embed) page = page.replace(/<html\b/i, '<html data-embed');
   return { html: page, name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint, embed };
 }
+/** The boards the page sends with an export (all it has now), as the page sends them: size-limited, built shape only. */
+const cleanBoards = (list) => (Array.isArray(list) ? list : []).slice(0, 200).map(cleanBoard).filter(Boolean)
+  .map(({ id, title, question, answer, items, steps }) => ({ id, title, question, answer, items, steps }));
 /** Flows requested from the map since it was last built, as the page sends them: checked and trimmed. */
 const cleanFlows = (list) => (Array.isArray(list) ? list : []).slice(0, 50)
   .filter((f) => f && typeof f.id === 'string' && Array.isArray(f.steps))
@@ -97,12 +103,14 @@ if (has('export')) {
   const dest = opt('export');
   const include = String(opt('include', EXPORT_DEFAULT.join(','))).split(',').map((s) => s.trim().toLowerCase());
   try {
+    const stale = ['boards.json', 'custom-flows.json'].some((n) => { try { return fs.statSync(path.join(here, n)).mtimeMs > fs.statSync(path.join(here, 'index.html')).mtimeMs; } catch { return false; } });
     const x = exportMap(include, [], { embed: has('embed') });
     const file = path.resolve(dest && !dest.startsWith('--') ? dest : path.join(here, x.name));
     fs.mkdirSync(path.dirname(file), { recursive: true }); // e.g. docs/_static/ in a docs site that has none yet
     fs.writeFileSync(file, x.html);
     console.log(`Exported the map to ${file}`);
-    const label = { flows: 'flows and the tour', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
+    if (stale) console.log('Boards or flows were saved after the map was last built, so they are not in this copy: run build.mjs, then export again.');
+    const label = { flows: 'flows and the tour', boards: 'kept boards', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
     console.log(`Includes: the map${x.include.map((p) => ', ' + label[p]).join('')}. One file that opens in any browser, with no Ask bar.`);
     if (x.embed) console.log(`Made for an iframe in your docs, e.g. <iframe src="${path.basename(file)}" style="width:100%;height:600px;border:0" title="Architecture map" loading="lazy" allowfullscreen></iframe>. The overview description is hidden to leave room for the map; add ?description=show to show it. Add #v=<part id> to open on one part, ?theme=light or dark to fix the colours.`);
     if (x.include.includes('health') && !x.plan) console.log('It includes the health check: which endpoints are open and where secrets sit in the code (never their values). Share it only with people you trust.');
@@ -661,8 +669,10 @@ const server = http.createServer((req, res) => {
         let body = {}; try { body = JSON.parse(raw); } catch {}
         try {
           const docs = body.embed === true; // the docs-copy settings only count for a docs copy
-          const x = exportMap(Array.isArray(body.include) ? body.include.map(String) : EXPORT_DEFAULT, cleanFlows(body.flows),
-            docs ? { embed: true, ...(body.startView !== undefined ? { startView: body.startView } : {}), ...(body.showDescription !== undefined ? { showDescription: body.showDescription } : {}) } : {});
+          const x = exportMap(Array.isArray(body.include) ? body.include.map(String) : EXPORT_DEFAULT, cleanFlows(body.flows), {
+            boards: Array.isArray(body.boards) ? cleanBoards(body.boards) : null,
+            ...(docs ? { embed: true, ...(body.startView !== undefined ? { startView: body.startView } : {}), ...(body.showDescription !== undefined ? { showDescription: body.showDescription } : {}) } : {}),
+          });
           res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Content-Disposition': `attachment; filename="${x.name}"`, 'Cache-Control': 'no-store' });
           res.end(x.html);
         } catch (e) {
