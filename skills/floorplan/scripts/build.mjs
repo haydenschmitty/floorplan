@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 import { buildHealth, withDismissed, dismissalFor } from './lib/health.mjs';
+import { buildQuality } from './lib/quality.mjs';
 import { buildPlanHealth } from './lib/blueprint.mjs';
 import { buildScreens } from './lib/screens.mjs';
 import { writeClaudeMd } from './lib/claudemd.mjs';
@@ -418,6 +419,7 @@ const graph = {
 if (!scan.blueprint) try { graph.health = buildHealth({ graph, scan, arch, root }); } catch (e) { warn(`health check failed: ${e.message}`); graph.health = { issues: [] }; }
 try { graph.screens = buildScreens({ graph, scan, arch, root }); } catch (e) { warn(`screen detection failed: ${e.message}`); graph.screens = []; }
 if (scan.blueprint) try { graph.health = buildPlanHealth({ graph, scan }); } catch (e) { warn(`design review failed: ${e.message}`); graph.health = { issues: [] }; }
+if (!scan.blueprint) try { graph.quality = buildQuality({ graph, scan, root }); } catch (e) { warn(`quality scoring failed: ${e.message}`); }
 // issues people marked "not a problem" on the map (saved by serve.mjs) stay listed, set apart, and leave the counts
 const dismissedFile = path.join(outDir, 'health-dismissed.json');
 if (graph.health?.issues && fs.existsSync(dismissedFile)) {
@@ -472,6 +474,11 @@ const hs = graph.health?.summary;
 if (hs && (hs.high || hs.medium || hs.low)) {
   report.push(`${scan.blueprint ? 'DESIGN REVIEW' : 'HEALTH'}  ${hs.high} important · ${hs.medium} worth fixing · ${hs.low} minor`);
   for (const i of graph.health.issues.filter((x) => x.severity !== 'low' && !dismissalFor(x, graph.health.dismissed)).slice(0, 8)) report.push(`  [${i.severity}] ${i.title}`);
+}
+if (graph.quality) {
+  const q = Object.values(graph.quality.files);
+  const risky = q.filter((x) => x.s > 66).length;
+  report.push(`QUALITY  ${q.length} files scored · ${risky} high risk · ${q.filter((x) => x.s > 33 && x.s <= 66).length} worth a look`);
 }
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
 report.push(graph.recent

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { discover, gitFiles, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit } from './lib/common.mjs';
 import { extract, callableCallsVia } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
+import { fileMetrics } from './lib/quality.mjs';
 import { findScreens } from './lib/screens.mjs';
 import { createResolver } from './lib/resolve.mjs';
 import { resolveRoutes, matchCalls } from './lib/routes.mjs';
@@ -82,6 +83,7 @@ for (const { path: p, repo } of fileList) {
     // extension hooks: per-file health findings (lib/health.mjs) and app screens (lib/screens.mjs)
     if (src.length) {
       try { const iss = findIssues(src, f); if (iss?.length) f.issues = iss; } catch (e) { f.healthError = String(e.message || e); }
+      try { const q = fileMetrics(src, f); if (q) f.quality = q; } catch (e) { f.qualityError = String(e.message || e); }
       try { const scr = findScreens(src, f); if (scr?.length) f.screens = scr; } catch (e) { f.screensError = String(e.message || e); }
     }
   } else if (category === 'code' || category === 'config' || category === 'docs') {
@@ -174,6 +176,7 @@ const scan = {
     ...(f.symbols?.length ? { symbols: f.symbols } : {}),
     ...(f.tooLarge ? { tooLarge: true } : {}),
     ...(f.issues ? { issues: f.issues } : {}),
+    ...(f.quality ? { quality: f.quality } : {}),
     ...(f.screens ? { screens: f.screens } : {}),
     ...(f.triggers ? { triggers: f.triggers } : {}),
   })),

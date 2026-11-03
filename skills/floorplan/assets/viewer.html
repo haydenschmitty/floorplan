@@ -39,6 +39,7 @@
   --elev: rgba(26, 26, 26, .86); --hair: rgba(var(--ink), .06); --hair-2: rgba(var(--ink), .1);
   --text: #ececec; --text-2: #b4b4b4; --text-3: #8b8b8b; --text-4: #5c5c5c;
   --recent: #4ade80; --on-recent-text: #0b1f12;
+  --ql: 58%;
   --on: #ececec; --on-hover: #fff; --on-text: #0f0f0f; /* solid buttons, badges and dots */
   --on-sev-text: #0f0f0f; /* text on a red or amber chip */
   --ok: #6fd7a8; --sev-high: #f28b8b; --sev-medium: #f0c36b; --sev-low: #8b8b8b;
@@ -70,6 +71,7 @@
   --elev: rgba(255, 255, 255, .92); --hair: rgba(0, 0, 0, .09); --hair-2: rgba(0, 0, 0, .15);
   --text: #161616; --text-2: #3f3f3f; --text-3: #595959; --text-4: #666666;
   --recent: #157a3a; --on-recent-text: #fff;
+  --ql: 36%;
   --on: #161616; --on-hover: #000; --on-text: #fff; --on-sev-text: #fff;
   --ok: #1a8a5b; --sev-high: #c94a4a; --sev-medium: #946000; --sev-low: #666666;
   --warn-bg: rgba(217, 160, 40, .16); --warn-text: #6b4500; --warn-sheet: rgba(255, 244, 214, .97);
@@ -195,6 +197,16 @@ svg.lod-low .foot .meta { visibility: hidden; }
 .rw { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; line-height: 1; color: var(--recent); background: color-mix(in srgb, var(--recent) 13%, transparent); border-radius: 999px; padding: 4px 8px 4px 7px; white-space: nowrap; }
 .rw::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .rw.soft { font-weight: 500; }
+/* code quality (G.quality): green to red tint on every scored card while the switch is on */
+.card.q { --qc: hsl(var(--qh) 72% var(--ql)); }
+body.quality-on .card.q { background: color-mix(in srgb, var(--qc) 13%, var(--raise)); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--qc) 60%, transparent), var(--shadow-card); }
+body.quality-on .node:hover .card.q { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--qc) 90%, transparent), var(--shadow-lift); }
+.qp { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; line-height: 1; color: var(--qc); background: color-mix(in srgb, var(--qc) 16%, transparent); border-radius: 999px; padding: 4px 8px 4px 7px; white-space: nowrap; }
+.qp::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+svg.lod-low .qp { font-size: 18px; padding: 6px 12px; }
+.qkey { margin: 2px 14px 8px; font-size: 11px; color: var(--text-3); }
+.qkey i { display: block; height: 6px; border-radius: 3px; margin-bottom: 4px; background: linear-gradient(90deg, hsl(135 72% var(--ql)), hsl(105 72% var(--ql)) 33%, hsl(45 72% var(--ql)) 66%, hsl(0 72% var(--ql))); }
+.qkey span { display: flex; justify-content: space-between; }
 body.no-recent .rw { display: none; }
 body.no-recent .card.recent, body.no-recent .card.recent-in { box-shadow: var(--shadow-card); }
 svg.lod-low .rw { font-size: 18px; padding: 6px 12px; }
@@ -755,6 +767,32 @@ const recentLabel = (list) => (list.some((x) => x.change === 'new') ? 'New' : 'C
 let recentShown = !!store.get('recent-hl', true);
 const setRecentShown = (on) => { recentShown = on; store.set('recent-hl', on); document.body.classList.toggle('no-recent', !on); };
 document.body.classList.toggle('no-recent', !recentShown);
+// Code quality (G.quality): 0 is healthy, 100 is risky. Modules and files carry a score from the build;
+// folders are worked out here from the files inside, the same way (average by size, pulled toward the worst).
+const QUAL = G.quality || null;
+const qualityHue = (s) => Math.round(s <= 33 ? 135 - s * 0.9 : s <= 66 ? 105 - (s - 33) * 1.8 : 45 - (s - 66) * 1.32);
+const qualityBand = (s) => (QUAL?.bands || []).find((b) => s <= b.max) || { label: '' };
+const qualityCache = new Map();
+function qualityOf(item) {
+  if (!QUAL) return null;
+  if (qualityCache.has(item)) return qualityCache.get(item);
+  let out = null;
+  if (item.startsWith('n:')) { const n = QUAL.nodes[item.slice(2)]; if (n) out = { s: n.s, worst: n.worst, count: n.n }; }
+  else if (item.startsWith('f:') || item.startsWith('m:')) { const f = QUAL.files[item.slice(2)]; if (f) out = { s: f.s, why: f.why || [], metrics: f.m }; }
+  else if (item.startsWith('d:')) {
+    const list = (dirs.get(item)?.files || []).filter((f) => QUAL.files[f.p]);
+    if (list.length) {
+      const loc = list.reduce((a, f) => a + Math.max(f.loc, 1), 0);
+      const worst = list.reduce((a, f) => (QUAL.files[f.p].s > QUAL.files[a.p].s ? f : a));
+      out = { s: Math.round(list.reduce((a, f) => a + QUAL.files[f.p].s * Math.max(f.loc, 1), 0) / loc * 0.65 + QUAL.files[worst.p].s * 0.35), worst: worst.p, count: list.length };
+    }
+  }
+  qualityCache.set(item, out);
+  return out;
+}
+let qualityShown = !!QUAL && !!store.get('quality-on', false);
+const setQualityShown = (on) => { qualityShown = on; store.set('quality-on', on); document.body.classList.toggle('quality-on', on); render({ keepTransform: true }); };
+document.body.classList.toggle('quality-on', qualityShown);
 const symOf = (item) => { const m = /^s:(.*)#(\d+)$/.exec(item); const f = files.get(m[1]); return { f, s: f.s[+m[2]] }; };
 function humanize(s) { s = s.replace(/[_\-.]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim(); return s.charAt(0).toUpperCase() + s.slice(1); }
 
@@ -926,7 +964,10 @@ function cardFoot(item) {
   else if (i.type === 'file') { const nr = (routesByFile.get(i.f.p) || []).length; size = nr ? plural(nr, 'endpoint') : ''; }
   const rec = recentOf(item), inside = recentIn.get(item.startsWith('m:') ? 'f:' + item.slice(2) : item);
   const pill = rec ? `<span class="rw">${recentLabel(rec)}</span>` : inside ? `<span class="rw soft">${inside.length} changed</span>` : '';
-  return size || pill ? `<div class="foot">${size ? `<span class="meta">${size}</span>` : '<span></span>'}${pill}</div>` : '';
+  const q = qualityShown ? qualityOf(item) : null;
+  const qpill = q ? `<span class="qp" title="${h(qualityBand(q.s).label)}">Risk ${q.s}</span>` : '';
+  const right = qpill || pill;
+  return size || right ? `<div class="foot">${size ? `<span class="meta">${size}</span>` : '<span></span>'}${right}</div>` : '';
 }
 /** Extra height a card needs beyond its base size: a footer, and a title long enough to wrap. */
 function cardExtraH(item) {
@@ -966,7 +1007,9 @@ function cardHTML(item) {
   const noteHTML = note ? `<div class="anote"><b>${note.n}</b><span>${h(note.text)}</span></div>` : '';
   if (recentOf(item)) cls += ' recent';
   else if (recentIn.get(item.startsWith('m:') ? 'f:' + item.slice(2) : item)) cls += ' recent-in';
-  return `<div class="card ${cls}" style="--c:${colorOf(i)}"><div class="head">${head}</div>${title}${desc}${noteHTML}${cardFoot(item)}</div>`;
+  const q = qualityOf(item);
+  if (q) cls += ' q';
+  return `<div class="card ${cls}" style="--c:${colorOf(i)}${q ? `;--qh:${qualityHue(q.s)}` : ''}"><div class="head">${head}</div>${title}${desc}${noteHTML}${cardFoot(item)}</div>`;
 }
 function connectorHTML(c) {
   const i = info(c.entity);
@@ -1488,6 +1531,13 @@ function renderLegend(view) {
     lab.innerHTML = `<input type="checkbox" ${recentShown ? 'checked' : ''}><span>Highlight recent work</span><span class="tog" style="margin-left:auto"></span>`;
     lab.querySelector('input').onchange = (ev) => { setRecentShown(ev.target.checked); lab.classList.toggle('off', !ev.target.checked); };
     L.appendChild(lab);
+  }
+  if (QUAL && Object.keys(QUAL.files).length) {
+    const lab = document.createElement('label'); lab.className = 'tech' + (qualityShown ? '' : ' off');
+    lab.innerHTML = `<input type="checkbox" ${qualityShown ? 'checked' : ''}><span>Color by code quality</span><span class="tog" style="margin-left:auto"></span>`;
+    lab.querySelector('input').onchange = (ev) => { setQualityShown(ev.target.checked); };
+    L.appendChild(lab);
+    if (qualityShown) L.insertAdjacentHTML('beforeend', '<div class="qkey"><i></i><span><b>Mostly good</b><b>Worth a look</b><b>High risk</b></span></div>');
   }
   const fb = $('#filters-btn');
   fb.querySelector('.badge')?.remove();
@@ -2334,6 +2384,7 @@ window.Floorplan = Object.freeze({
   // model helpers
   info, chain, children: (id) => visibleKids(id), parentOf: (id) => parentOf.get(id), exists: (id) => Q.exists(id),
   files, nodes, routes, colorOf, iconKey,
+  quality: { data: QUAL, of: (id) => qualityOf(id), hue: qualityHue, band: (s) => qualityBand(s), shown: () => qualityShown, set: (on) => setQualityShown(on) },
   // html helpers
   h, icon, iconI, fmt, plural, md,
   // navigation

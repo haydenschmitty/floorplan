@@ -35,6 +35,7 @@
     PLAN
       ? { id: 'health', label: 'Design review', hint: 'The decisions the plan still leaves open.', on: false, has: !!G.health?.issues?.length }
       : { id: 'health', label: 'Health check', hint: 'Lists the endpoints anyone can use and where secrets sit in the code (never their values). Only include it for people you trust.', on: false, warn: true, has: !!G.health?.issues?.length },
+    { id: 'quality', label: 'Code-quality scores', hint: 'Colors the map by how risky each part is to change, and says which files are tangled or unused.', on: false, has: !!G.quality && Object.keys(G.quality.files).length > 0 },
   ].filter((p) => p.has);
 
   async function download(el, close) {

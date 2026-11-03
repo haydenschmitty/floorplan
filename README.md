@@ -100,6 +100,9 @@ Pick a page you know and see everything behind it: its parts, the requests it ma
 **🩺 Health check**<br>
 Catches the classic mistakes in AI-built apps: keys in the code or sent to the browser, Supabase tables anyone can read, open Firebase rules, Stripe webhooks anyone could fake, and endpoints with no sign-in. Each comes with a ready-to-paste fix. A check, not an audit.
 
+**🌡️ Code quality**<br>
+Tint every box green to red by how risky it is to change: tangled functions, huge files, copied code, careless or machine-written code, and files nothing uses. Click a box to see why. Off until you switch on *Color by code quality*.
+
 </td>
 </tr>
 <tr>
