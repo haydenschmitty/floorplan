@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Imports through package.json "imports" are linked:** projects that import with Node subpath imports, like `import { money } from '#lib/money'` mapped by `"imports": { "#*": "./src/*" }`, had almost no links between their own files, so the map showed parts that seemed unconnected and Health listed most files as unused. Floorplan now follows the `imports` field of the nearest package.json the way Node does: an exact key first, then the most specific `*` key, trying each target and condition in turn (`types` last, since Node never picks it). tsconfig `paths` still apply when package.json has no match.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.
