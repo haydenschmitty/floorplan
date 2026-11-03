@@ -212,7 +212,7 @@ function findSecrets(src, f, out) {
 // Decorators / middleware / dependencies whose names say "check who is calling".
 const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^guard(?:_|$)|_guard$|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
-const isGuardName = (name) => !!name && !NOT_GUARD.test(name) && GUARD_NAME.test(snake(name));
+const isGuardName = (name) => !!name && !NOT_GUARD.test(name) && (GUARD_NAME.test(snake(name)) || /^(authenticate|authorize)$/.test(snake(name)));
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
 const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_session|sessionmaker)$|(^|_)(db|database|sql\w*|engine|conn|connection|cursor|uow|unit_of_work)(_|$)|session_?(local|maker|factory)/i;
@@ -262,6 +262,36 @@ function blockAfter(lines, defIdx) {
   return lines.slice(defIdx, end).join('\n');
 }
 
+// Read one Python argument/list expression without stopping at a nested call.
+// Ignore delimiters inside strings and comments; an incomplete expression is
+// not evidence of a guard, and must not swallow later routers or handlers.
+function pyEnclosed(src, start) {
+  const pairs = { '(': ')', '[': ']', '{': '}' }, stack = [pairs[src[start]]];
+  if (!stack[0]) return '';
+  let quote = '', comment = false;
+  for (let i = start + 1; i < src.length; i++) {
+    const c = src[i];
+    if (comment) { if (c === '\n') comment = false; continue; }
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (src.startsWith(quote, i)) { i += quote.length - 1; quote = ''; }
+      continue;
+    }
+    if (c === '#') { comment = true; continue; }
+    if (c === '"' || c === "'") {
+      quote = src.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      i += quote.length - 1;
+      continue;
+    }
+    if (pairs[c]) stack.push(pairs[c]);
+    else if (/[)\]}]/.test(c)) {
+      if (c !== stack.pop()) return '';
+      if (!stack.length) return src.slice(start + 1, i);
+    }
+  }
+  return '';
+}
+
 function pyRoutes(src, f, out) {
   const lines = src.split('\n');
   // Blueprint / app-wide before_request hooks and router-level dependencies that check the caller.
@@ -273,9 +303,14 @@ function pyRoutes(src, f, out) {
     guardedVars.set(m[1], m[2]);
     if (m[1] === 'app') out.push({ k: 'global-guard', framework: 'flask', name: m[2], line: defIdx + 1 });
   }
-  for (const m of src.matchAll(/^\s*(\w+)\s*=\s*(?:\w+\.)?APIRouter\(([^)]*(?:\([^)]*\)[^)]*)*)\)/gm)) {
-    const dep = /dependencies\s*=\s*\[[^\]]*Depends\(\s*([\w.]+)/.exec(m[2]);
-    if (dep && isGuardDep(dep[1].split('.').pop())) guardedVars.set(m[1], dep[1]);
+  for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\s*\(/gm)) {
+    const args = pyEnclosed(src, m.index + m[0].length - 1);
+    const list = /\bdependencies\s*=\s*\[/.exec(args);
+    if (!list) continue;
+    const deps = pyEnclosed(args, list.index + list[0].length - 1);
+    const guard = [...deps.matchAll(/\b(?:\w+\.)?(?:Depends|Security)\s*\(\s*([\w.]+)/g)]
+      .map((dep) => dep[1]).find((name) => isGuardDep(name.split('.').pop()));
+    if (guard) guardedVars.set(m[1], guard);
   }
   // FastAPI dependency aliases, `AdminUser = Annotated[Session, Depends(admin_user)]`, and the dependency
   // functions behind them. They're usually imported from a shared deps.py, so build decides repo-wide
