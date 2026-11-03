@@ -202,8 +202,9 @@ function pretendPage(graph) {
       err.hidden = true;
       const content = [...opts.html.matchAll(/<input type="checkbox" data-xp="(\w+)"( checked)?>/g)].map((x) => ({ ...stub(!!x[2]), dataset: { xp: x[1] } }));
       // a control exists only if the dialog's html really has it, so renaming an attribute breaks the test
-      const by = Object.fromEntries(Object.entries({ '[data-xp-docs]': docs, '[data-xp-start]': start, '[data-xp-desc]': desc, '[data-xp-docs-opts]': opts2, '.xp-err': err })
-        .filter(([sel]) => sel === '.xp-err' || opts.html.includes(sel.slice(1, -1))));
+      const boardsBox = content.find((c) => c.dataset.xp === 'boards');
+      const by = Object.fromEntries(Object.entries({ ...(boardsBox ? { '[data-xp="boards"]': boardsBox } : {}), '[data-xp-docs]': docs, '[data-xp-start]': start, '[data-xp-desc]': desc, '[data-xp-docs-opts]': opts2, '.xp-err': err })
+        .filter(([sel]) => sel === '.xp-err' || sel.startsWith('[data-xp="') || opts.html.includes(sel.slice(1, -1))));
       const el = {
         querySelector: (sel) => by[sel] || null,
         querySelectorAll: (sel) => (sel === '[data-xp]' ? content : []),
@@ -404,4 +405,73 @@ test('the Export button’s request keeps a character split across two pieces wh
     setTimeout(() => req.end(bytes.subarray(cut)), 50);
   });
   assert.equal(dataOf(html).boards[0].answer, answer);
+});
+
+// ---- kept boards as starting views ----
+const withBoards = () => {
+  const g = shopGraph();
+  g.boards = [{ id: 'refund-view', title: 'Refund view', items: [], steps: [] }, { id: 'odd', title: 'A <i>&"odd"', items: [], steps: [] }];
+  return g;
+};
+
+test('the starting-view list ends with the kept boards, in their own group, escaped', () => {
+  const m = pretendPage(withBoards()).open();
+  const o = options(m.opts.html);
+  assert.deepEqual(o.slice(-2), [{ value: 'b:refund-view', selected: false, label: 'Refund view' }, { value: 'b:odd', selected: false, label: 'A &lt;i&gt;&amp;&quot;odd&quot;' }]);
+  assert.equal(o.filter((x) => x.value.startsWith('n:')).length, 7, 'the parts are still all there, before the boards');
+  assert.match(m.opts.html, /<optgroup label="Kept boards">[\s\S]*b:refund-view[\s\S]*<\/optgroup>/);
+  assert.doesNotMatch(m.opts.html, /<i>&"/);
+});
+
+test('with no kept boards there is no boards group', () => {
+  assert.doesNotMatch(pretendPage(shopGraph()).open().opts.html, /optgroup/);
+});
+
+test('the kept boards are listed only while Kept boards is ticked, and unticking resets a chosen board to the overview', async () => {
+  const p = pretendPage(withBoards());
+  const m = p.open();
+  const box = m.content.find((c) => c.dataset.xp === 'boards');
+  p.tick(m.docs, true);
+  m.start.value = 'b:odd';
+  p.tick(box, false);
+  assert.doesNotMatch(m.start.innerHTML, /b:/, 'the board options are gone');
+  assert.match(m.start.innerHTML, /n:api/, 'the parts stay');
+  assert.equal(m.start.value, 'root');
+  assert.equal((await p.download(m)).startView, 'root');
+  p.tick(box, true);
+  assert.match(m.start.innerHTML, /b:refund-view/);
+  m.start.value = 'n:api';
+  p.tick(box, false); p.tick(box, true);
+  assert.equal(m.start.value, 'n:api', 'a part choice survives');
+});
+
+test('a docs copy can be told to open on a kept board', async () => {
+  const p = pretendPage(withBoards());
+  const m = p.open();
+  p.tick(m.docs, true);
+  m.start.value = 'b:refund-view';
+  const body = await p.download(m);
+  assert.equal(body.startView, 'b:refund-view');
+  assert.equal(body.boards.length, 2);
+});
+
+test('a docs copy opens on a kept board only if that board is in the copy', async () => {
+  const ok = await api({ include: ['boards'], embed: true, startView: 'b:refund-view' }, { 'x-floorplan-token': token });
+  assert.equal(ok.status, 200);
+  assert.equal(dataOf(await ok.text()).meta.exported.startView, 'b:refund-view');
+  const sent = await api({ include: ['boards'], boards: [asBuilt({ id: 'new-view', title: 'New', question: 'Q', answer: 'A', items: [{ ref: 'n:api', note: '' }], steps: [] })], embed: true, startView: 'b:new-view' }, { 'x-floorplan-token': token });
+  assert.equal(sent.status, 200, 'a board the page sent counts');
+  const cases = [
+    { include: ['boards'], startView: 'b:nope' },
+    { include: ['boards'], startView: 'b:' },
+    { include: ['flows'], startView: 'b:refund-view' }, // boards left out of the copy
+    { include: ['boards'], boards: [], startView: 'b:refund-view' }, // deleted since the build
+    { include: ['boards'], boards: [asBuilt({ id: 'new-view', title: 'New', question: 'Q', answer: 'A', items: [{ ref: 'n:api', note: '' }], steps: [] })], startView: 'b:refund-view' }, // the page's list replaces the built one
+  ];
+  for (const c of cases) {
+    const r = await api({ embed: true, ...c }, { 'x-floorplan-token': token });
+    assert.equal(r.status, 400, JSON.stringify(c));
+    const { error } = await r.json();
+    assert.match(error, /^[A-Z].*[.]$/);
+  }
 });

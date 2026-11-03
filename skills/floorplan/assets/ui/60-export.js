@@ -63,6 +63,14 @@
     walk('', []);
     return out;
   }
+  // the kept boards, after the parts; the page's own list as of now
+  const startBoards = () => (G.boards || []).map((b) => ({ value: 'b:' + b.id, label: b.title || 'Kept board' }));
+  const optionHtml = (v) => `<option value="${h(v.value)}"${v.value === 'root' ? ' selected' : ''}>${h(v.label)}</option>`;
+  // the whole selector: the parts, then (while Kept boards is ticked) a group of boards
+  function startOptions(withBoards) {
+    const boards = withBoards ? startBoards() : [];
+    return startViews().map(optionHtml).join('') + (boards.length ? `<optgroup label="Kept boards">${boards.map(optionHtml).join('')}</optgroup>` : '');
+  }
 
   async function download(el, close) {
     const err = el.querySelector('.xp-err');
@@ -112,7 +120,7 @@
         <div class="xp-opts">
           <label class="xp-opt"><input type="checkbox" data-xp-docs><div><b>For a docs page</b><span>Made to sit inside a page of your docs: it won’t take over the page’s back button or scrolling. Like <code>--export --embed</code>.</span></div></label>
           <div class="xp-docs" data-xp-docs-opts hidden>
-            <label class="xp-field"><b>Opens on</b><select data-xp-start>${startViews().map((v) => `<option value="${h(v.value)}"${v.value === 'root' ? ' selected' : ''}>${h(v.label)}</option>`).join('')}</select></label>
+            <label class="xp-field"><b>Opens on</b><select data-xp-start>${startOptions(parts.some((p) => p.id === 'boards' && p.on))}</select></label>
             <label class="xp-opt"><input type="checkbox" data-xp-desc><div><b>Show project description</b><span>The short summary of what ${h(G.project.name)} is, at the top of the map.</span></div></label>
           </div>
         </div>
@@ -123,6 +131,14 @@
     const docs = m.el.querySelector('[data-xp-docs]');
     const opts = m.el.querySelector('[data-xp-docs-opts]');
     docs.addEventListener('change', () => { opts.hidden = !docs.checked; });
+    // boards can only be the starting view while they're in the copy
+    const boardsBox = m.el.querySelector('[data-xp="boards"]');
+    const start = m.el.querySelector('[data-xp-start]');
+    if (boardsBox && start) boardsBox.addEventListener('change', () => {
+      const keep = start.value;
+      start.innerHTML = startOptions(boardsBox.checked);
+      start.value = keep.startsWith('b:') && !boardsBox.checked ? 'root' : keep;
+    });
   }
 
   SC.addHeaderButton({ id: 'btn-export', label: 'Export', icon: 'export', title: 'Export a copy of this map to share', onClick: openExport });

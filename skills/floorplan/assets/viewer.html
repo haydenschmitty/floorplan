@@ -1385,7 +1385,7 @@ $('#z-fit').onclick = () => fit(true);
 function setHash(container, sel) {
   if (container.startsWith('q:')) return; // answer views are transient
   const p = new URLSearchParams();
-  // a docs copy that opens on a saved part writes v=root for the overview, so a reload stays on the overview
+  // a docs copy that opens on a saved part or kept board writes v=root for the overview, so a reload stays on the overview
   if (container.startsWith('b:')) p.set('b', container.slice(2)); // a kept board: #b=<id>
   else if (container !== 'root' || (EMBED && EXPORTED?.startView && EXPORTED.startView !== 'root')) p.set('v', container);
   if (sel && typeof sel === 'string') p.set('s', sel);
@@ -1396,10 +1396,12 @@ function setHash(container, sel) {
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1)), b = p.get('b');
   let v = p.get('v'), s = p.get('s');
-  if (b) v = G.boards.some((x) => x.id === b) ? 'b:' + b : 'root'; // a kept board: #b=<id>; one deleted since the build opens the overview
+  const saved = b || v ? null : EMBED ? EXPORTED?.startView : null; // a docs copy's saved start counts only when the address names none
+  const board = b || (saved?.startsWith('b:') ? saved.slice(2) : null); // #b=<id>, or a docs copy's saved kept board when the address names nothing
+  if (board) v = G.boards.some((x) => x.id === board) ? 'b:' + board : 'root'; // a kept board: #b=<id>; one deleted since the build opens the overview
   else {
     // a docs copy opens on the part chosen at export when the address names none; an explicit #v= always wins
-    if (!v) v = EMBED && EXPORTED?.startView && parentOf.has(EXPORTED.startView) && drillable(EXPORTED.startView) ? EXPORTED.startView : 'root'; // a saved part that opens a blank board (an outside service, an empty part) falls back to the overview
+    if (!v) v = saved && parentOf.has(saved) && drillable(saved) ? saved : 'root'; // a saved part that opens a blank board (an outside service, an empty part) falls back to the overview
     // docs and the export hint say #v=<part id>; the viewer keys parts as n:<id>, so a bare id is promoted when it names a part
     if (v !== 'root' && !parentOf.has(v)) v = parentOf.has('n:' + v) ? 'n:' + v : 'root';
   }
@@ -2566,7 +2568,8 @@ if (EMBED) {
     u.searchParams.set('theme', window.floorplanTheme?.get() || 'auto');
     // the saved start view isn't in the address, so say where this copy is now (v is always written: the new tab isn't an embed)
     const hp = new URLSearchParams();
-    hp.set('v', state.container.startsWith('q:') ? 'root' : state.container);
+    if (state.container.startsWith('b:')) hp.set('b', state.container.slice(2)); // a kept board is #b=<id>; #v= would open the overview
+    else hp.set('v', state.container.startsWith('q:') ? 'root' : state.container);
     if (typeof state.selected === 'string' && !state.container.startsWith('q:')) hp.set('s', state.selected);
     u.hash = hp.toString();
     window.open(u.href, '_blank', 'noopener');

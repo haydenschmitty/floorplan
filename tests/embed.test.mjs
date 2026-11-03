@@ -339,6 +339,9 @@ test('the full-screen new-tab fallback keeps the current view and selection', ()
   assert.equal(new URLSearchParams(b.hash.slice(1)).get('s'), null);
   const c = opened({ container: 'q:answer', selected: null });
   assert.equal(new URLSearchParams(c.hash.slice(1)).get('v'), 'root', 'a transient answer view is not carried over');
+  const d = new URLSearchParams(opened({ container: 'b:one', selected: null }).hash.slice(1));
+  assert.equal(d.get('b'), 'one', 'a kept board is written as b=, which the viewer reads');
+  assert.equal(d.get('v'), null);
 });
 
 test('inside a docs page the panel preference is not written to the docs site storage', () => {
@@ -392,4 +395,21 @@ test('an answer with <!-- <script> can’t blank the page: the data script holds
     }
     assert.equal(JSON.parse(fs.readFileSync(path.join(r, 'floorplan', 'graph.json'), 'utf8')).boards[0].answer, answer);
   } finally { cleanup(r); }
+});
+
+test('a docs copy opens on the kept board chosen at export, or the overview if it is gone; an explicit address wins', () => {
+  const start = embedded.indexOf('function readHash() {');
+  const end = embedded.indexOf('window.addEventListener', start);
+  const read = (hash, { embed = true, boards = ['one'], startView = 'b:one' } = {}) => {
+    const parentOf = new Map([['n:api', 'root']]);
+    return vm.runInNewContext(embedded.slice(start, end) + '\nreadHash();', { location: { hash }, URLSearchParams, parentOf, drillable: () => true, G: { boards: boards.map((id) => ({ id })) }, EMBED: embed, EXPORTED: { embed: true, startView } }).v;
+  };
+  assert.equal(read(''), 'b:one');
+  assert.equal(read('#s=n:api'), 'b:one');
+  assert.equal(read('', { boards: [] }), 'root', 'the board is gone');
+  assert.equal(read('', { boards: ['two'] }), 'root');
+  assert.equal(read('#b=two', { boards: ['one', 'two'] }), 'b:two', 'an explicit board wins');
+  assert.equal(read('#v=n:api'), 'n:api', 'an explicit part wins');
+  assert.equal(read('#v=root'), 'root', 'an explicit overview wins');
+  assert.equal(read('', { embed: false }), 'root', 'outside a frame it is an ordinary export');
 });

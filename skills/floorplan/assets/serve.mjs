@@ -60,10 +60,14 @@ function exportMap(include, extraFlows = [], { embed = false, startView = 'root'
   if (a < 0 || b < 0) throw Object.assign(new Error('This map is too old to export. Ask Claude or Codex to update the floorplan first.'), { plain: true });
   const g = JSON.parse(html.slice(a + DATA_START.length, b));
   const on = EXPORT_PARTS.filter((p) => include.includes(p));
-  // a docs copy opens on the overview or on one part ('n:<id>', nested parts included); anything else is refused, not guessed at
+  // a docs copy opens on the overview, on one part ('n:<id>', nested parts included) or on a kept board ('b:<id>', in the copy); anything else is refused, not guessed at
   if (embed) {
-    if (startView !== 'root' && !(typeof startView === 'string' && startView.startsWith('n:') && (g.nodes || []).some((n) => 'n:' + n.id === startView)))
-      throw Object.assign(new Error('That starting view isn’t a part of this map. Choose the overview or one of its parts.'), { plain: true, bad: true });
+    // a kept board counts only if it's one of the boards going into this copy
+    const exporting = on.includes('boards') ? (Array.isArray(boards) ? boards : g.boards || []) : [];
+    const isPart = typeof startView === 'string' && startView.startsWith('n:') && (g.nodes || []).some((n) => 'n:' + n.id === startView);
+    const isBoard = typeof startView === 'string' && startView.startsWith('b:') && exporting.some((b) => 'b:' + b.id === startView);
+    if (startView !== 'root' && !isPart && !isBoard)
+      throw Object.assign(new Error('That starting view isn’t in this copy. Choose the overview, one of its parts, or a kept board that’s included.'), { plain: true, bad: true });
     if (typeof showDescription !== 'boolean')
       throw Object.assign(new Error('Showing the project description must be on or off.'), { plain: true, bad: true });
   }
