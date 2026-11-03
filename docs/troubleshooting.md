@@ -48,7 +48,7 @@ Ask Claude or Codex to "update the floorplan". If a tab was already open, it rel
 Maps made before version 0.1.3 load their layout engine from the internet, so check your connection or any content blocker, or ask Claude to "update the floorplan". Newer maps have everything built in and work offline.
 
 ### The Ask bar has no Change switch
-**Change** appears only on a [blueprint](getting-started.md#plan-something-you-havent-built-yet), opened through its server (`node floorplan/serve.mjs`) with the Claude Code CLI or Codex available. It doesn't appear for an [ACP agent](acp.md), because those answers aren't in the fixed format Change needs. A map of real code doesn't have it: ask Claude Code or Codex to change the code, then update the floorplan.
+**Change** appears only on a [blueprint](getting-started.md#plan-something-you-havent-built-yet), opened through its server (`node floorplan/serve.mjs`) with the Claude Code CLI or Codex available. It doesn't appear for an [ACP agent](acp.md), because those answers aren't in the fixed format Change needs. Switch the Ask bar back to Claude Code or Codex and it returns. A map of real code doesn't have it: ask Claude Code or Codex to change the code, then update the floorplan.
 
 ### A change to a blueprint failed, or I don't like it
 If the updated plan doesn't pass Floorplan's checks after a second try, nothing is saved and the map stays as it was; try asking more specifically. If a change went through but isn't what you wanted, press **Undo** in its summary, or ask for another change. The previous versions are kept in `floorplan/.cache/history/`.

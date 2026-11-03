@@ -12,7 +12,10 @@
 // Each question runs in the codebase root, on your own account: `claude -p` with read-only tools, `codex exec`
 // in its read-only sandbox, or a known ACP agent started in that agent's own read-only mode. A custom ACP
 // command is only `--acp '<command>'` (or FLOORPLAN_ACP) from the process that started the server.
-// It uses the one that built the map, else whichever is installed.
+// The Ask bar can switch among Claude Code, Codex, and ACP agents this server can find. A star in that
+// menu remembers the choice in ~/.floorplan/settings.json (an engine id and a known name, never a command).
+// A --engine or --acp flag on this process wins over that memory. Otherwise it uses the memory, else the
+// agent that built the map, else whichever is installed.
 // When the map is rebuilt, open tabs reload in place. The running server is recorded in .cache/server.json.
 import http from 'node:http';
 import fs from 'node:fs';
@@ -102,9 +105,9 @@ const wantPort = Number(opt('port', 4378));
 const idleExit = Number(opt('idle-exit', 0)) * 60000; // stop this long after the last tab closes (0 = never)
 const selfHash = crypto.createHash('sha1').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
 const model = opt('model', process.env.FLOORPLAN_MODEL || '');
-// Which ACP agent to run. Only the command line (--acp) or FLOORPLAN_ACP, both set by whoever started
-// the server. Never a field from the page, and never a command remembered in ~/.floorplan/settings.json.
-const acpGiven = opt('acp', process.env.FLOORPLAN_ACP) || '';
+// A custom ACP command is only this process's --acp / FLOORPLAN_ACP. The page and ~/.floorplan/settings.json
+// may name a known agent (or zed:<name>), and that choice is kept in `acpChoice` below. They never supply a command.
+const acpFlag = String(opt('acp', process.env.FLOORPLAN_ACP) || '').trim();
 const token = crypto.randomBytes(16).toString('hex');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 
@@ -234,8 +237,11 @@ function customAcp(w) {
   return { ...spec, label: base.replace(/^./, (c) => c.toUpperCase()), key: 'custom', mode: null, signIn: null, env: {} };
 }
 let acpFound = [];
+// The ACP line in use. A command string is copied here only from acpFlag. A saved or picked choice is a known name or zed:<name>.
+let acpChoice = '';
 function findAcp() {
-  const line = String(acpGiven || '').trim();
+  const line = String(acpChoice || '').trim();
+  const fromProcess = !!line && line === acpFlag;
   if (!line || line.startsWith('--')) {
     const knownNames = new Set(KNOWN_ACP.map((a) => a.name));
     const zed = zedAgents().filter((a) => !knownNames.has(path.basename(a.command).replace(/\.(exe|cmd|bat|ps1|m?js)$/i, '').toLowerCase()));
@@ -249,7 +255,8 @@ function findAcp() {
     const known = KNOWN_ACP.find((a) => a.name === w[0].toLowerCase());
     if (known) return knownAcp(known);
   }
-  return customAcp(w);
+  // A command runs only when this process was started with it. Anything remembered or sent by the page stops here.
+  return fromProcess ? customAcp(w) : null;
 }
 // The agents that can answer, one entry each: what it's called, where to get it, how to find its CLI, how to
 // run one request (run, below), and whether its answers are held to a schema (structured). Changing a
@@ -277,27 +284,68 @@ const ENGINES = {
     run: acpRun,
   },
 };
-// --engine (or FLOORPLAN_ENGINE) decides; otherwise the agent that built the map, then the others in order
+// --engine (or FLOORPLAN_ENGINE) and --acp (or FLOORPLAN_ACP) decide. Otherwise a starred choice in
+// ~/.floorplan/settings.json, then the agent that built the map, then the others in order.
 const builtBy = (() => { try { return JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8')).meta?.agent; } catch { return null; } })();
-const asked = opt('engine', process.env.FLOORPLAN_ENGINE);
 const isEngine = (k) => typeof k === 'string' && Object.hasOwn(ENGINES, k);
-const want = isEngine(asked) ? asked : isEngine(builtBy) ? builtBy : 'claude';
-let engine = null, cli = null;
-for (const k of isEngine(asked) ? [asked] : [want, ...Object.keys(ENGINES).filter((k) => k !== want)]) { cli = ENGINES[k].find(); if (cli) { engine = k; break; } }
-if (engine === 'acp' && cli?.label) ENGINES.acp.name = `${cli.label} (ACP)`;
-const canChange = !engine || ENGINES[engine].structured;
+const settingsFile = path.join(process.env.HOME || process.env.USERPROFILE || here, '.floorplan', 'settings.json');
+const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch { return {}; } };
+/** A known agent name, or zed:<name>. A command, a path, or anything with a space is not one. */
+function allowAcpName(value) {
+  if (typeof value !== 'string') return null;
+  const s = value.trim();
+  if (!s || s.length > 80 || /\s/.test(s)) return null;
+  const known = KNOWN_ACP.find((a) => a.name === s.toLowerCase());
+  if (known) return known.name;
+  if (/^zed:[A-Za-z0-9][A-Za-z0-9._-]{0,64}$/i.test(s)) return `zed:${s.slice(4)}`;
+  return null;
+}
+/** The starred choice, when it is an engine id plus at most a known name. A saved command is ignored, and the file is left as it is. */
+function savedAgent() {
+  const a = readSettings().agent;
+  if (!a || typeof a !== 'object' || Array.isArray(a) || !isEngine(a.engine)) return null;
+  if (a.engine !== 'acp') return { engine: a.engine };
+  const acp = allowAcpName(a.acp);
+  return acp ? { engine: 'acp', acp } : { engine: 'acp' };
+}
+const engineFlag = isEngine(opt('engine', process.env.FLOORPLAN_ENGINE)) ? opt('engine', process.env.FLOORPLAN_ENGINE) : null;
+const hasAcpFlag = !!acpFlag && !acpFlag.startsWith('--');
+const flagged = !!(engineFlag || hasAcpFlag);
+const saved = flagged ? null : savedAgent();
+acpChoice = hasAcpFlag ? acpFlag : (saved?.acp || '');
+const want = engineFlag || (hasAcpFlag ? 'acp' : null) || saved?.engine || (isEngine(builtBy) ? builtBy : 'claude');
+let engine = null, cli = null, version = null, canChange = true;
+function rememberCli() {
+  ENGINES.acp.name = engine === 'acp' && cli?.label ? `${cli.label} (ACP)` : 'an ACP agent';
+  canChange = !engine || ENGINES[engine].structured;
+}
+function selectEngine(locked) {
+  const first = isEngine(locked) ? locked : want;
+  const order = locked ? [first] : [first, ...Object.keys(ENGINES).filter((k) => k !== first)];
+  engine = null; cli = null;
+  for (const k of order) { const found = ENGINES[k].find(); if (found) { engine = k; cli = found; break; } }
+  rememberCli();
+}
+selectEngine(engineFlag || (hasAcpFlag ? 'acp' : null));
 // Started from inside a Claude Code or Codex session? Don't let the CLI think it's nested in it.
 function cliEnv() {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (/^CLAUDE_?CODE_(SESSION|ENTRYPOINT|CHILD|MESSAGING|HOST|SDK)|^CLAUDECODE$|^CODEX_(THREAD_ID|SESSION_ID|TOOL_CALL_ID|CI$|SANDBOX)/.test(k)) delete env[k];
   return env;
 }
-let version = null;
-if (cli) { try { version = execFileSync(cli.cmd, [...(cli.versionArgs || cli.args), '--version'], { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch {} }
+function probeVersion() {
+  version = null;
+  if (!cli) return;
+  try { version = execFileSync(cli.cmd, [...(cli.versionArgs || cli.args), '--version'], { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch {}
+}
+probeVersion();
 
 // The page, the graph, and the instructions and answer schema (from query.mjs's inlined graph-query
-// code). Loaded at start and again whenever the map is rebuilt.
-const inject = `<script>window.FLOORPLAN_SERVER=${JSON.stringify({ token, cli: !!cli, engine, want, version, model: model || null, name: cli ? ENGINES[engine].name : null, change: canChange })};</script>`;
+// code). Loaded at start, whenever the map is rebuilt, and when the Ask bar switches agent.
+function serverInfo() {
+  return { token, cli: !!cli, engine, want, version, model: model || null, name: cli ? ENGINES[engine].name : null, change: canChange };
+}
+const inject = () => `<script>window.FLOORPLAN_SERVER=${JSON.stringify(serverInfo())};</script>`;
 let page, G, core, MODES;
 function load() {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
@@ -305,7 +353,7 @@ function load() {
   const coreSrc = fs.readFileSync(path.join(here, 'query.mjs'), 'utf8').split('// ---- cli ----')[0];
   const c = new Function(`${coreSrc.replace(/^import .*$/gm, '')}; return { FLOORPLAN_ANSWER_SCHEMA, FLOORPLAN_FLOW_SCHEMA, FLOORPLAN_CHANGE_SCHEMA, floorplanAskInstructions, floorplanFlowInstructions, floorplanChangeInstructions, createGraphQuery };`)();
   c.q = c.createGraphQuery(g);
-  page = html.replace('</head>', inject + '</head>');
+  page = html.replace('</head>', inject() + '</head>');
   G = g; core = c;
   // kinds of request: a question (answer + board), a new guided flow, and for a blueprint, a change to the
   // plan. Codex reads its schema from a file.
@@ -350,8 +398,6 @@ const readFlows = () => { try { return JSON.parse(fs.readFileSync(flowsFile, 'ut
 // never) is kept in ~/.floorplan/settings.json so every project's map remembers it.
 // FLOORPLAN_NO_PROMPTS=1 turns the question off.
 const WAITLIST_URL = process.env.FLOORPLAN_WAITLIST_URL || 'https://floorplan-waitlist-690500262396.us-central1.run.app/';
-const settingsFile = path.join(process.env.HOME || process.env.USERPROFILE || here, '.floorplan', 'settings.json');
-const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch { return {}; } };
 function saveCloud(cloud) {
   try { fs.mkdirSync(path.dirname(settingsFile), { recursive: true }); fs.writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), cloud }, null, 2) + '\n'); } catch {}
 }
@@ -815,6 +861,82 @@ function undoChange() {
   return { ok: true, left: all.length - 1 };
 }
 
+// ---------- engine picker ----------
+// The Ask bar lists Claude Code, Codex, and the ACP agents this server can actually find. Choosing one
+// switches every open tab. A star writes the engine id and, for ACP, a known name or zed:<name>. The body
+// of this request is never a command: a value that isn't one of those names is refused and nothing is saved.
+function publicDefault() {
+  const s = savedAgent();
+  if (!s) return {};
+  return s.acp ? { engine: s.engine, acp: s.acp } : { engine: s.engine };
+}
+function saveAgent(choice) {
+  const agent = choice.engine === 'acp' ? { engine: 'acp', acp: choice.acp } : { engine: choice.engine };
+  try {
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+    fs.writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), agent }, null, 2) + '\n');
+  } catch {}
+}
+function agentCatalog() {
+  const agents = [];
+  if (ENGINES.claude.find()) agents.push({ id: 'claude', engine: 'claude', name: 'Claude Code' });
+  if (ENGINES.codex.find()) agents.push({ id: 'codex', engine: 'codex', name: 'Codex' });
+  const friendly = new Set(['gemini', 'opencode', 'devin']);
+  for (const a of KNOWN_ACP) {
+    if (!knownAcp(a)) continue;
+    agents.push({ id: `acp:${a.name}`, engine: 'acp', acp: a.name, name: friendly.has(a.name) ? a.label : a.name });
+  }
+  const knownNames = new Set(KNOWN_ACP.map((a) => a.name));
+  for (const a of zedAgents()) {
+    const base = path.basename(a.command).replace(/\.(exe|cmd|bat|ps1|m?js)$/i, '').toLowerCase();
+    if (knownNames.has(base) || !zedCli(a.name)) continue;
+    agents.push({ id: `zed:${a.name}`, engine: 'acp', acp: `zed:${a.name}`, name: `zed:${a.name}` });
+  }
+  const curAcp = engine === 'acp' && cli?.key && cli.key !== 'custom' ? cli.key : null;
+  return {
+    agents,
+    current: { engine, acp: curAcp, name: cli ? ENGINES[engine].name : null, model: model || null, version, cli: !!cli, change: canChange },
+    default: publicDefault(),
+  };
+}
+/** Points the running server at one installed agent. Returns null when the choice isn't a known, found agent. */
+function useEngine(choice, line) {
+  const prev = { engine, cli, acpChoice, name: ENGINES.acp.name, canChange, version };
+  if (choice === 'acp') acpChoice = line;
+  const found = ENGINES[choice].find();
+  if (!found) { acpChoice = prev.acpChoice; return false; }
+  engine = choice;
+  cli = found;
+  rememberCli();
+  probeVersion();
+  try { load(); return true; }
+  catch {
+    engine = prev.engine; cli = prev.cli; acpChoice = prev.acpChoice;
+    ENGINES.acp.name = prev.name; canChange = prev.canChange; version = prev.version;
+    try { load(); } catch {}
+    return false;
+  }
+}
+function switchEngine(b) {
+  if (!b || typeof b !== 'object' || !isEngine(b.engine)) return null;
+  let acp = null;
+  if (b.engine === 'acp') {
+    acp = allowAcpName(b.acp);
+    if (!acp) return null;
+    const prev = acpChoice;
+    acpChoice = acp;
+    const found = findAcp();
+    acpChoice = prev;
+    if (!found) return null;
+  } else if (!ENGINES[b.engine].find()) return null;
+  if (b.persist === true) saveAgent(b.engine === 'acp' ? { engine: 'acp', acp } : { engine: b.engine });
+  if (b.switch === false) return { ...serverInfo(), default: publicDefault() };
+  if (!useEngine(b.engine, acp)) return null;
+  const info = serverInfo();
+  broadcast('engine', info);
+  return { ...info, default: publicDefault() };
+}
+
 // ---------- http ----------
 const server = http.createServer((req, res) => {
   // only this machine's own names: a website that points its domain at 127.0.0.1 (DNS rebinding) would
@@ -835,6 +957,19 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/status') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ tabs: tabs.size, pid: process.pid, hash: selfHash, root })); }
     if (req.method === 'GET' && url.pathname === '/api/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ cli: !!cli, engine, want, version, path: cli?.path || null })); }
+    if (req.method === 'GET' && url.pathname === '/api/agents') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(agentCatalog())); }
+    if (req.method === 'POST' && url.pathname === '/api/engine') {
+      let raw = '';
+      req.on('data', (d) => { raw += d; if (raw.length > 4000) req.destroy(); });
+      req.on('end', () => {
+        let body = null;
+        try { body = JSON.parse(raw); } catch { body = null; }
+        const info = switchEngine(body);
+        if (!info) { res.writeHead(404); return res.end(); }
+        res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(info));
+      });
+      return;
+    }
     // requested flows are saved next to the map; build.mjs folds them into graph.json
     if (url.pathname === '/api/flows') {
       if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ flows: readFlows() })); }

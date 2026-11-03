@@ -57,7 +57,7 @@ Nothing is sent unless you click **Notify me**.
 - Click **Don't ask again**, or
 - set the environment variable `FLOORPLAN_NO_PROMPTS=1`.
 
-Your answer is kept in `~/.floorplan/settings.json`.
+Your answer is kept in `~/.floorplan/settings.json`. The same file can remember which agent the Ask bar uses: Claude Code, Codex, or a known ACP name (or `zed:<name>`). It never stores a command.
 
 **How the service is protected:** its address is in Floorplan's public code, so it's built to be harmless if abused.
 - It only accepts new sign-ups, and never returns anything from the list.

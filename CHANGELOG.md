@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Ask through an ACP agent** (from @HShaebi11): the map can answer through a known agent that speaks the Agent Client Protocol — Gemini, OpenCode, Devin, or the Claude Code and Codex adapters — or an agent already set up in Zed. Each known agent is started in its own read-only mode where it has one. A custom command is only what you type with `--acp` when you start the server, never a command chosen from the map or from saved settings. If the agent isn't signed in, the map says so instead of trying every sign-in method. Changing a blueprint from the map stays off for these agents. See [ACP agents](docs/acp.md).
+- **Pick the agent from the Ask bar** (from @HShaebi11): the name on the Ask bar opens a menu of Claude Code, Codex, and the ACP agents the server can find, including Zed's as `zed:<name>`. Choosing one switches every open tab. A star remembers the default in `~/.floorplan/settings.json` (the engine, and a known name). A `--engine` or `--acp` flag on the server command still wins when the server starts. Change stays hidden for an ACP agent and comes back for Claude Code or Codex.
 
 ## 0.6.3 (2026-11-02)
 

@@ -413,6 +413,20 @@ body.no-panel #panel-resize { opacity: 0; pointer-events: none; }
 .engine.ok i { background: var(--ok); box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 80%, transparent); }
 .engine.warn { color: var(--warn-text); background: var(--warn-bg); }
 .engine.warn i { background: var(--sev-medium); }
+button.engine { border: 0; font: inherit; cursor: pointer; }
+#ask-form .rel { flex: none; }
+#engmenu { bottom: calc(100% + 10px); right: 0; width: min(290px, calc(100vw - 24px)); max-height: min(360px, 50vh); overflow: auto; transform-origin: bottom right; }
+#engmenu .r { padding: 9px 12px; border-radius: 12px; cursor: pointer; transition: background .15s var(--ease); }
+#engmenu .r:hover { background: rgba(var(--ink), .07); }
+#engmenu .r b { font-weight: 500; display: block; }
+#engmenu .r.pick { display: flex; align-items: center; gap: 6px; }
+#engmenu .r.pick b { flex: 1; min-width: 0; }
+#engmenu .def { border: 0; background: none; color: var(--text-4); border-radius: 999px; width: 26px; height: 26px; display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .15s var(--ease), color .15s var(--ease); flex: none; }
+#engmenu .r:hover .def, #engmenu .def.on { opacity: 1; }
+#engmenu .def:hover, #engmenu .def.on { color: var(--sev-medium); }
+#engmenu .def.on svg { fill: currentColor; }
+@keyframes menuInUp { from { opacity: 0; transform: translateY(4px) scale(.97); } }
+#engmenu.menu.open { animation: menuInUp .22s var(--ease); }
 .einfo { background: none; border: 0; padding: 0; margin-left: 1px; color: var(--text-3); cursor: pointer; display: grid; }
 .einfo:hover { color: var(--text); }
 .einfo svg { width: 14px; height: 14px; }
@@ -571,7 +585,7 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
     <form id="ask-form" class="glass" autocomplete="off">
       <span id="ask-chips"></span>
       <input id="ask-input" placeholder="Ask anything about this codebase…" spellcheck="false">
-      <span class="engine" id="ask-engine"><i></i>checking…</span>
+      <span class="rel"><button type="button" class="engine" id="ask-engine" aria-haspopup="menu" aria-expanded="false"><i></i>checking…</button><div id="engmenu" class="menu glass" role="menu"></div></span>
       <button id="ask-send" type="submit" title="Ask" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
     </form>
   </div>
@@ -613,16 +627,20 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
 (() => {
 'use strict';
 const G = window.FLOORPLAN;
-// who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map
-const agentId = window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent;
-const AGENT = agentId === 'codex'
-  ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
-      signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
-  : agentId === 'acp'
-    ? { id: 'acp', name: window.FLOORPLAN_SERVER?.name || 'your agent', app: window.FLOORPLAN_SERVER?.name || 'your agent', cli: window.FLOORPLAN_SERVER?.name || 'your ACP agent', docs: 'https://agentclientprotocol.com',
-        signIn: 'Sign in to that agent the way it asks, then ask again.' }
-    : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
-        signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
+// who answers questions and takes "Fix with …" prompts: the engine the map server runs, else the agent that built the map
+const AGENTS = {
+  claude: { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
+    signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' },
+  codex: { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
+    signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' },
+};
+function agentEntry() {
+  const id = window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent;
+  if (id === 'codex') return AGENTS.codex;
+  if (id === 'acp') return { id: 'acp', name: window.FLOORPLAN_SERVER?.name || 'your agent', app: window.FLOORPLAN_SERVER?.name || 'your agent', cli: window.FLOORPLAN_SERVER?.name || 'your ACP agent', docs: 'https://agentclientprotocol.com', signIn: 'Sign in to that agent the way it asks, then ask again.' };
+  return AGENTS.claude;
+}
+const AGENT = agentEntry();
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
 if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.mjs.</p>'; return; }
 // a blueprint: planned from a PRD, so its files don't exist yet (no line counts, nothing to open in an editor)
@@ -1811,6 +1829,7 @@ async function loadCustomFlows() {
   const reload = () => { toast('Map updated'); setTimeout(() => location.reload(), 500); };
   const es = new EventSource('/api/events?token=' + encodeURIComponent(S.token));
   es.addEventListener('reload', reload);
+  es.addEventListener('engine', (e) => { try { applyEngine(JSON.parse(e.data)); } catch {} });
   es.onerror = () => {
     if (es.readyState !== EventSource.CLOSED) return; // a dropped connection retries on its own
     // every second at first (a restart takes about that long), then every 5s, for up to 30 minutes
@@ -1851,7 +1870,7 @@ const legendEl = $('#legend');
 $('#flows-btn').onclick = (ev) => { ev.stopPropagation(); legendEl.classList.remove('open'); fm.classList.toggle('open'); };
 $('#filters-btn').onclick = (ev) => { ev.stopPropagation(); fm.classList.remove('open'); legendEl.classList.toggle('open'); };
 legendEl.addEventListener('click', (ev) => ev.stopPropagation());
-window.addEventListener('click', () => { fm.classList.remove('open'); legendEl.classList.remove('open'); });
+window.addEventListener('click', () => { fm.classList.remove('open'); legendEl.classList.remove('open'); $('#engmenu')?.classList.remove('open'); const pill = $('#ask-engine'); if (pill) pill.setAttribute('aria-expanded', 'false'); });
 function startFlow(id) { const f = G.flows.find((x) => x.id === id); if (!f) return; state.flow = { f, i: 0 }; flowStep(); }
 function stopFlow() { state.flow = null; document.body.classList.remove('in-flow'); $('#flowbar').hidden = true; vp.querySelectorAll('.flowfx').forEach((x) => x.remove()); select(null); }
 function lcaContainer(a, b) {
@@ -1902,14 +1921,20 @@ const Q = createGraphQuery(G);
 const askState = { engine: null, sample: null, busy: false, ctl: null, session: null, turns: [], last: null };
 const askInput = $('#ask-input'), askSend = $('#ask-send'), sheet = $('#ask-sheet'), warn = $('#ask-warn');
 const DOCS = 'https://docs.claude.com/en/docs/claude-code/overview'; // the Claude app's tip: install the CLI
-const WARNINGS = {
-  no_engine: `Asking needs <b>${AGENT.cli}</b>. From the codebase root run <code>node floorplan/serve.mjs</code>${AGENT.id === 'claude' ? ', or open this map in the Claude app' : ''}.`,
-  cli_missing: `Requires <b>${AGENT.cli}</b> installed to work. <a href="${AGENT.docs}" target="_blank" rel="noopener">Install it</a>, then restart <code>serve.mjs</code>.`,
-  not_logged_in: `${Cap(AGENT.cli)} isn't signed in. ${AGENT.signIn}`,
-  app_unavailable: `Claude isn't available for this map in this view.`,
-  not_granted: `Claude access was declined for this map. Reload the page to be asked again.`,
-  cli_tip: `Install the <b>Claude Code CLI</b> for a better experience: it can read your source code, not just this map. <a href="${DOCS}" target="_blank" rel="noopener">Install it</a>, then run <code>node floorplan/serve.mjs</code> in the codebase.`,
-};
+let WARNINGS = {};
+// the agent can change while the map is open: rebuild the sentences that name it
+function refreshAgent() {
+  Object.assign(AGENT, agentEntry());
+  WARNINGS = {
+    no_engine: `Asking needs <b>${AGENT.cli}</b>. From the codebase root run <code>node floorplan/serve.mjs</code>${AGENT.id === 'claude' ? ', or open this map in the Claude app' : ''}.`,
+    cli_missing: `Requires <b>${AGENT.cli}</b> installed to work. <a href="${AGENT.docs}" target="_blank" rel="noopener">Install it</a>, then restart <code>serve.mjs</code>.`,
+    not_logged_in: `${Cap(AGENT.cli)} isn't signed in. ${AGENT.signIn}`,
+    app_unavailable: `Claude isn't available for this map in this view.`,
+    not_granted: `Claude access was declined for this map. Reload the page to be asked again.`,
+    cli_tip: `Install the <b>Claude Code CLI</b> for a better experience: it can read your source code, not just this map. <a href="${DOCS}" target="_blank" rel="noopener">Install it</a>, then run <code>node floorplan/serve.mjs</code> in the codebase.`,
+  };
+}
+refreshAgent();
 function setWarning(code) {
   warn.hidden = !code;
   warn.classList.toggle('info', code === 'cli_tip');
@@ -1923,7 +1948,7 @@ function setEngine(engine, label, warning) {
   const tag = $('#ask-engine');
   tag.className = 'engine ' + (engine ? 'ok' : 'warn');
   tag.innerHTML = `<i></i>${h(engine ? label : 'Unavailable')}${engine === 'app' ? `<button type="button" class="einfo" title="Install the Claude Code CLI for a better experience" aria-label="About the Claude Code CLI"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></button>` : ''}`;
-  tag.querySelector('.einfo')?.addEventListener('click', () => setWarning(warn.hidden || !warn.classList.contains('info') ? 'cli_tip' : null));
+  tag.querySelector('.einfo')?.addEventListener('click', (ev) => { ev.stopPropagation(); setWarning(warn.hidden || !warn.classList.contains('info') ? 'cli_tip' : null); });
   tag.title = engine === 'cli' ? `Answers come from ${AGENT.cli} on this computer, which can read the source` : engine === 'app' ? 'Answers come from Claude in the Claude app, using the map (not the source files)' : '';
   askInput.disabled = !engine;
   askSend.disabled = !engine;
@@ -1946,6 +1971,66 @@ async function detectEngine() {
   }
   setEngine(null, null, 'no_engine');
 }
+
+// ---------- engine picker: installed Claude Code and Codex, then ACP agents the server can find ----------
+const em = $('#engmenu');
+const engineApi = (p, body) => fetch('/api/' + p, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', 'x-floorplan-token': window.FLOORPLAN_SERVER.token }, ...(body ? { body: JSON.stringify(body) } : {}) }).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+function applyEngine(d) {
+  if (!d || d.error) return;
+  Object.assign(window.FLOORPLAN_SERVER, d);
+  askState.session = null;
+  askState.turns = [];
+  refreshAgent();
+  if (d.cli) setEngine('cli', AGENT.app + (d.model ? ' · ' + d.model : ''));
+  else setEngine(null, null, 'cli_missing');
+  renderPanel();
+}
+function enginePick(id) {
+  if (id === 'claude' || id === 'codex') return { engine: id };
+  if (id.startsWith('zed:')) return { engine: 'acp', acp: id };
+  if (id.startsWith('acp:')) return { engine: 'acp', acp: id.slice(4) };
+  return null;
+}
+function engineRowId(choice) {
+  if (!choice?.engine) return '';
+  if (choice.engine !== 'acp') return choice.engine;
+  if (!choice.acp) return '';
+  return choice.acp.startsWith('zed:') ? choice.acp : `acp:${choice.acp}`;
+}
+async function switchEngine(body) {
+  try { applyEngine(await engineApi('engine', body)); } catch {}
+  em.classList.remove('open');
+  $('#ask-engine').setAttribute('aria-expanded', 'false');
+}
+async function renderEngineMenu() {
+  em.innerHTML = '<div class="r"><b>Checking agents…</b></div>';
+  let data;
+  try { data = await engineApi('agents'); } catch { em.innerHTML = '<div class="r"><b>Could not reach the map server</b></div>'; return; }
+  const curId = engineRowId(data.current), defId = engineRowId(data.default);
+  const list = data.agents || [];
+  const star = 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z';
+  const row = (a) => `<div class="r pick" role="menuitem" data-id="${h(a.id)}"><b>${h(a.name)}${a.id === curId ? ' · in use' : ''}</b><button type="button" class="def${a.id === defId ? ' on' : ''}" data-def="${h(a.id)}" title="${a.id === defId ? 'Your default' : 'Make default'}" aria-label="${a.id === defId ? 'Your default' : 'Make default'}"><svg class="i" viewBox="0 0 24 24"><path d="${star}"/></svg></button></div>`;
+  const plugins = list.filter((a) => a.engine !== 'acp'), acps = list.filter((a) => a.engine === 'acp');
+  em.innerHTML = plugins.map(row).join('') + (plugins.length && acps.length ? '<div class="mi-sep"></div>' : '') + acps.map(row).join('')
+    || '<div class="r"><b>No agents found</b></div>';
+  em.querySelectorAll('[data-id]').forEach((r) => r.onclick = () => { const body = enginePick(r.dataset.id); if (body) switchEngine(body); });
+  em.querySelectorAll('[data-def]').forEach((b) => b.onclick = async (ev) => {
+    ev.stopPropagation();
+    const body = enginePick(b.dataset.def);
+    if (!body) return;
+    try { await engineApi('engine', { ...body, switch: false, persist: true }); } catch {}
+    renderEngineMenu();
+  });
+}
+$('#ask-engine').addEventListener('click', (ev) => {
+  ev.preventDefault(); ev.stopPropagation();
+  if (!window.FLOORPLAN_SERVER) return;
+  fm.classList.remove('open'); legendEl.classList.remove('open');
+  const open = em.classList.toggle('open');
+  $('#ask-engine').setAttribute('aria-expanded', String(open));
+  if (open) renderEngineMenu();
+});
+em.addEventListener('click', (ev) => ev.stopPropagation());
 
 // tiny markdown: paragraphs, lists, **bold**, `code`, [[id]] references
 function refChip(id) {
@@ -2040,7 +2125,12 @@ function setAskMode(m) {
   askSend.title = askState.busy ? 'Stop' : askState.mode === 'change' ? 'Make this change' : 'Ask';
 }
 function addModeSwitch() {
-  if (!canChange() || $('#ask-mode')) return;
+  if (!canChange()) {
+    $('#ask-mode')?.remove();
+    if (askState.mode === 'change') setAskMode('ask');
+    return;
+  }
+  if ($('#ask-mode')) return;
   const sw = document.createElement('span');
   sw.id = 'ask-mode';
   sw.innerHTML = '<button type="button" data-m="ask" title="Ask a question about the plan">Ask</button><button type="button" data-m="change" title="Ask for a change, addition or removal, and the map is redrawn">Change</button>';
@@ -2344,7 +2434,7 @@ window.Floorplan = Object.freeze({
   go, reveal, select, open, up, fit, render: (o) => render({ keepTransform: true, ...o }), refreshPanel: () => renderPanel(),
   showBoard, playFlow, startFlow, stopFlow: () => { if (state.flow) stopFlow(); },
   freeArea: () => freeArea(),
-  closeMenus: () => { closeMenu(); fm.classList.remove('open'); legendEl.classList.remove('open'); },
+  closeMenus: () => { closeMenu(); fm.classList.remove('open'); legendEl.classList.remove('open'); $('#engmenu')?.classList.remove('open'); },
   // asking
   addAskContext, ask: (text) => { closeSheet(); askInput.value = text; submitAsk(); }, askEngine: () => askState.engine,
   // a blueprint's Change mode: whether it's available here, and putting a request in the Ask bar to finish and send

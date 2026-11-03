@@ -17,6 +17,16 @@ node floorplan/serve.mjs --engine acp --acp gemini
 - **Auto-detect.** With `--engine acp` and no `--acp`, the server uses the first known agent it finds, then one from Zed, and says so when it starts. If it finds more than one, it names the others.
 - **A command you type.** `--acp 'some-agent --acp'` runs that command. This is only read from the command that starts the server (or `FLOORPLAN_ACP` in that same place). The map page cannot choose a command, and a command saved in `~/.floorplan/settings.json` is ignored.
 
+## Pick one from the map
+
+Click the agent name on the Ask bar. The menu lists Claude Code and Codex when they are installed, then a divider, then the ACP agents the server can find: Gemini, OpenCode, Devin, `claude-code-acp`, `claude-agent-acp`, `codex-acp`, and any Zed agent as `zed:<name>`.
+
+Choosing one switches the agent for every open tab. The star remembers that choice for next time, in `~/.floorplan/settings.json`: the engine (`claude`, `codex`, or `acp`) and, for ACP, a known name or `zed:<name>`. The file's other contents, including the Cloud waitlist answer, stay as they are. A command is never written there.
+
+A `--engine` or `--acp` flag on the command that started the server is used instead of that memory when the server starts. You can still switch from the menu for the rest of that run; starting the server again follows the flag.
+
+Change stays hidden while an ACP agent is answering, and comes back when you switch to Claude Code or Codex.
+
 `open.mjs --acp …` passes the same value through when it starts the server. `--model` is passed only to Devin, which accepts it.
 
 ## How read-only it is

@@ -257,7 +257,96 @@ test('an agent configured in Zed can be selected by name', async () => {
   }`);
   const s = await serve(acpEnv({ HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), FLOORPLAN_ACP: 'zed:Local' }));
   assert.equal(s.page.name, 'Local (ACP)');
+  const listed = await (await fetch(s.base + '/api/agents', { headers: { 'x-floorplan-token': s.token } })).json();
+  assert.ok(listed.agents.some((a) => a.id === 'zed:Local' && a.name === 'zed:Local' && a.acp === 'zed:Local'));
   const [answer] = pick(await ask(s, 'How do refunds work?'), 'answer');
   assert.equal(answer.title, 'Refunds');
   assert.equal(s.calls().some((c) => c.method === 'session/set_mode'), false);
+});
+
+test('the Ask bar switches a known agent, remembers that name, and a startup flag still wins', async () => {
+  const home = path.join(root, 'picker-home');
+  const settings = path.join(home, '.floorplan', 'settings.json');
+  fs.mkdirSync(path.dirname(settings), { recursive: true });
+  const baseEnv = {
+    HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'),
+    FLOORPLAN_ENGINE: '', FLOORPLAN_ACP: '',
+    FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'),
+    FLOORPLAN_CODEX: path.join(FAKE, 'fake-codex.mjs'),
+    FLOORPLAN_ACP_GEMINI: path.join(FAKE, 'fake-acp.mjs'),
+    FLOORPLAN_ACP_OPENCODE: path.join(FAKE, 'fake-acp.mjs'),
+    FLOORPLAN_ACP_DEVIN: '',
+  };
+  // a command string in settings is not an agent: it is never run, and the file is not rewritten.
+  // the engine id is still acp, so the server uses the first known agent it can find
+  fs.writeFileSync(settings, JSON.stringify({ cloud: { status: 'joined' }, agent: { engine: 'acp', acp: 'rm -rf / --danger' } }));
+  const ignored = await serve(baseEnv);
+  assert.equal(ignored.page.engine, 'acp');
+  assert.equal(ignored.page.name, 'Gemini (ACP)');
+  assert.equal(ignored.page.change, false);
+  await ask(ignored, 'How do refunds work?');
+  assert.deepEqual(ignored.calls()[0].argv, ['--approval-mode=plan', '--acp']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settings, 'utf8')), { cloud: { status: 'joined' }, agent: { engine: 'acp', acp: 'rm -rf / --danger' } });
+
+  fs.writeFileSync(settings, JSON.stringify({ cloud: { status: 'never' }, agent: { engine: 'acp', acp: 'opencode' } }, null, 2) + '\n');
+  const s = await serve(baseEnv);
+  assert.equal(s.page.engine, 'acp');
+  assert.equal(s.page.name, 'OpenCode (ACP)');
+  assert.equal(s.page.change, false);
+  const list = await (await fetch(s.base + '/api/agents', { headers: { 'x-floorplan-token': s.token } })).json();
+  const ids = list.agents.map((a) => a.id);
+  assert.deepEqual(ids.filter((id) => id === 'claude' || id === 'codex'), ['claude', 'codex']);
+  assert.ok(ids.indexOf('codex') < ids.indexOf('acp:opencode'));
+  assert.ok(ids.includes('acp:gemini') && ids.includes('acp:opencode'));
+  assert.equal(list.agents.some((a) => /rm\s/.test(JSON.stringify(a))), false);
+  assert.deepEqual(list.default, { engine: 'acp', acp: 'opencode' });
+
+  const headers = { 'content-type': 'application/json', 'x-floorplan-token': s.token };
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 8000);
+  const stream = await fetch(s.base + '/api/events?token=' + encodeURIComponent(s.token), { signal: ac.signal });
+  const reader = stream.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  const waited = (async () => {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error('events ended before the engine change');
+      buf += dec.decode(value);
+      const m = /event: engine\ndata: (.*)\n/.exec(buf);
+      if (m) return JSON.parse(m[1]);
+    }
+  })();
+  const switched = await (await fetch(s.base + '/api/engine', { method: 'POST', headers, body: JSON.stringify({ engine: 'claude' }) })).json();
+  assert.equal(switched.engine, 'claude');
+  assert.equal(switched.change, true);
+  assert.equal(switched.name, 'Claude Code CLI');
+  const ev = await waited;
+  clearTimeout(timer);
+  ac.abort();
+  assert.equal(ev.engine, 'claude');
+  assert.equal(ev.change, true);
+  const html = await (await fetch(s.base + '/')).text();
+  const again = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(html)[1]);
+  assert.equal(again.engine, 'claude');
+  assert.equal(again.change, true);
+  await ask(s, 'How do refunds work?');
+  assert.ok(s.calls().some((c) => c.args?.includes('-p')));
+
+  const star = await fetch(s.base + '/api/engine', { method: 'POST', headers, body: JSON.stringify({ engine: 'acp', acp: 'gemini', switch: false, persist: true }) });
+  assert.equal(star.status, 200);
+  const remembered = JSON.parse(fs.readFileSync(settings, 'utf8'));
+  assert.equal(remembered.cloud.status, 'never');
+  assert.deepEqual(remembered.agent, { engine: 'acp', acp: 'gemini' });
+  const still = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(await (await fetch(s.base + '/')).text())[1]);
+  assert.equal(still.engine, 'claude');
+
+  const refused = await fetch(s.base + '/api/engine', { method: 'POST', headers, body: JSON.stringify({ engine: 'acp', acp: 'rm -rf /', persist: true }) });
+  assert.equal(refused.status, 404);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settings, 'utf8')).agent, { engine: 'acp', acp: 'gemini' });
+
+  const flagged = await serve({ ...baseEnv, FLOORPLAN_ENGINE: 'acp', FLOORPLAN_ACP: 'devin', FLOORPLAN_ACP_DEVIN: path.join(FAKE, 'fake-acp.mjs') });
+  assert.equal(flagged.page.name, 'Devin (ACP)');
+  assert.equal(flagged.page.change, false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settings, 'utf8')).agent, { engine: 'acp', acp: 'gemini' });
 });

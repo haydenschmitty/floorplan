@@ -30,7 +30,7 @@ Asking questions on the map runs Claude Code, Codex, or an ACP agent you start w
 | `where` (Windows) or `which` | starting the map's server | Finding the Claude Code CLI, Codex, or a known ACP agent |
 | `claude` or `codex` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, or `codex exec --sandbox read-only` |
 | `gemini`, `opencode`, `devin`, `claude-code-acp`, `claude-agent-acp` or `codex-acp` | you start the server with `--engine acp` | Answering a question. Only these names are started on their own, plus an agent already configured in Zed, each in that agent's own read-only mode where it has one |
-| the command after `--acp` | you type `--acp '<command>'` when starting the server | Answering through some other ACP agent. The map page cannot choose this command, and it is not read back from saved settings |
+| the command after `--acp` | you type `--acp '<command>'` when starting the server | Answering through some other ACP agent. The Ask bar can switch to a known agent it finds, or one from Zed. It cannot choose this command, and a command is not read back from saved settings |
 | `node` | throughout | Running Floorplan's own scripts |
 | `cmd /c start`, `open` or `xdg-open` | opening the map | Opening the map's local address in your browser |
 
