@@ -1534,7 +1534,7 @@ function renderLegend(view) {
   }
   if (QUAL && Object.keys(QUAL.files).length) {
     const lab = document.createElement('label'); lab.className = 'tech' + (qualityShown ? '' : ' off');
-    lab.innerHTML = `<input type="checkbox" ${qualityShown ? 'checked' : ''}><span>Colour by code quality</span><span class="tog" style="margin-left:auto"></span>`;
+    lab.innerHTML = `<input type="checkbox" ${qualityShown ? 'checked' : ''}><span>Color by code quality</span><span class="tog" style="margin-left:auto"></span>`;
     lab.querySelector('input').onchange = (ev) => { setQualityShown(ev.target.checked); };
     L.appendChild(lab);
     if (qualityShown) L.insertAdjacentHTML('beforeend', '<div class="qkey"><i></i><span><b>Mostly good</b><b>Worth a look</b><b>High risk</b></span></div>');
