@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Swift apps get their connections:** Swift files used to show no links at all, because a Swift `import` names a module rather than a file. Now Floorplan reads every `Package.swift`, finds the folder of each target (its `path:`, or `Sources/<name>` and `Tests/<name>`), and links each file to the files that declare the types it uses, both in the modules it imports (including `@testable import`) and in its own module, where files use each other's types without importing anything. An Xcode app with no package counts as one module, so its folders link to each other too. Types nested inside another type and private ones are left out, so common names like `Kind` or `State` don't link unrelated files. Apple's frameworks are left off the map, and other packages (like Sparkle) show up as outside packages. Classes, structs, enums, protocols and actors are listed on each file's card.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

@@ -24,7 +24,7 @@ flowchart TD
 - **web requests** the code makes;
 - content **fingerprints**, so later updates can tell what changed.
 
-Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro files), Python, Go, Rust, Java, Kotlin, Scala and Groovy, with lighter support for others.
+Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro files), Python, Go, Rust, Java, Kotlin, Scala, Swift and Groovy, with lighter support for others.
 
 ## 2. Connecting requests to endpoints
 
