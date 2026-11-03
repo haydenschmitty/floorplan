@@ -12,12 +12,18 @@ const FAKE = path.join(REPO, 'tests', 'fixtures', 'fake-cli');
 let root;
 const servers = [];
 
+// Keep the machine's own ACP agents and ~/.floorplan/settings.json out of these tests.
+const ACP_OFF = {
+  FLOORPLAN_ACP: '', FLOORPLAN_ACP_GEMINI: '', FLOORPLAN_ACP_OPENCODE: '', FLOORPLAN_ACP_DEVIN: '',
+  FLOORPLAN_ACP_CLAUDE_CODE_ACP: '', FLOORPLAN_ACP_CLAUDE_AGENT_ACP: '', FLOORPLAN_ACP_CODEX_ACP: '',
+};
 /** Starts the map's server with these environment overrides; returns { base, token, page, log }. */
-async function serve(env) {
+async function serve(env = {}) {
   const log = path.join(root, `fake-${servers.length}.log`);
   const port = 20000 + Math.floor(Math.random() * 20000);
+  const home = env.HOME || path.join(root, `home-${servers.length}`);
   const server = spawn(process.execPath, [path.join(root, 'floorplan', 'serve.mjs'), '--port', String(port), '--no-open'], {
-    cwd: root, env: { ...process.env, FLOORPLAN_NO_PROMPTS: '1', FLOORPLAN_ENGINE: '', FAKE_LOG: log, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: { ...process.env, ...ACP_OFF, HOME: home, USERPROFILE: env.USERPROFILE || home, XDG_CONFIG_HOME: env.XDG_CONFIG_HOME || path.join(home, '.config'), FLOORPLAN_NO_PROMPTS: '1', FLOORPLAN_ENGINE: '', FAKE_LOG: log, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   servers.push(server);
   const base = await new Promise((resolve, reject) => {
@@ -143,4 +149,115 @@ test('on Windows, a Claude Code npm install with only bin/claude.exe is found an
   const s = await serve({ FLOORPLAN_CLAUDE: path.join(npm, 'claude'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli') });
   assert.equal(s.page.engine, 'claude');
   assert.equal(s.page.version, process.version);
+});
+
+const acpEnv = (extra = {}) => ({
+  FLOORPLAN_ENGINE: 'acp',
+  FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'),
+  FLOORPLAN_CODEX: path.join(root, 'no-such-cli'),
+  ...extra,
+});
+
+test('an ACP agent answers over the protocol, kept to the codebase, and never has its sign-in methods tried', async () => {
+  const s = await serve(acpEnv({ FLOORPLAN_ACP: path.join(FAKE, 'fake-acp.mjs') }));
+  assert.equal(s.page.engine, 'acp');
+  assert.equal(s.page.cli, true);
+  assert.equal(s.page.change, false);
+  const events = await ask(s, 'How do refunds work?');
+  assert.deepEqual(pick(events, 'progress').map((p) => p.text), ['Searching the map for "refund"']);
+  const [answer] = pick(events, 'answer');
+  assert.equal(answer.title, 'Refunds');
+  assert.deepEqual(answer.items.map((i) => i.id), ['f:shop-api/routes/orders.js']);
+  assert.match(answer.session, /^[0-9a-f]{16}$/);
+
+  const calls = s.calls();
+  assert.equal(calls.some((c) => c.method === 'authenticate'), false);
+  const init = calls.find((c) => c.method === 'initialize');
+  assert.equal(init.params.protocolVersion, 1);
+  assert.equal(init.params.clientCapabilities.fs.writeTextFile, false);
+  const session = calls.find((c) => c.method === 'session/new');
+  assert.equal(fs.realpathSync(session.params.cwd), fs.realpathSync(root));
+  const prompt = calls.find((c) => c.method === 'session/prompt');
+  assert.match(prompt.params.prompt[0].text, /How do refunds work\?/);
+  assert.equal(calls.some((c) => c.method === 'session/set_mode'), false); // a custom command has no known read-only mode
+
+  const { probes } = calls.find((c) => c.probes);
+  assert.equal(probes.readInside.ok, true);
+  assert.equal(probes.readOutside.ok, false);
+  assert.equal(probes.write.ok, false);
+  assert.equal(probes.dangerous.ok, false);
+  assert.equal(probes.terminal.exit.exitCode, 0);
+  assert.ok(probes.terminal.out > 0);
+  assert.equal(probes.permission.result.outcome.optionId, 'r');
+  assert.equal(probes.fetch.result.outcome.optionId, 'r');
+  assert.equal(probes.readKind.result.outcome.optionId, 'r');
+  assert.equal(probes.queryPermit.result.outcome.optionId, 'a');
+});
+
+test('a follow-up ACP question carries the conversation so far', async () => {
+  const s = await serve(acpEnv({ FLOORPLAN_ACP: path.join(FAKE, 'fake-acp.mjs') }));
+  const [first] = pick(await ask(s, 'How do refunds work?'), 'answer');
+  const [second] = pick(await ask(s, 'Who can ask for one?', first.session), 'answer');
+  assert.equal(second.session, first.session);
+  const prompts = s.calls().filter((c) => c.method === 'session/prompt').map((c) => c.params.prompt[0].text);
+  assert.doesNotMatch(prompts[0], /Earlier in this conversation/);
+  assert.match(prompts[1], /Earlier in this conversation:\nQ: How do refunds work\?\nA: Refunds go through/);
+});
+
+test('a signed-out ACP agent is told what is missing, without a sign-in method being tried', async () => {
+  const s = await serve(acpEnv({ FLOORPLAN_ACP: 'gemini', FLOORPLAN_ACP_GEMINI: path.join(FAKE, 'fake-acp.mjs') }));
+  const [failure] = pick(await ask(s, 'SIGNED-OUT question'), 'failure');
+  assert.equal(failure.code, 'not_logged_in');
+  assert.match(failure.message, /isn't signed in/);
+  assert.match(failure.message, /Log in with Google/);
+  assert.match(failure.message, /API key/);
+  assert.match(failure.message, /Run `gemini`/);
+  assert.equal(s.calls().some((c) => c.method === 'authenticate'), false);
+});
+
+test('a known ACP agent is launched in its own read-only mode, and a saved command is never run', async () => {
+  const home = path.join(root, 'saved-home');
+  fs.mkdirSync(path.join(home, '.floorplan'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.floorplan', 'settings.json'), JSON.stringify({ agent: { engine: 'acp', acp: 'rm -rf / --danger' } }));
+  const ignored = await serve(acpEnv({ HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config') }));
+  assert.equal(ignored.page.cli, false);
+  assert.equal(ignored.page.want, 'acp');
+  const [missing] = pick(await ask(ignored, 'Anything?'), 'failure');
+  assert.equal(missing.code, 'cli_missing');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.floorplan', 'settings.json'), 'utf8')).agent.acp, 'rm -rf / --danger');
+
+  const gemini = await serve(acpEnv({ FLOORPLAN_ACP: 'gemini', FLOORPLAN_ACP_GEMINI: path.join(FAKE, 'fake-acp.mjs'), FLOORPLAN_MODEL: 'opus' }));
+  assert.equal(gemini.page.name, 'Gemini (ACP)');
+  assert.equal(gemini.page.change, false);
+  await ask(gemini, 'How do refunds work?');
+  const geminiLog = gemini.calls();
+  assert.deepEqual(geminiLog[0].argv, ['--approval-mode=plan', '--acp']);
+  assert.equal(geminiLog.find((c) => c.method === 'session/set_mode').params.modeId, 'plan');
+
+  const devin = await serve(acpEnv({ FLOORPLAN_ACP: 'devin', FLOORPLAN_ACP_DEVIN: path.join(FAKE, 'fake-acp.mjs'), FLOORPLAN_MODEL: 'opus' }));
+  await ask(devin, 'How do refunds work?');
+  assert.deepEqual(devin.calls()[0].argv, ['acp', '--model', 'opus']);
+
+  const codex = await serve(acpEnv({ FLOORPLAN_ACP: 'codex-acp', FLOORPLAN_ACP_CODEX_ACP: path.join(FAKE, 'fake-acp.mjs') }));
+  await ask(codex, 'How do refunds work?');
+  assert.equal(codex.calls()[0].readOnlyMode, 'read-only');
+  assert.equal(codex.calls().find((c) => c.method === 'session/set_mode').params.modeId, 'read-only');
+
+  const refused = await fetch(gemini.base + '/api/engine', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': gemini.token }, body: JSON.stringify({ engine: 'acp', acp: 'rm -rf /', persist: true }) });
+  assert.equal(refused.status, 404);
+});
+
+test('an agent configured in Zed can be selected by name', async () => {
+  const home = path.join(root, 'zed-home');
+  const zed = path.join(home, '.config', 'zed');
+  fs.mkdirSync(zed, { recursive: true });
+  fs.writeFileSync(path.join(zed, 'settings.json'), `{
+    // a local agent
+    "agent_servers": { "Local": { "command": ${JSON.stringify(path.join(FAKE, 'fake-acp.mjs'))}, "args": [] } }
+  }`);
+  const s = await serve(acpEnv({ HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'), FLOORPLAN_ACP: 'zed:Local' }));
+  assert.equal(s.page.name, 'Local (ACP)');
+  const [answer] = pick(await ask(s, 'How do refunds work?'), 'answer');
+  assert.equal(answer.title, 'Refunds');
+  assert.equal(s.calls().some((c) => c.method === 'session/set_mode'), false);
 });
