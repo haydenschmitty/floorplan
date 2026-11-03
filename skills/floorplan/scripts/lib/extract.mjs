@@ -12,13 +12,72 @@ const lineIndex = (src) => {
 };
 
 const blank = (s) => s.replace(/[^\n]/g, ' ');
-// Strip comments while keeping offsets (so line numbers stay right).
-const stripCStyle = (src) => src
-  .replace(/\/\*[\s\S]*?\*\//g, blank)
-  .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, pre) => pre + blank(m.slice(pre.length)));
+// Strip comments while keeping offsets (so line numbers stay right). Strings are stepped over, so a
+// '/*' inside one (app.use('/api/*', cors())) doesn't start a comment that swallows the code after it.
+const stripCStyle = (src) => {
+  let out = '';
+  for (let i = 0; i < src.length;) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      // quotes end at the line's end, backticks can span lines
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && (c === '`' || src[j] !== '\n')) j += src[j] === '\\' ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    let end = -1;
+    if (c === '/' && src[i + 1] === '*') { end = src.indexOf('*/', i + 2); if (end >= 0) end += 2; }
+    else if (c === '/' && src[i + 1] === '/' && !/[:\\]/.test(src[i - 1] || '')) { end = src.indexOf('\n', i); if (end < 0) end = src.length; }
+    if (end >= 0) { out += blank(src.slice(i, end)); i = end; continue; }
+    out += c;
+    i++;
+  }
+  return out;
+};
 const stripHash = (src) => src.replace(/(^|\s)#[^\n]*/g, (m, pre) => pre + blank(m.slice(pre.length)));
 
 const all = (re, s) => [...s.matchAll(re)];
+
+// ---------- route tables keyed by "METHOD /path" ----------
+
+// Servers without a framework often keep their endpoints in a lookup keyed by method and path, and
+// a dispatcher picks the handler: { "GET /api/orders": listOrders } in JS, or
+// { "POST /v1/claim": claim_draft, "GET /v1/paths/{slug}": lambda e, s: get_path(s, e) } in Python.
+// There's no app.get(...) to find, so these keys are the endpoints. A value counts when it names a
+// function (`listOrders`, `oauth.register`), is a short inline function that calls one, or wraps one
+// (`requireAuth(listOrders)`). Tables of other things keyed the same way (access levels, docs, status
+// codes, ALL_CAPS constants) are left alone, and a file needs two such entries before they count.
+const TABLE_KEY = /^[ \t]*["'`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|ANY|ALL)[ \t]+(\/[^"'`\s]*)["'`][ \t]*:[ \t]*([^\n]*)/gm;
+const NOT_A_HANDLER = /^(?:[A-Z][A-Z0-9_]*|true|false|null|undefined|None|True|False|await|new|return|lambda|function|async)$/;
+
+function tableHandler(raw) {
+  const v = raw.trim().replace(/,\s*$/, '').trim();
+  const last = (dotted) => dotted.split('.').pop();
+  const ref = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.exec(v);
+  if (ref) return NOT_A_HANDLER.test(last(v)) ? null : { handler: last(v) };
+  // lambda e, s: get_path(s, e)  ·  (req) => getPath(req)  ·  async function (req) { return getPath(req) }
+  const inline = /^(?:lambda\b[^:]*:|(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|(?:async\s+)?function\b[^{]*\{)([\s\S]*)$/.exec(v);
+  if (inline) {
+    const call = [...inline[1].matchAll(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g)].map((m) => last(m[1])).find((n) => !NOT_A_HANDLER.test(n));
+    return { handler: call || null };
+  }
+  // requireAuth(listOrders), login_required(views.orders): the wrapped function is the handler
+  const wrap = /^[A-Za-z_$][\w$.]*\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*[,)]/.exec(v);
+  if (wrap && !NOT_A_HANDLER.test(last(wrap[1]))) return { handler: last(wrap[1]) };
+  return null; // a string, number, object, list, or a call on a constant: not a route table
+}
+
+function keyedRouteTable(code, at) {
+  const out = [];
+  for (const m of all(TABLE_KEY, code)) {
+    const h = tableHandler(m[3]);
+    if (!h) continue;
+    const method = m[1] === 'ALL' ? 'ANY' : m[1];
+    out.push({ method, path: m[2], var: null, line: at(m.index), framework: 'table', ...(h.handler ? { handler: h.handler } : {}) });
+  }
+  return out.length >= 2 ? out : [];
+}
 
 // ---------- HTTP call literals ----------
 
@@ -193,6 +252,16 @@ function extractJs(src, filePath) {
     const args = m[4].replace(/\)\s*$/, '').split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][\w$.]*$/.test(s));
     if (args.length) mounts.push({ prefix: m[3], var: args[args.length - 1], line: at(m.index), ...(args.length > 1 ? { mw: args.slice(0, -1).map((s) => s.split('.').pop()) } : {}) });
   }
+  // Fastify plugins: app.register(ticketRoutes, { prefix: '/api/tickets' }), or register(import('./x.js'), …).
+  // A plugin registered with no prefix still sits under its parent's, so it's a mount with an empty one.
+  // Only an imported plugin counts: one defined in this file would put its prefix on every route here.
+  for (const m of all(/\.register\(\s*(?:await\s+)?(?:(?:import|require)\(\s*["']([^"'\n]+)["']\s*\)|([A-Za-z_$][\w$]*))\s*(?:,\s*\{([^{}]*)\}\s*)?\)/g, code)) {
+    const opts = m[3] || '';
+    const prefix = /\bprefix\s*:\s*["'`](\/[^"'`$]*)["'`]/.exec(opts)?.[1] ?? (/\bprefix\s*:/.test(opts) ? null : '');
+    if (prefix == null) continue;
+    if (m[1]) mounts.push({ prefix, spec: m[1], line: at(m.index) });
+    else if (imports.some((i) => i.locals && Object.hasOwn(i.locals, m[2]))) mounts.push({ prefix, var: m[2], line: at(m.index) });
+  }
 
   // Next.js app/pages API routes, derived from the file path
   const next = /(?:^|\/)(?:src\/)?app\/(.*?)\/?route\.(?:t|j)sx?$/.exec(filePath) || /(?:^|\/)(?:src\/)?pages\/(api\/.*?)(?:\/index)?\.(?:t|j)sx?$/.exec(filePath);
@@ -202,9 +271,12 @@ function extractJs(src, filePath) {
     for (const method of methods.length ? methods : ['ANY']) routes.push({ method, path: p, var: null, line: 1, framework: 'next' });
   }
 
+  routes.push(...keyedRouteTable(code, at));
+
   const triggers = /firebase-functions/.test(code) ? firebaseFunctions(code, at, routes, mounts) : [];
 
-  const serverLine = /\b\w+\.(use|route)\(\s*["'`]\/|\b(?:app|server|fastify|hono|routes?|router|[a-z]+Router)\.(?:get|post|put|patch|delete|all|options|head)\(\s*["'`]\//;
+  // a mount's prefix (including Fastify's `prefix: '/api'` option, often on a line of its own) isn't a request
+  const serverLine = /\b\w+\.(use|route)\(\s*["'`]\/|\b(?:app|server|fastify|hono|routes?|router|[a-z]+Router)\.(?:get|post|put|patch|delete|all|options|head)\(\s*["'`]\/|\bprefix\s*:\s*["'`]\//;
   const { calls, hosts } = extractCalls(code, at, { skip: serverLine });
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
@@ -373,10 +445,16 @@ function extractPy(src) {
     }
     for (const method of methods) routes.push({ method, path: m[3], var: m[1], line: at(m.index) });
   }
+  routes.push(...keyedRouteTable(code, at));
   // Django urls.py
-  for (const m of all(/\b(?:re_)?path\(\s*r?["']([^"']*)["']\s*,\s*(?!include)/g, code)) routes.push({ method: 'ANY', path: '/' + m[1].replace(/^\^|\$$/g, ''), var: null, line: at(m.index), framework: 'django' });
+  for (const m of all(/\b(?:re_)?path\(\s*r?["']([^"']*)["']\s*,(?!\s*include\()/g, code)) routes.push({ method: 'ANY', path: '/' + m[1].replace(/^\^|\$$/g, ''), var: null, line: at(m.index), framework: 'django' });
 
   const mounts = [];
+  // path('api/orders/', include('orders.urls')): that module's urls sit under the prefix, and this file uses it
+  for (const m of all(/\b(?:re_)?path\(\s*r?["']([^"']*)["']\s*,\s*include\(\s*\(?\s*["']([\w.]+)["']/g, code)) {
+    imports.push({ spec: m[2], names: [], line: at(m.index) });
+    mounts.push({ spec: m[2], prefix: m[1].replace(/^\^|\$$/g, ''), line: at(m.index) });
+  }
   for (const m of all(/\b(register_blueprint|include_router|mount)\(\s*([A-Za-z_][\w.]*)/g, code)) {
     // the call's arguments, up to its own closing bracket: dependencies=[Depends(x)] holds brackets of its own
     let depth = 1, j = m.index + m[0].length;
@@ -583,6 +661,7 @@ function addDocs(src, lang, r) {
   const syms = (r.symbols || []).filter((s) => !fbNames.has(s.name)).sort((a, b) => a.line - b.line);
   for (const rt of r.routes || []) {
     if (rt.framework === 'next') { rt.handler = rt.method; continue; }
+    if (rt.framework === 'table') { const d = r.symbols?.find((s) => s.name === rt.handler)?.doc; if (d) rt.doc = d; continue; }
     if (rt.framework === 'firebase') { const d = r.symbols.find((s) => s.name === rt.handler)?.doc || commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     const h = syms.find((s) => s.line >= rt.line && s.line - rt.line <= 12);
     if (h) { rt.handler = h.name; if (h.doc) rt.doc = h.doc; }

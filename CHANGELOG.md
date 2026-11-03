@@ -4,6 +4,15 @@
 
 - **Quiz:** a new header button asks multiple-choice questions about the map, like "which part takes card payments?", and highlights the card that shows each answer, with a sentence on why. Choose the part of the app (it starts on what you're looking at), **Big picture**, **Details** or **Mixed**, and 5, 10, 20 or all questions; ones you haven't got right yet come first. Or type your own topic. The starter questions are written with the map; with the Ask bar connected, Claude or Codex writes more: on a topic you type, **Quiz me on this** from a card's right-click menu, **Recent work** to check you can explain a change, or just ask in the Ask bar ("quiz me on payments"). Exports keep the starter questions along with flows and the tour. Suggested and built by @WilltheRanger in #56.
 
+## 0.6.3 (2026-11-02)
+
+- **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.
+- **Fastify endpoints get their full address** (#30, from @secatech): a plugin mounted with `app.register(plugin, { prefix: '/api/tickets' })` now puts its endpoints under that prefix, including plugins registered inside other plugins and ones loaded with `import()` or `require()`. Before, every plugin's endpoints sat at the root (`GET /`, `GET /:id`), so the website's requests were often matched to the wrong part of the server.
+- **Django endpoints get their full address:** an app's `urls.py` included by the project (`path("api/orders/", include("orders.urls"))`) now puts its endpoints under that prefix, as `/api/orders/<int:pk>` rather than `/<int:pk>`, so the website's requests link to them. The include line itself is no longer listed as an endpoint, and the project's `urls.py` links to the app's. Fixed by @rudycelekli (#64).
+- **Code after a `/*` inside a string is read again:** a string such as `'/api/*'` (as in Hono's `app.use('/api/*', cors())`) was taken for the start of a comment, so every endpoint, import and web request from there to the next comment's end was missing from the map. Fixed by @rudycelekli (#61).
+- **Skill installation:** quote the YAML description so `npx skills add` can read it. Fixed by @Bl0ck154 (#25), and @Mason-Little sent the same fix.
+- **Blueprints in Codex:** the build report now says a blueprint is "planned, not built yet" in Codex too. Fixed by @owlahikit.
+
 ## 0.6.2 (2026-11-02)
 
 - **Far fewer false alarms in Health** (thanks to @samuelpullen15-droid, who reported 13 of them from one site with the new **Not a problem** button):
