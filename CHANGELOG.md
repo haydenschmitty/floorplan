@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Shopify themes** (from @turbo-42): a folder with a `layout/theme.liquid` is read as a theme, and its Liquid files are linked the way Shopify loads them, by name: `{% render %}` to snippets, `{% section %}` and `{% sections %}` to sections and section groups, `{% content_for 'block' %}` to theme blocks and `asset_url` to assets. JSON templates and section groups use the sections and theme blocks they list, including Liquid typed into custom-code settings. Before, a theme's Liquid files weren't read at all, so a theme's map had almost nothing on it. Apps added as app blocks or embeds show up as outside services, each template is a page on the **Screens** list (alternate templates opened with `?view=`), snippets and sections show their `{% doc %}` or comment descriptions and their schema's blocks, and Health lists snippets nothing renders.
+- **Shopify themes** (#80, from @turbo-42): a folder with a `layout/theme.liquid` is read as a theme, and its Liquid files are linked the way Shopify loads them, by name: `{% render %}` to snippets, `{% section %}` and `{% sections %}` to sections and section groups, `{% content_for 'block' %}` to theme blocks and `asset_url` to assets. JSON templates and section groups use the sections and theme blocks they list, including Liquid typed into custom-code settings. Before, a theme's Liquid files weren't read at all, so a theme's map had almost nothing on it. Apps added as app blocks or embeds show up as outside services, each template is a page on the **Screens** list (alternate templates opened with `?view=`), snippets and sections show their `{% doc %}` or comment descriptions and their schema's blocks, and Health lists snippets nothing renders.
 
 ## 0.6.3 (2026-11-02)
 
