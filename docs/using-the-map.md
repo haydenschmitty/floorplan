@@ -106,7 +106,7 @@ Guided walkthroughs of the app's main jobs, like "Checkout" or "Sign up". A flow
 
 <img src="images/ask.png" alt="An answer board with numbered cards and a written walkthrough">
 
-Type into the Ask bar at the bottom and press **Enter**. Claude or Codex answers in a few sentences and shows an **answer board**: just the cards involved, how they connect, a short note on each, and a numbered walkthrough when the answer is a sequence. Follow-up suggestions appear under the answer. **Back to map** returns to where you were.
+Type into the Ask bar at the bottom and press **Enter**. Claude or Codex answers in a few sentences and shows an **answer board**: just the cards involved, how they connect, a short note on each, and a numbered walkthrough when the answer is a sequence. Follow-up suggestions appear under the answer. **Back to map** returns to where you were. The same bar can answer through an [ACP agent](acp.md) such as Gemini. That agent is started in its own read-only mode where it has one; how strictly it keeps to that depends on the agent, and Change isn't offered.
 
 - **Right-click → Ask about this** on any card or line adds it to your question as context.
 - The label in the bar shows what's answering. **Claude Code** means the Claude Code CLI and **Codex** means Codex, both running on your computer and able to read your source code. **Claude** means the map was opened in the Claude app, which answers from the map alone.

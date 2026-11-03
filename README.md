@@ -250,7 +250,7 @@ A `floorplan/` folder holding the map. In Claude Code, if you say yes, it also a
 
 - The scan, the map and its small local server all run on your computer. The server only accepts connections from your own machine.
 - No dependencies or install scripts, and the map works offline: its layout engine and fonts are built in.
-- Questions on the map go to your own account, through the Claude Code CLI or Codex, which can read your code but not change it.
+- Questions on the map go to your own account, through the Claude Code CLI or Codex, which can read your code but not change it. A known [ACP agent](docs/acp.md) can answer too; how read-only that is depends on the agent.
 - The Health check never stores or shows secret values, only where they are.
 - No analytics or tracking. The map may ask once whether you'd like an email when Floorplan Cloud launches. Nothing is sent unless you sign up, and then only your email and "just me" or "with my team".
 
@@ -262,6 +262,7 @@ More in [Privacy and security](docs/privacy-and-security.md). Wondering whether 
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, first map, updating, planning from a PRD, removing |
 | [Floorplan in Codex](docs/codex.md) | Installing and using it in Codex |
+| [ACP agents](docs/acp.md) | Ask through Gemini, OpenCode, Devin, or another ACP agent |
 | [Using the map](docs/using-the-map.md) | Every button, view, shortcut and menu |
 | [How it works](docs/how-it-works.md) | The pipeline, connection matching, refreshes |
 | [What's in your project](docs/project-files.md) | Every file Floorplan creates, and how to edit it |

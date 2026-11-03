@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Ask through an ACP agent** (from @HShaebi11): the map can answer through a known agent that speaks the Agent Client Protocol — Gemini, OpenCode, Devin, or the Claude Code and Codex adapters — or an agent already set up in Zed. Each known agent is started in its own read-only mode where it has one. A custom command is only what you type with `--acp` when you start the server, never a command chosen from the map or from saved settings. If the agent isn't signed in, the map says so instead of trying every sign-in method. Changing a blueprint from the map stays off for these agents. See [ACP agents](docs/acp.md).
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

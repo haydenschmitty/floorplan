@@ -15,7 +15,7 @@ before(async () => {
   const port = 20000 + Math.floor(Math.random() * 20000);
   // no Claude Code or Codex CLI and no waitlist card: this only exercises the server itself
   server = spawn(process.execPath, [path.join(root, 'floorplan', 'serve.mjs'), '--port', String(port), '--no-open'], {
-    cwd: root, env: { ...process.env, FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_NO_PROMPTS: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: { ...process.env, HOME: path.join(root, 'home'), USERPROFILE: path.join(root, 'home'), XDG_CONFIG_HOME: path.join(root, 'home', '.config'), FLOORPLAN_ACP: '', FLOORPLAN_ACP_GEMINI: '', FLOORPLAN_ACP_OPENCODE: '', FLOORPLAN_ACP_DEVIN: '', FLOORPLAN_ACP_CLAUDE_CODE_ACP: '', FLOORPLAN_ACP_CLAUDE_AGENT_ACP: '', FLOORPLAN_ACP_CODEX_ACP: '', FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_NO_PROMPTS: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   base = await new Promise((resolve, reject) => {
     let out = '';
