@@ -1241,7 +1241,7 @@ export function buildHealth({ graph, scan, arch, root }) {
   for (const fl of graph.flows || []) for (const s of fl.steps || []) if (s.ref?.startsWith('f:')) entry.add(s.ref.slice(2));
   const candidates = graph.files.filter((f) => {
     if (incoming.has(f.p) || entry.has(f.p) || routeFiles.has(f.p) || !USED_LANGS.has(f.l)) return false;
-    // in a theme, Shopify loads layouts, templates and sections by name, and the editor can add any theme block
+    // Shopify loads a theme's layouts, templates, sections and blocks by name
     if (f.l === 'liquid' && !/(^|\/)snippets\//.test(f.p)) return false;
     if (TEST_FILE.test(f.p) || SPECIAL_FILE.test(f.p) || /(^|\/)app\/.*\/(page|layout|route|loading|error|template|default)\.[jt]sx?$/.test(f.p)) return false;
     if (/(^|\/)src\/routes\//.test(f.p) && /\+|\$|\[/.test(f.p.split('/').pop())) return false;

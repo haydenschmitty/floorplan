@@ -79,11 +79,9 @@ const LANG_BY_EXT = {
   '.css': 'css', '.scss': 'css', '.sass': 'css', '.less': 'css',
   '.html': 'html', '.htm': 'html', '.ejs': 'html', '.hbs': 'html', '.jinja': 'html', '.j2': 'html', '.njk': 'html',
 };
-// Inside a Shopify theme, Liquid files and the JSON templates, section groups and settings_data (which lists the
-// app embeds) are read as 'liquid': they say which sections, snippets and apps a page is built from
 const THEME_JSON = /^(templates\/(customers\/|metaobject\/)?[^/]+|sections\/[^/]+|config\/settings_data)\.json$/;
 const THEME_FILE = 'layout/theme.liquid';
-/** Folders holding a Shopify theme, as path prefixes ('' for the root): every theme has a layout/theme.liquid. */
+/** Shopify theme folders as path prefixes ('' for the root): every theme has a layout/theme.liquid. */
 export const themeRoots = (paths) => new Set(paths.filter((p) => p === THEME_FILE || p.endsWith('/' + THEME_FILE)).map((p) => p.slice(0, -THEME_FILE.length)));
 const CONFIG_EXT = new Set(['.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.xml', '.gradle', '.properties', '.env']);
 const CONFIG_NAMES = /^(dockerfile.*|makefile|procfile|justfile|\.env\..*|\.?[\w-]*rc|gemfile|rakefile|cargo\.toml|go\.mod|pyproject\.toml|setup\.cfg|requirements.*\.txt)$/i;
@@ -140,7 +138,6 @@ export function mapDir(root, { migrate = true } = {}) {
 /** Extra directories skipped when walking outside of git (where .gitignore can't help). */
 export const WALK_IGNORE_DIRS = new Set([...HARD_IGNORE_DIRS, 'dist', 'build', 'out', 'target', 'coverage', '.cache', 'vendor', 'bin', 'obj', 'env', '.vscode', '.claude']);
 
-/** `themes`: the Shopify theme folders in the codebase (themeRoots), whose Liquid and page JSON are read as 'liquid'. */
 export function classify(relPath, bytes, { themes } = {}) {
   const base = path.posix.basename(relPath).toLowerCase();
   const ext = path.posix.extname(base);

@@ -237,14 +237,13 @@ export function createResolver(root, files) {
     return { unresolved: true };
   };
 
-  // ---- Shopify themes: extract.mjs already turned names into paths ----
+  // ---- Shopify themes ----
   const resolveLiquid = (from, imp) => {
     const app = /^shopify:\/\/apps\/([\w-]+)/.exec(imp.spec);
     if (app) return { external: app[1], eco: 'shopify-app' };
     const p = P.normalize(P.join(P.dirname(from), imp.spec));
-    for (const c of [p, p + '.liquid']) if (fileSet.has(c)) return { file: c }; // 'theme.css' | asset_url is served from theme.css.liquid
-    // a block type with no file in blocks/ is defined in its section's schema: no edge, and not a miss
-    return imp.kind === 'theme-block' ? { builtin: true } : { unresolved: true };
+    for (const c of [p, p + '.liquid']) if (fileSet.has(c)) return { file: c };
+    return imp.kind === 'theme-block' ? { builtin: true } : { unresolved: true }; // a block from its section's schema has no file
   };
 
   return function resolve(file, imp) {

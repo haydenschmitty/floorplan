@@ -1,7 +1,5 @@
-// Shopify themes: Liquid files reach each other by name ({% render %}, {% section %}, {% sections %},
-// asset_url), JSON templates list their sections and blocks by type, apps show up as shopify://apps/… blocks,
-// and each template is a storefront page on the Screens list. Only inside a theme (a folder with
-// layout/theme.liquid): elsewhere .liquid files and templates/*.json are left as they were.
+// Shopify themes: Liquid files and JSON templates linked by name, apps as packages, templates as Screens.
+// Only inside a folder with layout/theme.liquid; elsewhere .liquid and templates/*.json are left as they were.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,7 +9,7 @@ import { lib, makeProject, run, readJson, readGraph, cleanup } from './helpers.m
 const { extract } = await lib('extract.mjs');
 const { classify, themeRoots } = await lib('common.mjs');
 
-// A theme in its own folder beside the app's server, the way a monorepo often keeps one
+// a theme beside a server, as in a monorepo
 const THEME = {
   'storefront/layout/theme.liquid': [
     `<link href="{{ 'theme.css' | asset_url }}" rel="stylesheet">`,

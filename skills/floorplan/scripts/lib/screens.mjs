@@ -22,8 +22,7 @@ const JS_LANGS = new Set(['typescript', 'javascript', 'vue', 'svelte', 'astro'])
 
 // ======================= scan side =======================
 
-// Shopify themes: each template is a kind of storefront page. An alternate template (collection.sale.json) is
-// picked for a product, collection or page in the admin, or opened with ?view=sale.
+// Shopify themes: an alternate template (collection.sale.json) is opened with ?view=sale
 const THEME_URLS = {
   index: '/', product: '/products/:handle', collection: '/collections/:handle', 'list-collections': '/collections',
   cart: '/cart', search: '/search', page: '/pages/:handle', blog: '/blogs/:blog', article: '/blogs/:blog/:article',
@@ -643,7 +642,7 @@ export function buildScreens({ graph, scan, root }) {
   for (const c of candidates) {
     if (!files.has(c.file) || isTest(c.file)) continue;
     const app = appOf(c.file);
-    // a theme's alternate templates are separate pages that differ only by ?view=
+    // alternate theme templates are separate pages that differ only by ?view=
     const url = c.fw === 'shopify-theme' ? c.url : normalizeUrl(c.url) || '/';
     const id = `screen:${app}:${url}`;
     if (screens.has(id)) continue;

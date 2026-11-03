@@ -553,16 +553,11 @@ function extractSimple(src, lang) {
 }
 
 // ---------- Shopify themes (Liquid) ----------
-// A theme's files pull each other in by name, not path: {% render 'price' %} is snippets/price.liquid,
-// {% section 'header' %} sections/header.liquid, {% sections 'header-group' %} sections/header-group.json,
-// {% content_for 'block', type: 'x' %} blocks/x.liquid and 'theme.js' | asset_url assets/theme.js. JSON
-// templates and section groups list their sections and blocks by type. Each name becomes a path relative to
-// the file, so resolve.mjs only checks it exists. Apps appear as shopify://apps/<app>/… block types.
+// Theme files reach each other by name ({% render 'price' %} is snippets/price.liquid), turned here into relative paths.
 
 const THEME_ROOT = /^((?:.*\/)?)(?:layout|templates|sections|snippets|blocks|assets|config|locales)\//;
-// comments ({% comment %}, {% # … %}), {% raw %} and LiquidDoc's {% doc %} (whose @example renders aren't real) hold no references
+// {% doc %} too: its @example renders aren't real
 const LIQUID_SKIP = /\{%-?\s*(comment|raw|doc)\s*-?%\}[\s\S]*?\{%-?\s*end\1\s*-?%\}|\{%-?\s*#[^%]*%\}/g;
-// {% render 'x' %} (the name may be on the next line) and, inside {% liquid %} blocks, a line starting with render 'x'
 const LIQUID_TAG = /(?:\{%-?\s*|\n[ \t]*)(render|include|section|sections|content_for)\s+(['"])([^'"\n]+)\2(?:\s*,\s*type:\s*(['"])([^'"\n]+)\4)?/g;
 const LIQUID_ASSET = /(['"])([^'"\n{}]+\.(?:js|css|scss)(?:\.liquid)?)\1\s*\|\s*asset_url/g;
 const LIQUID_REQUEST = /\bfetch\s*\(|\$\.(ajax|get|post|getJSON)\s*\(|\bXMLHttp\w+|\baxios\b/;
@@ -577,7 +572,6 @@ function extractLiquid(src, filePath) {
   const add = (spec, line, kind) => { if (seen.has(spec)) return; seen.add(spec); imports.push({ spec, names: [], line, ...(kind ? { kind } : {}) }); };
   const at = lineIndex(src);
   const lineOf = (s) => { const i = src.indexOf(s); return i < 0 ? 1 : at(i); };
-  // {% render %} and friends, in a Liquid file or in a JSON template's custom-liquid settings
   const addTags = (code, at) => {
     for (const m of all(LIQUID_TAG, code)) {
       const [, tag, , name, , type] = m;
@@ -588,7 +582,7 @@ function extractLiquid(src, filePath) {
       else if (name === 'block' && type) add(rel(`blocks/${type}.liquid`), line);
     }
   };
-  // a block type is an app's block, a theme block file (blocks/), or one defined in its section's schema
+  // an app's block, a file in blocks/, or a block defined in its section's schema
   const addBlock = (type, line) => {
     if (!type || type.startsWith('@')) return;
     const app = /^shopify:\/\/apps\/([\w-]+)/.exec(type);
@@ -604,14 +598,14 @@ function extractLiquid(src, filePath) {
     const walkBlocks = (blocks) => { for (const b of Object.values(blocks || {})) { addBlock(b?.type, lineOf(`"${b?.type}"`)); walkBlocks(b?.blocks); } };
     for (const s of Object.values(data?.sections || {})) {
       if (typeof s?.type !== 'string') continue;
-      if (s.type.startsWith('shopify://')) { addBlock(s.type, 1); continue; } // an app section
+      if (s.type.startsWith('shopify://')) { addBlock(s.type, 1); continue; }
       const line = lineOf(`"type":"${s.type}"`);
-      // Shopify supplies sections named with a leading _ (_blocks holds AI-generated blocks) when the theme doesn't
+      // Shopify supplies _-prefixed sections like _blocks when the theme doesn't
       add(rel(`sections/${s.type}.liquid`), line, s.type.startsWith('_') ? 'theme-block' : undefined);
       if (!symbols.some((x) => x.name === s.type)) symbols.push({ name: s.type, kind: 'section', line });
       walkBlocks(s.blocks);
     }
-    // Liquid typed into a custom-liquid block or section setting, with its JSON-escaped quotes put back
+    // Liquid typed into custom-code settings, JSON-escaped
     const settings = src.replace(/\\"/g, '"').replace(LIQUID_SKIP, blank);
     addTags(settings, lineIndex(settings));
     return { imports, symbols, routes: [], mounts: [], calls: [], hosts: [] };
@@ -622,7 +616,6 @@ function extractLiquid(src, filePath) {
   for (const m of all(LIQUID_ASSET, code)) add(rel(`assets/${m[2]}`), at(m.index));
   for (const m of all(APP_BLOCK, code)) add(`shopify://apps/${m[1]}`, at(m.index));
 
-  // {% schema %}: the section's name and the blocks merchants can add to it
   const schema = /\{%-?\s*schema\s*-?%\}([\s\S]*?)\{%-?\s*endschema\s*-?%\}/.exec(code);
   if (schema) {
     let s = null;
@@ -631,12 +624,11 @@ function extractLiquid(src, filePath) {
     if (typeof s?.name === 'string' && !s.name.startsWith('t:')) symbols.push({ name: s.name, kind: 'section', line });
     for (const b of Array.isArray(s?.blocks) ? s.blocks : []) if (typeof b?.type === 'string' && !b.type.startsWith('@')) symbols.push({ name: b.type, kind: 'block', line });
   }
-  // a snippet's parameters, from {% doc %} @param lines or a comment's "Accepts:" list
   for (const m of all(/@param\s+(?:\{[^}]*\}\s+)?\[?([\w-]+)/g, src)) symbols.push({ name: m[1], kind: 'param', line: at(m.index) });
   const accepts = /\{%-?\s*comment\s*-?%\}[\s\S]*?\b(?:Accepts|Arguments|Receives|Parameters|Params):?\s*\n([\s\S]*?)\{%-?\s*endcomment/i.exec(src);
   if (accepts) for (const m of all(/^\s*-\s*([\w-]+)\s*:/gm, accepts[1])) symbols.push({ name: m[1], kind: 'param', line: at(accepts.index) });
 
-  // only real requests: a theme is full of page links ("url": "/collections/x") and SVG/structured-data namespaces
+  // a theme is full of page links and SVG namespaces, so only real requests count
   const lines = code.split('\n');
   const { calls, hosts } = extractCalls(code, at);
   return {
@@ -650,7 +642,6 @@ function extractLiquid(src, filePath) {
 function liquidDoc(src) {
   const m = /^(?:\s|\{%-?\s*#[^%]*%\})*\{%-?\s*(comment|doc)\s*-?%\}([\s\S]*?)\{%-?\s*end\1\s*-?%\}/.exec(src);
   if (!m || /theme-check|prettier-ignore/i.test(m[2])) return null;
-  // stop at the parameter list ("Accepts:", "Snippet Arguments", "- product: …") or usage example
   const head = m[2].split(/\n\s*(?:-\s|(?:snippet\s+)?(?:accepts|arguments|receives|usage|parameters|params|example)\b)|@param\b/i)[0];
   return cleanDoc(head);
 }
