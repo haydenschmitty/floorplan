@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Angular routing files are no longer endpoints:** under `src/app/`, a file whose name merely ends in `route.ts` (Angular's `orders.route.ts`) was read as a Next.js route handler, so it showed up as a `GET` endpoint and Health reported a whole Angular app's endpoints as open to anyone. Only a file named exactly `route.ts` is a Next.js route handler now.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.
