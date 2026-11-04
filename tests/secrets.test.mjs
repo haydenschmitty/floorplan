@@ -39,6 +39,16 @@ test('placeholders, values read from the environment and public settings are not
   assert.deepEqual(secrets('s3_secret_key = "env(S3_SECRET_KEY)"\n', 'supabase/config.toml', 'toml'), []);
 });
 
+test("a psql variable in a SQL script is not a password: the value is given when the script runs", () => {
+  const sql = (src) => secrets(src, 'db/init/002_app_role.sql', 'sql');
+  // psql -v app_password='…' -f 002_app_role.sql fills in :'app_password'
+  assert.deepEqual(sql(`CREATE ROLE app LOGIN PASSWORD :'app_password';\n`), []);
+  assert.deepEqual(sql(`ALTER ROLE app PASSWORD :"app_password";\n`), []);
+  // a quoted key still holds a value, here JSON kept in a SQL string
+  const value = ['Xk29', 'dLq7', 'Pz1'].join('');
+  assert.equal(sql(`INSERT INTO settings VALUES ('{"password":"${value}"}');\n`).length, 1);
+});
+
 test('tokens that are public by design are not flagged (#23)', () => {
   const hex = [...Array(32)].map((_, i) => '01234567890abcdef'[(i * 7 + 3) % 16]).join('');
   // Cloudflare Web Analytics' beacon token has to be in the page for analytics to work

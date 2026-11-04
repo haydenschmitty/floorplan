@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Angular routing files are no longer endpoints:** under `src/app/`, a file whose name merely ends in `route.ts` (Angular's `orders.route.ts`) was read as a Next.js route handler, so it showed up as a `GET` endpoint and Health reported a whole Angular app's endpoints as open to anyone. Only a file named exactly `route.ts` is a Next.js route handler now.
+- **psql variables are not passwords:** in a SQL script, `CREATE ROLE app LOGIN PASSWORD :'app_password'` takes the password from `psql -v app_password=…` when the script runs, but Health read it as a password written in the code. A quoted key, such as JSON kept in a SQL string, is still checked.
 
 ## 0.6.3 (2026-11-02)
 
