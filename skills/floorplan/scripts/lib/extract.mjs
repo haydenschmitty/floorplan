@@ -272,6 +272,7 @@ function extractJs(src, filePath) {
   }
 
   routes.push(...keyedRouteTable(code, at));
+  routes.push(...nestRoutes(code, at));
 
   const triggers = /firebase-functions/.test(code) ? firebaseFunctions(code, at, routes, mounts) : [];
 
@@ -283,6 +284,30 @@ function extractJs(src, filePath) {
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
   calls.push(...callables.calls);
   return { imports, symbols, routes, mounts, calls, hosts, ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
+}
+
+// ---------- NestJS controllers ----------
+
+// `@Controller('orders')` (or `@Controller({ path: 'orders', … })`, or no prefix) on the class, then
+// `@Get(':id')`, `@Post()`… on its methods. An endpoint's path is the controller's prefix joined to the method's.
+const NEST_CONTROLLER = /@Controller\(\s*(?:["'`]([^"'`]*)["'`]|\{[^}]*?\bpath\s*:\s*["'`]([^"'`]*)["'`][^}]*\})?[^)]*\)/g;
+const NEST_METHOD = /@(Get|Post|Put|Patch|Delete|All|Options|Head)\(\s*(?:["'`]([^"'`]*)["'`])?\s*\)/g;
+// the method a route decorator sits on: past any other decorators (@UseGuards(AuthGuard('jwt')), @Roles('admin'))
+const NEST_HANDLER = /^\s*(?:@[\w.]+(?:\((?:[^()]|\([^()]*\))*\))?\s*)*(?:(?:public|private|protected|static|async)\s+)*([A-Za-z_$][\w$]*)\s*\(/;
+
+function nestRoutes(code, at) {
+  if (!/@nestjs\/common/.test(code) || !/@Controller\(/.test(code)) return [];
+  const controllers = all(NEST_CONTROLLER, code).map((m) => ({ index: m.index, prefix: m[1] ?? m[2] ?? '' }));
+  const join = (...parts) => '/' + parts.map((p) => (p || '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
+  const out = [];
+  for (const m of all(NEST_METHOD, code)) {
+    // the controller is the last @Controller above the decorator: a file can hold several
+    const ctrl = controllers.filter((c) => c.index < m.index).pop();
+    if (!ctrl) continue;
+    const handler = NEST_HANDLER.exec(code.slice(m.index + m[0].length, m.index + m[0].length + 600))?.[1];
+    out.push({ method: m[1] === 'All' ? 'ANY' : m[1].toUpperCase(), path: join(ctrl.prefix, m[2]), var: null, line: at(m.index), framework: 'nest', ...(handler ? { handler } : {}) });
+  }
+  return out;
 }
 
 // ---------- Firebase Cloud Functions ----------
@@ -661,6 +686,9 @@ function addDocs(src, lang, r) {
   const syms = (r.symbols || []).filter((s) => !fbNames.has(s.name)).sort((a, b) => a.line - b.line);
   for (const rt of r.routes || []) {
     if (rt.framework === 'next') { rt.handler = rt.method; continue; }
+    // a Nest handler is a class method, not a symbol: keep the name found after the decorators
+    // (the first symbol below could be the next controller class in the same file)
+    if (rt.framework === 'nest') { const d = commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     if (rt.framework === 'table') { const d = r.symbols?.find((s) => s.name === rt.handler)?.doc; if (d) rt.doc = d; continue; }
     if (rt.framework === 'firebase') { const d = r.symbols.find((s) => s.name === rt.handler)?.doc || commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     const h = syms.find((s) => s.line >= rt.line && s.line - rt.line <= 12);

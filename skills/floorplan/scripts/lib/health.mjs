@@ -386,6 +386,9 @@ function jsRoutes(src, f, out) {
 
   routes.forEach((r, idx) => {
     if (r.framework === 'table') return; // sign-in is checked by the dispatcher or inside the handler
+    // Nest checks sign-in with guards, often registered app-wide (APP_GUARD) in a module Floorplan
+    // doesn't follow, so a route without its own @UseGuards may well be protected: say nothing
+    if (r.framework === 'nest') return;
     const rec = { k: 'route', line: r.line, method: r.method };
     if (r.framework === 'firebase') {
       // a callable checks request.auth (v1: context.auth) or turns on App Check; an onRequest function
