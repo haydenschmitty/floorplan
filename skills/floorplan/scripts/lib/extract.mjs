@@ -159,8 +159,10 @@ function extractCalls(src, at, { skip } = {}) {
     // a URL assigned to a variable counts when an HTTP call below uses that variable
     const assigned = ASSIGN.exec(line)?.[1];
     const use = assigned ? variableUse(lines, i, assigned) : null;
-    if (!HTTP_CONTEXT.test(line) && !use) continue;
-    const method = (METHOD_CALL.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || '').toUpperCase() || null;
+    // a call whose URL wraps onto its own line: `this.http.post<Order>(` with the template on the line below
+    const wrapped = i > 0 && /^\s*["'`]/.test(line) ? WRAPPED_CALL.exec(lines[i - 1])?.[1] : null;
+    if (!HTTP_CONTEXT.test(line) && !use && !wrapped) continue;
+    const method = (METHOD_CALL.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || wrapped || '').toUpperCase() || null;
     for (const m of line.matchAll(STR_LITERAL)) {
       const n = normalizeCallLiteral(m[2]);
       if (!n) continue;
@@ -280,6 +282,14 @@ function extractJs(src, filePath) {
   const { calls, hosts } = extractCalls(code, at, { skip: serverLine });
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
+  const built = urlBuilderCalls(code, at);
+  for (const c of built.calls) {
+    // the line may already hold a partial guess from its literal argument (`/ship`): the full path replaces it
+    const i = calls.findIndex((x) => x.line === c.line);
+    if (i >= 0) calls.splice(i, 1, c); else calls.push(c);
+  }
+  // a URL-building method's own template is not a request
+  for (let i = calls.length - 1; i >= 0; i--) if (built.bodies.has(calls[i].line)) calls.splice(i, 1);
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
   calls.push(...callables.calls);
   return { imports, symbols, routes, mounts, calls, hosts, ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
@@ -401,6 +411,87 @@ function wrapperCalls(code, at) {
 function spliced(rawBody, param) {
   const raw = new RegExp(`\`((?:\\$\\{[^}]*\\})*)([^\`$]*)\\$\\{\\s*${param}\\s*\\}`).exec(rawBody);
   return raw ? raw[2] : null;
+}
+
+// ---------- URL-building methods (Angular services and the like) ----------
+
+// A service class often builds its URLs in a method and passes the result to the HTTP call:
+//   private url(id: string, suffix = ''): string { return `${this.base}/orders/${encodeURIComponent(id)}${suffix}`; }
+//   ship(id: string) { return this.http.post(this.url(id, '/ship'), {}); }
+// is POST /orders/${x}/ship. A method that returns another builder's call counts too:
+//   private itemUrl(id: string, itemId: string, suffix = ''): string { return this.url(id, `/items/${itemId}${suffix}`); }
+const URL_BUILDER = /^[ \t]*(?:(?:private|protected|public|static|readonly)\s+)*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*(?::\s*string\s*)?\{\s*return\s+`([^`]*)`\s*;?\s*\}/gm;
+const URL_BUILDER_CHAIN = /^[ \t]*(?:(?:private|protected|public|static|readonly)\s+)*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*(?::\s*string\s*)?\{\s*return\s+this\.([A-Za-z_$][\w$]*)\s*\(/gm;
+// `.post<Order>(` at the end of a line: the call's arguments start on the next one
+const WRAPPED_CALL = /\.(get|post|put|patch|delete)\s*(?:<.*>)?\s*\(\s*$/i;
+const paramNames = (s) => s.split(',').map((p) => /^[A-Za-z_$][\w$]*/.exec(p.trim())?.[0]).filter(Boolean);
+const usesParam = (expr, p) => new RegExp(`(?<![\\w$.])${p.replace(/\$/g, '\\$')}(?![\\w$])`).test(expr);
+
+/** Top-level arguments of the call whose `(` is at code[open], or null when it doesn't close nearby. */
+function callArgs(code, open) {
+  const args = [];
+  let depth = 0, cur = '', quote = null;
+  for (let i = open; i < Math.min(code.length, open + 800); i++) {
+    const c = code[i];
+    if (quote) { cur += c; if (c === '\\') { cur += code[++i] ?? ''; continue; } if (c === quote) quote = null; continue; }
+    if (c === '"' || c === "'" || c === '`') { quote = c; cur += c; continue; }
+    if (c === '(' || c === '[' || c === '{') { if (depth++ === 0 && c === '(') continue; }
+    else if (c === ')' || c === ']' || c === '}') { if (--depth === 0) { if (cur.trim()) args.push(cur.trim()); return args; } }
+    else if (c === ',' && depth === 1) { args.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  return null;
+}
+
+/** A builder's template with the arguments put in: a literal goes in as text, anything else as `other` says. */
+function fillTemplate(tpl, pnames, args, other) {
+  return tpl.replace(/\$\{([^}]*)\}/g, (all, expr) => {
+    const i = pnames.findIndex((p) => usesParam(expr, p));
+    if (i < 0) return '${x}';
+    const a = args[i];
+    if (a == null) return ''; // left to its default, usually ''
+    const lit = /^(["'`])([\s\S]*)\1$/.exec(a);
+    return lit ? lit[2] : other(a);
+  });
+}
+
+function urlBuilderCalls(code, at) {
+  const builders = new Map(); // name -> { pnames, tpl }
+  const bodies = new Set(); // lines of the builders themselves
+  const mark = (m) => { const a = at(m.index), b = at(m.index + m[0].length); for (let l = a; l <= b + 1; l++) bodies.add(l); };
+  for (const m of code.matchAll(URL_BUILDER)) {
+    if (/^(get|post|put|patch|delete|request|fetch|constructor)$/i.test(m[1])) continue;
+    const pnames = paramNames(m[2]);
+    if (pnames.length && /\/[A-Za-z]/.test(m[3])) { builders.set(m[1], { pnames, tpl: m[3] }); mark(m); }
+  }
+  // a delegating builder, written in its own parameters (one passed straight through stays `${p}`)
+  for (const m of code.matchAll(URL_BUILDER_CHAIN)) {
+    const inner = builders.get(m[3]);
+    const args = callArgs(code, m.index + m[0].length - 1);
+    if (!inner || !args || builders.has(m[1])) continue;
+    builders.set(m[1], { pnames: paramNames(m[2]), tpl: fillTemplate(inner.tpl, inner.pnames, args, (a) => '${' + a + '}') });
+    mark(m);
+  }
+  const out = [];
+  for (const [name, { pnames, tpl }] of builders) {
+    for (const c of code.matchAll(new RegExp(`\\bthis\\.${name.replace(/\$/g, '\\$')}\\s*\\(`, 'g'))) {
+      const line = at(c.index);
+      if (bodies.has(line)) continue; // a delegating builder's own body
+      const args = callArgs(code, c.index + c[0].length - 1);
+      if (!args) continue;
+      const n = normalizeCallLiteral(flattenTemplates('`' + fillTemplate(tpl, pnames, args, () => '${x}') + '`').slice(1, -1));
+      if (!n?.path || n.host) continue;
+      // only a URL handed to an HTTP call counts (not one used for a link or a download address); the
+      // call is on the same line, or on the line before when the arguments wrap
+      const lineStart = code.lastIndexOf('\n', c.index - 1) + 1;
+      const head = code.slice(lineStart, c.index);
+      const prev = code.slice(code.lastIndexOf('\n', lineStart - 2) + 1, Math.max(0, lineStart - 1));
+      const verb = WRAPPED_CALL.exec(head)?.[1] || (!head.trim() ? WRAPPED_CALL.exec(prev)?.[1] : null);
+      if (!verb) continue;
+      out.push({ path: n.path, method: verb.toUpperCase(), line });
+    }
+  }
+  return { calls: out, bodies };
 }
 
 // ---------- Python ----------
