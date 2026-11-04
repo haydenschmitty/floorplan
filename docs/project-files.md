@@ -17,7 +17,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI or Codex | No |
 | `query.mjs` | Looks things up in the map from the command line; Claude and Codex use it too | No |
 | `artifact.html` | A copy for opening in the Claude app, only if you asked for one | No |
-| `<project>-map.html` | An exported copy to share, only if you exported one from Claude or Codex (the map's Export button downloads it instead) | No |
+| `<project>-map.html` | An exported copy to share, only if you exported one from Claude, Codex or Cursor (the map's Export button downloads it instead) | No |
 | `.cache/` | The scan, the description worksheets, the last update's changes, the running server's address, and, for a blueprint, the last 20 versions of the plan that **Undo** goes back to | No. Safe to delete, though Undo then has nothing to go back to |
 | `.gitignore` | Keeps this whole folder out of git | No |
 
@@ -30,7 +30,7 @@ Your edits to `architecture.json` and `descriptions/` are kept on every update. 
 - pin a note to a file;
 - add or change flows and the tour.
 
-Or just ask Claude or Codex ("rename 'Main server' to 'Shop API' on the floorplan").
+Or just ask Claude, Codex or Cursor ("rename 'Main server' to 'Shop API' on the floorplan").
 
 A blueprint is edited the same way, through `plan.json` and `architecture.json`, or from the map with the Ask bar's **Change** switch. The plan's format is in [`blueprint.md`](../skills/floorplan/references/blueprint.md).
 
@@ -47,7 +47,7 @@ To remove it, delete the section. To keep it from coming back, put `<!-- floorpl
 
 A blueprint adds no section, since there's no code to look up yet. Claude offers it once the map switches to the real code.
 
-In Codex this file isn't touched. Codex has no personal, uncommitted notes file (`AGENTS.md` is shared with your team), so Floorplan doesn't add a note there.
+In Codex and Cursor this file isn't touched. Neither has a personal, uncommitted notes file (`AGENTS.md` is shared with your team), so Floorplan doesn't add a note there.
 
 ## Staying out of git
 

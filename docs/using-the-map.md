@@ -63,7 +63,7 @@ A count of important issues, and a plain-language list of problems the scan foun
 - files nothing uses;
 - files over about 1,000 lines, which AI struggles to edit safely.
 
-Each issue has **Show on map**, which highlights the affected files and endpoints with notes, and **Fix with Claude** (or **Fix with Codex**, for a map made in Codex), which copies a ready-made prompt naming the exact files and lines and the safe fix. It's a quick automatic check, not a security audit. On a blueprint this button is **Review** instead (see [Blueprints](#blueprints)).
+Each issue has **Show on map**, which highlights the affected files and endpoints with notes, and **Fix with Claude** (or **Fix with Codex** or **Fix with Cursor**, for a map made in those), which copies a ready-made prompt naming the exact files and lines and the safe fix. It's a quick automatic check, not a security audit. On a blueprint this button is **Review** instead (see [Blueprints](#blueprints)).
 
 Health leaves password hashes and encrypted values alone (bcrypt, argon2, dotenvx, sops, Ansible Vault and similar), and goes by the value, so a backup with one value left unencrypted is still flagged. It can only recognise encryption that marks itself, and it can't read a `.env` file that git ignores. It also doesn't judge sign-in on endpoints in a route table (`"GET /api/orders": listOrders`) or on Django endpoints, because the check isn't where it can read it for each route, so no report there doesn't mean those endpoints are protected.
 
@@ -74,13 +74,13 @@ If an issue is wrong, press **Not a problem** and add a reason if you like. It m
 You can also tick the box to tell the Floorplan developer. That opens a GitHub issue for you to read, edit and send yourself, with the check's name and title, the kinds of files involved and your note. A title can name a file or an endpoint, and the preview shows you exactly what will go. It never includes your code or any values, and nothing is sent unless you send it.
 
 ### Recent work
-Appears when Claude or Codex has just changed things. It lays the changed cards out on one board, with what you asked for, a summary of what was done, and a note on every card. Elsewhere on the map, changed cards have a green ring and a **Changed** or **New** tag, and the parts that contain them show **N changed**, so you can follow the green down from the top level.
+Appears when Claude, Codex or Cursor has just changed things. It lays the changed cards out on one board, with what you asked for, a summary of what was done, and a note on every card. Elsewhere on the map, changed cards have a green ring and a **Changed** or **New** tag, and the parts that contain them show **N changed**, so you can follow the green down from the top level.
 
 ### Screens
 Every page of your app that Floorplan detected. Pick one to see everything behind it: its components, the requests it makes, the server code that answers them, the data they touch, and outside services.
 
 ### Export
-Saves a copy of the map to send to anyone, such as a teammate, a client, or someone without Claude or Codex. It's one HTML file that opens in any browser with nothing to install. The copy has the whole map, search, screens, the tour and flows, but no Ask bar, no **Fix with Claude** or **Build this** requests, no editor links, and nothing about your computer, like its folder path. An **Exported** label beside the title shows the date, and a small **Made with Floorplan** link at the bottom leads here.
+Saves a copy of the map to send to anyone, such as a teammate, a client, or someone without Claude, Codex or Cursor. It's one HTML file that opens in any browser with nothing to install. The copy has the whole map, search, screens, the tour and flows, but no Ask bar, no **Fix with Claude** or **Build this** requests, no editor links, and nothing about your computer, like its folder path. An **Exported** label beside the title shows the date, and a small **Made with Floorplan** link at the bottom leads here.
 
 You choose what goes in:
 - **Flows and the tour**, and **notes pinned to files**, on by default;
@@ -119,7 +119,7 @@ Everything above describes a map of existing code, which is what most maps are. 
 - **Dashed cards and a Blueprint label** beside the board's title show it's a plan. With nothing selected, the panel says which document it was planned from, the stack and the assumptions made.
 - **Review** replaces Health. It's a design review of the plan: endpoints anyone could use to change data, endpoints with no decision on who may use them, questions the PRD leaves open, and pieces nothing connects to. Each item has **Show on map** and **Resolve on the map**, which switches the Ask bar to Change and fills in a request to settle it. For an open question, type your answer after "My answer:" and press **Enter**. (When the map isn't served, the button is **Resolve with Claude** or **Resolve with Codex**, a request to paste instead.)
 - **Who may use it:** an endpoint's panel says whether anyone, signed-in people (and which ones), your own team, or another service may use it.
-- **Build it:** every part and file has **Build this with Claude** (or Codex), which shows a request to build just that piece the way the plan describes (its files, endpoints, what it relies on and any open questions), ready to copy into Claude Code or Codex.
+- **Build it:** every part and file has **Build this with Claude** (or Codex or Cursor), which shows a request to build just that piece the way the plan describes (its files, endpoints, what it relies on and any open questions), ready to copy into Claude Code, Codex or Cursor.
 - **Ask and Change:** the Ask bar has a switch. **Ask** answers questions from the plan and the PRD. **Change** takes requests like "also plan out refunds" or "drop the admin page". It takes a few minutes; then the map redraws, the new and changed cards are highlighted as recent work, and a summary offers **Show N changes**, **Undo** and suggested next changes.
 
 ## Right-click menus

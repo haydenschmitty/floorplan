@@ -613,12 +613,16 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
 (() => {
 'use strict';
 const G = window.FLOORPLAN;
-// who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map
-const AGENT = (window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent) === 'codex'
-  ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
-      signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
-  : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
-      signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
+// who answers questions: the CLI the map server runs (Claude Code or Codex), else the agent that built the map
+const ASKERS = {
+  codex: { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
+    signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' },
+  claude: { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
+    signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' },
+};
+const AGENT = ASKERS[window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent] || ASKERS.claude;
+// who takes "Fix with …" prompts: the same, except a map Cursor built names Cursor (it can't answer questions here, but it takes the prompts)
+const FIXER = G.meta.agent === 'cursor' ? { id: 'cursor', name: 'Cursor', app: 'Cursor' } : AGENT;
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
 if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.mjs.</p>'; return; }
 // a blueprint: planned from a PRD, so its files don't exist yet (no line counts, nothing to open in an editor)
@@ -2330,7 +2334,7 @@ const custom = { panel: null };
 function emit(event, data) { for (const fn of ext.listeners[event] || []) { try { fn(data); } catch (e) { console.error('floorplan extension', e); } } }
 window.Floorplan = Object.freeze({
   version: 1,
-  graph: G, query: Q, state, agent: AGENT, exported: EXPORTED,
+  graph: G, query: Q, state, agent: FIXER, exported: EXPORTED,
   // model helpers
   info, chain, children: (id) => visibleKids(id), parentOf: (id) => parentOf.get(id), exists: (id) => Q.exists(id),
   files, nodes, routes, colorOf, iconKey,

@@ -26,8 +26,12 @@ export function makeProject(files, { repos = [], arch } = {}) {
 }
 
 /** Runs one of the skill's scripts (scan.mjs, build.mjs, …) on a project and returns what it printed. */
+// The scripts guess which agent is running them from the variables it sets, so run them without those:
+// the tests give --agent when they care, and pass or fail the same inside Claude Code, Codex or Cursor.
+const AGENT_VARS = /^(FLOORPLAN_AGENT|CLAUDECODE|CODEX_THREAD_ID|CODEX_SESSION_ID|CURSOR_AGENT)$/;
 export function run(script, root, ...args) {
-  return execFileSync(process.execPath, [path.join(SKILL, 'scripts', script), root, ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !AGENT_VARS.test(k)));
+  return execFileSync(process.execPath, [path.join(SKILL, 'scripts', script), root, ...args], { encoding: 'utf8', stdio: 'pipe', env });
 }
 
 /** scan + build, the way the skill does a first map (without touching CLAUDE.local.md). */
