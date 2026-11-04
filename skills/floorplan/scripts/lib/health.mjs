@@ -262,6 +262,21 @@ function blockAfter(lines, defIdx) {
   return lines.slice(defIdx, end).join('\n');
 }
 
+// Does a Python body send the caller away: a `return` or `raise` whose statement carries a 401 or 403
+// (JSONResponse(..., status_code=401), HTTPException(403), status.HTTP_401_UNAUTHORIZED…)?
+const PY_DENIED = /\b40[13]\b|HTTP_40[13]_\w+|Unauthorized|Forbidden/;
+function pyRejectsCaller(body) {
+  for (const m of body.matchAll(/^[ \t]*(?:return|raise)\b/gm)) {
+    let depth = 0, i = m.index + m[0].length;
+    for (; i < body.length && !(body[i] === '\n' && depth <= 0); i++) {
+      if ('([{'.includes(body[i])) depth++;
+      else if (')]}'.includes(body[i])) depth--;
+    }
+    if (PY_DENIED.test(body.slice(m.index, i))) return true;
+  }
+  return false;
+}
+
 function pyRoutes(src, f, out) {
   const lines = src.split('\n');
   // Blueprint / app-wide before_request hooks and router-level dependencies that check the caller.
@@ -272,6 +287,13 @@ function pyRoutes(src, f, out) {
     if (!/\b40[13]\b|Unauthorized|Forbidden|verify_jwt_in_request|login_required|is_authenticated|current_user/.test(body)) continue;
     guardedVars.set(m[1], m[2]);
     if (m[1] === 'app') out.push({ k: 'global-guard', framework: 'flask', name: m[2], line: defIdx + 1 });
+  }
+  // FastAPI / Starlette: an @app.middleware("http") function runs before every route, so it guards
+  // them all when it turns callers away itself. One that only adds headers, logs or reads a 401 from
+  // the response doesn't count.
+  for (const m of src.matchAll(/^@\w+\.middleware\(\s*["']http["']\s*\)\s*\n(?:@.*\n)*\s*(?:async\s+)?def\s+(\w+)/gm)) {
+    const defIdx = src.slice(0, m.index + m[0].length).split('\n').length - 1;
+    if (pyRejectsCaller(blockAfter(lines, defIdx))) out.push({ k: 'global-guard', framework: 'fastapi', name: m[1], line: defIdx + 1 });
   }
   for (const m of src.matchAll(/^\s*(\w+)\s*=\s*(?:\w+\.)?APIRouter\(([^)]*(?:\([^)]*\)[^)]*)*)\)/gm)) {
     const dep = /dependencies\s*=\s*\[[^\]]*Depends\(\s*([\w.]+)/.exec(m[2]);
@@ -1125,7 +1147,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (!perRepo.has(repo)) perRepo.set(repo, { guarded: 0, total: 0, open: [], misplaced: [], guardCounts: new Map(), fileGuards: new Map(), guardedIn: new Map() });
     const pr = perRepo.get(repo);
     pr.total++;
-    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m));
+    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'fastapi' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);
