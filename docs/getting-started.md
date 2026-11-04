@@ -41,7 +41,7 @@ The first command adds this repository as a plugin source. The second installs F
 
 3. **Let it work.** This is what happens:
    - A scan lists every file, import, endpoint and web request. This takes seconds and costs no tokens.
-   - Claude or Codex reads your READMEs, setup files and entry points, then decides the main parts of your app and what each one is for.
+   - Claude, Codex or Cursor reads your READMEs, setup files and entry points, then decides the main parts of your app and what each one is for.
    - It writes a plain-English name and a one-line description for every file and endpoint. In Claude Code, projects with more than about 150 files are split across parallel helpers.
    - The map is built and checked: connections, Health issues and screens.
 
@@ -72,7 +72,7 @@ On the map:
 - Switch the Ask bar to **Change** to shape the plan ("also plan out refunds"). The map redraws with what changed highlighted, and **Undo** puts it back.
 - Each part has **Build this with Claude** (or Codex), a ready request to build just that part.
 
-Once the code exists, ask Claude or Codex to "map the real code now", and the blueprint becomes a normal map. See [Blueprints](how-it-works.md#blueprints) for how it works.
+Once the code exists, ask Claude, Codex or Cursor to "map the real code now", and the blueprint becomes a normal map. See [Blueprints](how-it-works.md#blueprints) for how it works.
 
 ## Open the map yourself
 

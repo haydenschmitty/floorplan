@@ -121,6 +121,23 @@ test('the Claude Code CLI comes first for a map Claude built, with read-only too
   assert.equal(second.args[second.args.indexOf('--resume') + 1], 'test-session');
 });
 
+test('a map Cursor built is answered by Claude Code first, then Codex: Cursor itself never answers', async () => {
+  const file = path.join(root, 'floorplan', 'graph.json');
+  const original = fs.readFileSync(file, 'utf8');
+  const graph = JSON.parse(original);
+  graph.meta.agent = 'cursor';
+  fs.writeFileSync(file, JSON.stringify(graph));
+  try {
+    const both = await serve({ FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'), FLOORPLAN_CODEX: path.join(FAKE, 'fake-codex.mjs') });
+    assert.equal(both.page.engine, 'claude');
+    const codexOnly = await serve({ FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(FAKE, 'fake-codex.mjs') });
+    assert.equal(codexOnly.page.engine, 'codex');
+    const none = await serve({ FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli') });
+    assert.equal(none.page.cli, false);
+    assert.equal(none.page.want, 'claude');
+  } finally { fs.writeFileSync(file, original); }
+});
+
 test('--engine picks one CLI and never falls back to the other', async () => {
   const s = await serve({ FLOORPLAN_ENGINE: 'codex', FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli') });
   assert.equal(s.page.cli, false);

@@ -13,7 +13,7 @@
 .agents/plugins/
   marketplace.json     this repo as a Codex marketplace
 skills/floorplan/
-  SKILL.md             the workflow Claude and Codex follow
+  SKILL.md             the workflow Claude, Codex and Cursor follow
   agents/openai.yaml   how Codex lists the skill
   references/          formats and style guides Claude reads while working
     schema.md                architecture.json and recent-work.json

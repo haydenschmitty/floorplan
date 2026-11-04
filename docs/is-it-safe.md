@@ -86,7 +86,7 @@ It prints either that all files are identical, or which ones changed, are extra 
 ## The honest limits
 
 - Claude Code and Codex install a plugin from its repository, and an update brings whatever the newest release contains, for this plugin as for any other. Releases are made only by the maintainer, and `main` is protected: its history can't be rewritten or deleted. Outside pull requests are reviewed before they're run or merged, and the checks above run on every one of them. Before you update, you can read the changes in the [changelog](../CHANGELOG.md) and verify the new version with its checksums.
-- Floorplan works by having Claude or Codex read your code to describe it. That goes to Anthropic or OpenAI under your account, like any other task you give them. See [Privacy and security](privacy-and-security.md).
+- Floorplan works by having Claude, Codex or Cursor read your code to describe it. That goes to Anthropic, OpenAI or Cursor under your account, like any other task you give them. See [Privacy and security](privacy-and-security.md).
 
 ## Found something?
 
