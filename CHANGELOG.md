@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Open Express endpoints no longer hidden by look-alike middleware** (#72, reported by @xumbou): an app-wide `app.use(...)` counted as a login check whenever a guard-like word appeared anywhere in it, so Health stopped reporting every open endpoint behind it. A header name inside a string (`cors({ exposedHeaders: ['X-Refreshed-Token'] })`), middleware that never turns anyone away (`cors`, `helmet`, `express-session`, `passport.session()` and the like) and a name that only says "guard" (`createShutdownGuard()`) no longer count. Real checks still do, including one listed after other middleware, as in `app.use(cors(), requireUser)`, which was missed before. The "None of your endpoints check who is calling" title no longer shows `.` in place of a name for a project that is one repo at its root. Fixed by @ahmedjanwar.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

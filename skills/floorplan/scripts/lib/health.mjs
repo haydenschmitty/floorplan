@@ -213,6 +213,31 @@ function findSecrets(src, f, out) {
 const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^guard(?:_|$)|_guard$|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
 const isGuardName = (name) => !!name && !NOT_GUARD.test(name) && GUARD_NAME.test(snake(name));
+// Express middleware that never checks the caller, matched on the snake_case name of the call in .use(...)
+const NOT_GUARD_MIDDLEWARE = /^(cors|helmet|compression|morgan|cookie_parser|body_parser|json|urlencoded|raw|text|static|serve_static|favicon|method_override|response_time|timeout|express_session|session|cookie_session|rate_limit|slow_down|hpp|csurf|nocache|pino_http|request_id)$/;
+// A .use() guard protects every route after it, so "guard" alone isn't enough (createShutdownGuard):
+// the name must say what it checks (authGuard, requireUser, verifyToken)
+const isUseGuard = (name) => isGuardName(name) && GUARD_NAME.test(snake(name).replace(/(^|_)guard(?=_|$)/g, ''));
+const JS_STRING = /(['"`])(?:\\[\s\S]|(?!\1)[^\\])*\1/g;
+// The top-level arguments of a call whose "(" ends just before `start`, skipping brackets and commas
+// inside strings and nested calls. null when the call isn't closed within a reasonable distance.
+function jsArgs(src, start) {
+  const args = [];
+  let depth = 0, quote = '', from = start;
+  for (let i = start; i < Math.min(src.length, start + 4000); i++) {
+    const c = src[i];
+    if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; continue; }
+    if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      if (depth) { depth--; continue; }
+      if (c !== ')') return null;
+      args.push(src.slice(from, i));
+      return args.filter((a) => a.trim());
+    } else if (c === ',' && !depth) { args.push(src.slice(from, i)); from = i + 1; }
+  }
+  return null;
+}
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
 const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_session|sessionmaker)$|(^|_)(db|database|sql\w*|engine|conn|connection|cursor|uow|unit_of_work)(_|$)|session_?(local|maker|factory)/i;
@@ -376,11 +401,22 @@ function jsRoutes(src, f, out) {
     const matcher = /matcher\s*:\s*([^\n]+)/.exec(src)?.[1] || '';
     if (!matcher || /api|\(\?!/.test(matcher)) out.push({ k: 'global-guard', framework: 'next', line: 1 });
   }
-  // app.use(auth) / router.use(requireAuth) without a path guards everything registered after it
+  // app.use(auth) / router.use(requireAuth) without a path guards everything registered after it.
+  // That turns off the open-endpoint check for every route behind it, so the evidence must be the
+  // middleware itself: words inside strings (a header named 'X-Refreshed-Token') don't count, nor
+  // do options of middleware that never checks the caller (cors, helmet, express-session…)
   const uses = [];
-  for (const m of src.matchAll(/\b(\w+)\.use\(\s*([^'"`)][^)]*)\)/g)) {
-    const names = m[2].match(/[A-Za-z_$][\w$]*/g) || [];
-    if (names.some(isGuardName)) uses.push({ v: m[1], line: src.slice(0, m.index).split('\n').length, name: names.find(isGuardName) });
+  for (const m of src.matchAll(/\b(\w+)\.use\(/g)) {
+    const args = jsArgs(src, m.index + m[0].length);
+    if (!args?.length || /^\s*['"`]/.test(args[0])) continue; // a path first: mounted, not app-wide
+    let name;
+    for (const arg of args) {
+      const code = arg.replace(JS_STRING, '""');
+      const callee = /^\s*([A-Za-z_$][\w$.]*)\s*\(/.exec(code)?.[1].split('.').pop();
+      if (callee && NOT_GUARD_MIDDLEWARE.test(snake(callee))) continue;
+      if ((name = (code.match(/[A-Za-z_$][\w$]*/g) || []).find(isUseGuard))) break;
+    }
+    if (name) uses.push({ v: m[1], line: src.slice(0, m.index).split('\n').length, name });
   }
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
 
@@ -1156,6 +1192,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (fnd.misplaced) pr.misplaced.push(entry); else pr.open.push(entry);
   });
   for (const [repo, pr] of perRepo) {
+    const repoName = repo === '.' ? '' : repo; // a single repo at the root has no name to show
     const top = (m) => m && [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
     // prefer what this file already uses, then the project's most common real (non-wrapper) check
     const guardHint = (file, lang) => {
@@ -1186,12 +1223,12 @@ export function buildHealth({ graph, scan, arch, root }) {
       const list = pr.open.sort((a, b) => b.write - a.write);
       issues.push({
         id: 'no-auth:' + repo, kind: 'unprotected-endpoint', severity: 'medium',
-        title: `None of ${repo ? `${repo}’s` : 'your'} endpoints check who is calling`,
+        title: `None of ${repoName ? `${repoName}’s` : 'your'} endpoints check who is calling`,
         detail: `${plural(list.length, 'endpoint')} answer anyone who knows the address, with no login check in the code. That's fine only if this server is private (for example behind a company network or a gateway that checks logins); otherwise anyone could read or change its data.`,
         items: list.slice(0, 24).map((e) => 'r:' + e.i),
         notes: Object.fromEntries(list.slice(0, 24).map((e) => ['r:' + e.i, e.write ? 'Changes data, no login check' : 'No login check'])),
         locations: list.map((e) => ({ file: e.r.f, line: e.r.l })),
-        fix: [`Review access control${repo ? ` in ${repo}` : ''}. None of these endpoints verify the caller in code:`, ...list.slice(0, 40).map(routeLine), list.length > 40 ? `- …and ${list.length - 40} more` : null, ``, `First tell me in plain words whether this server is reachable from the internet and whether anything in front of it (gateway, network rules) checks logins. If it is public, propose the smallest safe way to require login for the data-changing endpoints (POST/PUT/PATCH/DELETE) first, show me the plan, and wait for my OK before changing code.`].filter((x) => x !== null).join('\n'),
+        fix: [`Review access control${repoName ? ` in ${repoName}` : ''}. None of these endpoints verify the caller in code:`, ...list.slice(0, 40).map(routeLine), list.length > 40 ? `- …and ${list.length - 40} more` : null, ``, `First tell me in plain words whether this server is reachable from the internet and whether anything in front of it (gateway, network rules) checks logins. If it is public, propose the smallest safe way to require login for the data-changing endpoints (POST/PUT/PATCH/DELETE) first, show me the plan, and wait for my OK before changing code.`].filter((x) => x !== null).join('\n'),
       });
       continue;
     }
