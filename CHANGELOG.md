@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Hono endpoints get their full address, and Health reads Hono's checks:** Floorplan now reads a router that a function makes, as in `app.route('/api/admin/catalog', createCatalogRoutes(secret))`, also when the call continues on the next lines. Before, Floorplan missed these mounts, so the endpoints had no prefix (`PUT /filters`) and Health said that anyone could change data through them. Health now also finds these checks:
+  - a check on all addresses under a path, `app.use('/api/admin/*', adminGate(secret))`, for the routers and endpoints that come after it, and `app.use('*', check)` in a router;
+  - a middleware that gets a secret, like `requireServiceKey(token)`;
+  - `c.req.header('Authorization')`, `safeEqual()` and `constantTimeEqual()` in a handler;
+  - a check in a function that the route names, like `(c) => postNewsletter(c)`, when the same file defines that function;
+  - Stripe event code in a file of its own, when each file that imports it checks Stripe's signature.
+
+  Health still reports an endpoint that has no check. Fixed by @asigdel29.
+- **A check on one address doesn't move other endpoints:** `app.use('/docs', docsAuth)` no longer adds `/docs` to the address of each router that the same file mounts. Fixed by @asigdel29.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

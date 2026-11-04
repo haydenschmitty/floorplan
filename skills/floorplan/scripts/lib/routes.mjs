@@ -20,6 +20,9 @@ function mountTarget(f, mount) {
   if (f.lang !== 'python') {
     // JS: match the mounted name to the local binding of an import or require (every router can be called `router`)
     const imp = imports.find((i) => i.locals && Object.hasOwn(i.locals, head));
+    // a router made by a call needs a function imported from a file of ours: one from a package
+    // (express.static(...)) holds no routes, and one from this file would prefix every route here
+    if (!imp && mount.call) return null;
     return { file: imp ? imp.files[0] : f.path, v: '*' };
   }
   // First the import that binds the mounted name in this file: `from app.routes import campaigns as
@@ -46,33 +49,37 @@ function mountTarget(f, mount) {
 }
 
 export function resolveRoutes(files) {
-  // mountsTo[file] = [{ from, v, prefix }]   (v === '*' applies to every route in the file)
+  // mountsTo[file] = [{ from, v, prefix, mw, on, name }]   (v === '*' applies to every route in the file;
+  // on: the app or router the mount was made on, name: what it mounted)
   const mountsTo = new Map();
   for (const f of files) for (const mount of TEST_FILE.test(f.path) ? [] : f.mounts || []) {
     const t = mountTarget(f, mount);
     if (!t) continue;
     if (!mountsTo.has(t.file)) mountsTo.set(t.file, []);
-    mountsTo.get(t.file).push({ from: f.path, v: t.v, prefix: mount.prefix, mw: mount.mw || [] });
+    mountsTo.get(t.file).push({ from: f.path, v: t.v, prefix: mount.prefix, mw: mount.mw || [], on: mount.on, name: mount.var });
   }
+  // The mounts that place `file`'s router `on` (or all its routers). A mount the file makes on itself
+  // places only the router it mounts: app.use('/docs', docsAuth) moves neither `app` nor what `app` mounts.
+  const placing = (file, v, on) => (mountsTo.get(file) || []).filter((m) => (v == null || m.v === '*' || m.v === v) && (on == null || m.from !== file || m.on == null || m.name === on));
   // Every prefix a file's routes live under, composing nested mounts (a router mounted into a router
   // that is itself mounted), e.g. app.use('/api', api) + api.use('/users', users) → /api/users.
-  const outerPrefixes = (file, v, seen = new Set()) => {
-    const ms = (mountsTo.get(file) || []).filter((m) => v == null || m.v === '*' || m.v === v);
+  const outerPrefixes = (file, v, on, seen = new Set()) => {
+    const ms = placing(file, v, on);
     if (!ms.length || seen.has(file)) return [''];
     const next = new Set(seen).add(file);
     const out = [];
-    for (const m of ms) for (const p of m.from === file ? [''] : outerPrefixes(m.from, null, next)) out.push(joinPath(p, m.prefix));
+    for (const m of ms) for (const p of m.from === file ? [''] : outerPrefixes(m.from, null, m.on, next)) out.push(joinPath(p, m.prefix));
     return [...new Set(out)];
   };
 
   // Middleware applied where a file's routers are mounted, all the way up: app.use('/admin', requireStaff, admin)
   // then admin.use('/orders', orders) puts requireStaff in front of every route in orders.
-  const mountMw = (file, v, seen = new Set()) => {
-    const ms = (mountsTo.get(file) || []).filter((m) => v == null || m.v === '*' || m.v === v);
+  const mountMw = (file, v, on, seen = new Set()) => {
+    const ms = placing(file, v, on);
     if (!ms.length || seen.has(file)) return [];
     const next = new Set(seen).add(file);
     // a route is only as protected as its least-protected mount
-    const each = ms.map((m) => [...m.mw, ...(m.from === file ? [] : mountMw(m.from, null, next))]);
+    const each = ms.map((m) => [...m.mw, ...(m.from === file ? [] : mountMw(m.from, null, m.on, next))]);
     return each.reduce((a, b) => a.filter((x) => b.includes(x)));
   };
 
@@ -104,8 +111,9 @@ export function resolveRoutes(files) {
         continue;
       }
       const defPrefix = (r.var && f.routers?.[r.var]) || '';
-      const mw = mountMw(f.path, r.var);
-      for (const mp of outerPrefixes(f.path, r.var)) routes.push({ file: f.path, method: r.method, path: joinPath(mp, defPrefix, r.path), line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}) });
+      // checks put in front of it where its router is mounted, and by a path-scoped use earlier in this file
+      const mw = [...new Set([...(r.mw || []), ...mountMw(f.path, r.var, r.var)])];
+      for (const mp of outerPrefixes(f.path, r.var, r.var)) routes.push({ file: f.path, method: r.method, path: joinPath(mp, defPrefix, r.path), line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}) });
     }
   }
   return dedupe(routes, (r) => `${r.file}|${r.method}|${r.path}`);

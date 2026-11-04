@@ -39,6 +39,56 @@ const stripHash = (src) => src.replace(/(^|\s)#[^\n]*/g, (m, pre) => pre + blank
 
 const all = (re, s) => [...s.matchAll(re)];
 
+/** Where the string that opens at `i` closes: quotes end at the line's end, backticks can span lines. */
+export const stringEnd = (s, i) => {
+  const q = s[i];
+  let j = i + 1;
+  while (j < s.length && s[j] !== q && (q === '`' || s[j] !== '\n')) j += s[j] === '\\' ? 2 : 1;
+  return j;
+};
+
+/**
+ * The argument text of a call, from `open` (just past its "(") up to the matching ")", so nested calls
+ * (`createRoutes(token, deps(platform))`) and arguments that wrap onto the next lines stay whole.
+ * Brackets inside strings don't count. '' when the call doesn't close within `max` characters.
+ */
+export function callArgs(code, open, max = 4000) {
+  let depth = 0;
+  for (let i = open; i < code.length && i - open < max; i++) {
+    const c = code[i];
+    if (c === '"' || c === "'" || c === '`') i = stringEnd(code, i);
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') { if (!depth) return code.slice(open, i); depth--; }
+  }
+  return '';
+}
+
+/** An argument list split at its top-level commas, each argument trimmed. */
+export function splitArgs(text) {
+  const out = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' || c === "'" || c === '`') i = stringEnd(text, i);
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') depth--;
+    else if (c === ',' && !depth) { out.push(text.slice(start, i).trim()); start = i + 1; }
+  }
+  out.push(text.slice(start).trim());
+  return out.filter(Boolean);
+}
+
+/**
+ * What one argument names: `router` or `admin.router` as written, `...checks` by its name, and a call
+ * (`createOrderRoutes(db)`, `requireRole('staff')`) by the function it calls, with `call` set. Null for
+ * anything else, such as an inline function, an object or a string.
+ */
+function argRef(arg) {
+  const m = /^(?:\.\.\.)?([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^()]*>\s*)?(\(|$)/.exec(arg);
+  if (!m || /^(?:async|function|new|await|typeof|void)$/.test(m[1])) return null;
+  return { name: m[1].replace(/\s+/g, ''), call: m[2] === '(' };
+}
+
 // ---------- route tables keyed by "METHOD /path" ----------
 
 // Servers without a framework often keep their endpoints in a lookup keyed by method and path, and
@@ -245,13 +295,32 @@ function extractJs(src, filePath) {
     if (!/^(app|server|fastify|hono|routes?|[a-z]*Router|router)$/.test(m[1])) continue;
     routes.push({ method: m[2].toUpperCase(), path: m[3], var: m[1], line: at(m.index) });
   }
-  for (const m of all(/\b([A-Za-z_$][\w$]*)\.(use|route)\(\s*["'`](\/[^"'`]*)["'`]\s*,([^\n;]*)/g, code)) {
-    const req = /require\(\s*["']([^"']+)["']\s*\)/.exec(m[4]);
-    const mw = (m[4].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][w$.]*$/.test(s))).map((s) => s.split('.').pop());
-    if (req) { mounts.push({ prefix: m[3], spec: req[1], line: at(m.index), ...(mw.length ? { mw } : {}) }); continue; }
-    const args = m[4].replace(/\)\s*$/, '').split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][\w$.]*$/.test(s));
-    if (args.length) mounts.push({ prefix: m[3], var: args[args.length - 1], line: at(m.index), ...(args.length > 1 ? { mw: args.slice(0, -1).map((s) => s.split('.').pop()) } : {}) });
+  // app.use('/admin', requireStaff, adminRouter), app.route('/api/orders', createOrderRoutes(db)): the whole
+  // argument list, even when it wraps onto the next lines, and a router made by a call is named after the
+  // function that makes it. A use('/api/admin/*', gate) whose path ends in * is middleware, never a mount:
+  // Hono puts it in front of everything under that path registered after it on the same app.
+  const scoped = [];
+  const mountPaths = new Set(); // `${line}|${path}` of each mount's path, which isn't a request this file makes
+  const named = (refs) => refs.filter(Boolean).map((r) => r.name.split('.').pop());
+  for (const m of all(/\b([A-Za-z_$][\w$]*)\.(use|route)\(\s*["'`](\/[^"'`]*|\*)["'`]\s*,/g, code)) {
+    const args = splitArgs(callArgs(code, m.index + m[0].length));
+    const refs = args.map(argRef);
+    const line = at(m.index);
+    mountPaths.add(`${at(m.index + m[0].lastIndexOf(m[3]))}|${m[3]}`);
+    if (m[2] === 'use' && m[3].endsWith('*')) { scoped.push({ on: m[1], base: m[3].replace(/\/?\*$/, ''), mw: named(refs), line }); continue; }
+    if (m[3].includes('*')) continue;
+    const req = /^require\(\s*["']([^"']+)["']\s*\)$/.exec(args[args.length - 1] || '');
+    const router = refs[refs.length - 1];
+    const mw = named(refs.slice(0, -1));
+    const rest = { line, on: m[1], ...(mw.length ? { mw } : {}) };
+    if (req) mounts.push({ prefix: m[3], spec: req[1], ...rest });
+    else if (router) mounts.push({ prefix: m[3], var: router.name, ...(router.call ? { call: true } : {}), ...rest });
   }
+  // what each path-scoped use puts in front of the later mounts and routes under its path on the same app
+  const under = (p, base) => !base || p === base || p.startsWith(base + '/');
+  const scopedMw = (on, p, line) => scoped.filter((u) => u.on === on && u.line < line && under(p, u.base)).flatMap((u) => u.mw);
+  for (const mt of mounts) { const mw = [...new Set([...scopedMw(mt.on, mt.prefix, mt.line), ...(mt.mw || [])])]; if (mw.length) mt.mw = mw; }
+  for (const r of routes) { const mw = [...new Set(scopedMw(r.var, r.path, r.line))]; if (mw.length) r.mw = mw; }
   // Fastify plugins: app.register(ticketRoutes, { prefix: '/api/tickets' }), or register(import('./x.js'), …).
   // A plugin registered with no prefix still sits under its parent's, so it's a mount with an empty one.
   // Only an imported plugin counts: one defined in this file would put its prefix on every route here.
@@ -277,7 +346,9 @@ function extractJs(src, filePath) {
 
   // a mount's prefix (including Fastify's `prefix: '/api'` option, often on a line of its own) isn't a request
   const serverLine = /\b\w+\.(use|route)\(\s*["'`]\/|\b(?:app|server|fastify|hono|routes?|router|[a-z]+Router)\.(?:get|post|put|patch|delete|all|options|head)\(\s*["'`]\/|\bprefix\s*:\s*["'`]\//;
-  const { calls, hosts } = extractCalls(code, at, { skip: serverLine });
+  const { calls: found, hosts } = extractCalls(code, at, { skip: serverLine });
+  // (nor is one on a line of its own: app.route(\n  '/api/orders',\n  createOrderRoutes(db))
+  const calls = found.filter((c) => !mountPaths.has(`${c.line}|${c.path}`));
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
