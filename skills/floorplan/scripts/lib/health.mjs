@@ -195,7 +195,10 @@ function findSecrets(src, f, out) {
   const unquoted = /^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*[:=]\s*([^\s#'"]{6,200})\s*(?:#.*)?$/;
   lines.forEach((text, i) => {
     if (text.length > 400 || ENV_LOOKUP.test(text) || PUBLIC_TOKEN_LINE.test(text) || inDoc.has(i + 1) || /^\s*(#|\/\/|\*|\/\*|<!--)/.test(text)) return;
-    const pairs = [...text.matchAll(quoted)].map((m) => [m[2], m[4]]);
+    // in SQL, `PASSWORD :'app_password'` is a psql variable filled in when the script runs, not the password
+    // (a quoted key, as in JSON kept in a SQL string, is still a key and value)
+    const psqlVariable = (m) => f.lang === 'sql' && !m[1] && /^[A-Za-z_]\w*$/.test(m[4]) && m[0].endsWith(`:${m[3]}${m[4]}${m[3]}`);
+    const pairs = [...text.matchAll(quoted)].filter((m) => !psqlVariable(m)).map((m) => [m[2], m[4]]);
     if (!pairs.length && (f.category === 'config' && CONFIG_LANGS.has(f.lang))) { const u = unquoted.exec(text); if (u) pairs.push([u[1], u[2]]); }
     for (const [name, value] of pairs) {
       const n = snake(name.split('.').pop());
