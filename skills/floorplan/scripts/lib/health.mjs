@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob } from './common.mjs';
+import { callArgs, splitArgs, stringEnd } from './extract.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -219,7 +220,21 @@ const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_ses
 const isDbDep = (name) => DB_DEPENDENCY.test(snake(name));
 const isGuardDep = (name) => isGuardName(name) && !isDbDep(name);
 // A handler body that inspects the caller itself.
-const INLINE_CHECK = /request\.headers(?:\.get)?\(?\s*\[?\s*['"](authorization|x-api-key|x-[\w-]*(token|key|secret|signature)[\w-]*)['"]|req\.headers(?:\.|\[\s*['"])(authorization|x-api-key)|\b(verify|check|require|validate|authenticate|authorize)_?\w*(auth|token|session|user|key|signature|webhook|hmac|jwt|device|staff|admin|permission|role|request|caller)\w*\s*\(|\bcurrent_user\b|get_jwt_identity|verify_jwt_in_request|compare_digest|abort\(\s*40[13]\b|,\s*40[13]\s*\)?\s*$|status(?:Code)?\s*[:=(]\s*40[13]\b|\.status\(\s*40[13]\s*\)|req\.user\b|req\.session\.user|req\.auth\b|jwt\.verify|jwtVerify|getServerSession|auth\(\)|currentUser\(|getAuth\(|auth\.getUser|getSession\(|verifyIdToken|getToken\(|\b(?:verify|check|require|validate|authenticate|authorize)\w*(?:Auth|Token|Session|Signature|Webhook|Hmac|Jwt|Secret|Permission|Role)\w*\s*\(|\bis_?(?:[Vv]alid_?)?(?:[Aa]uthorized|[Aa]uthenticated|[Ss]ignature|[Tt]oken|[Ss]ecret|[Aa]pi_?[Kk]ey)\w*\s*\(|timingSafeEqual|safeCompare|[!=]==?\s*(?:[`'"]Bearer\s+\$\{\s*)?process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)|process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)\w*\s*[!=]==?/m;
+const INLINE_CHECK_BASE = /request\.headers(?:\.get)?\(?\s*\[?\s*['"](authorization|x-api-key|x-[\w-]*(token|key|secret|signature)[\w-]*)['"]|req\.headers(?:\.|\[\s*['"])(authorization|x-api-key)|\b(verify|check|require|validate|authenticate|authorize)_?\w*(auth|token|session|user|key|signature|webhook|hmac|jwt|device|staff|admin|permission|role|request|caller)\w*\s*\(|\bcurrent_user\b|get_jwt_identity|verify_jwt_in_request|compare_digest|abort\(\s*40[13]\b|,\s*40[13]\s*\)?\s*$|status(?:Code)?\s*[:=(]\s*40[13]\b|\.status\(\s*40[13]\s*\)|req\.user\b|req\.session\.user|req\.auth\b|jwt\.verify|jwtVerify|getServerSession|auth\(\)|currentUser\(|getAuth\(|auth\.getUser|getSession\(|verifyIdToken|getToken\(|\b(?:verify|check|require|validate|authenticate|authorize)\w*(?:Auth|Token|Session|Signature|Webhook|Hmac|Jwt|Secret|Permission|Role)\w*\s*\(|\bis_?(?:[Vv]alid_?)?(?:[Aa]uthorized|[Aa]uthenticated|[Ss]ignature|[Tt]oken|[Ss]ecret|[Aa]pi_?[Kk]ey)\w*\s*\(|timingSafeEqual|safeCompare|\b(?:safeEqual|constantTimeEqual)\s*\(|[!=]==?\s*(?:[`'"]Bearer\s+\$\{\s*)?process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)|process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)\w*\s*[!=]==?/m;
+// Hono's c.req.header('Authorization'), in any case, and its x-…-token / key / secret / signature headers
+const ci = (word) => word.replace(/[a-z]/g, (ch) => `[${ch}${ch.toUpperCase()}]`);
+const HONO_HEADER = String.raw`\.req\.header\(\s*['"\x60](?:${ci('authorization')}|[xX]-[\w-]*(?:${ci('token')}|${ci('key')}|${ci('secret')}|${ci('signature')})[\w-]*)['"\x60]`;
+const INLINE_CHECK = new RegExp(`${INLINE_CHECK_BASE.source}|${HONO_HEADER}`, 'm');
+// A secret handed straight to a middleware, privateCaller(token) or requireKey(env.API_KEY): it checks
+// callers with that secret. Matched on the snake_case name of each argument.
+const SECRET_ARG = /(?:^|_)(?:token|secret|key|apikey|bearer)$/;
+/** The function a middleware argument calls when it's handed a secret, else null. */
+function tokenGuard(arg) {
+  const m = /^(?:\.\.\.)?([A-Za-z_$][\w$.]*)\s*(?:<[^()]*>\s*)?\(([\s\S]*)\)$/.exec(arg);
+  if (!m) return null;
+  const secret = splitArgs(m[2]).some((a) => /^[A-Za-z_$][\w$.]*$/.test(a) && SECRET_ARG.test(snake(a.split('.').pop())));
+  return secret ? m[1].split('.').pop() : null;
+}
 // A Header parameter alone is NOT authentication. Count it only when the
 // handler checks that token and rejects a bad value with HTTP 401/403.
 function pyValidatedHeader(sig, body) {
@@ -383,6 +398,19 @@ function jsRoutes(src, f, out) {
     if (names.some(isGuardName)) uses.push({ v: m[1], line: src.slice(0, m.index).split('\n').length, name: names.find(isGuardName) });
   }
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
+  // a middleware handed a secret, app.use('*', privateCaller(token)): build counts that name as a check
+  // wherever it is mounted; without a path it guards this router's later routes (but isn't app-wide,
+  // since a router file often calls its own app `app`)
+  const tokenNames = new Set();
+  for (const m of src.matchAll(/\b(\w+)\.use\(/g)) {
+    const args = splitArgs(callArgs(src, m.index + m[0].length));
+    for (const name of args.map(tokenGuard).filter(Boolean)) {
+      tokenNames.add(name);
+      if (!/^["'`]/.test(args[0])) uses.push({ v: m[1], line: src.slice(0, m.index).split('\n').length, name });
+    }
+  }
+  for (const name of tokenNames) out.push({ k: 'token-guard', name });
+  const bodyOf = new Map();
 
   routes.forEach((r, idx) => {
     if (r.framework === 'table') return; // sign-in is checked by the dispatcher or inside the handler
@@ -413,17 +441,23 @@ function jsRoutes(src, f, out) {
     // or router.post('/x', requireAuth, createOrder) where the last one is the handler
     const head = lines.slice(r.line - 1, r.line + 4).join('\n');
     const call = /\.\w+\(\s*["'`][^"'`]*["'`]\s*,/.exec(head);
-    let args = '';
+    let args = '', own = '';
     if (call) {
       let depth = 1, j = call.index + call[0].length;
       for (; j < head.length && depth; j++) { if (head[j] === '(') depth++; else if (head[j] === ')') depth--; }
-      const own = head.slice(call.index + call[0].length, depth ? j : j - 1);
+      own = head.slice(call.index + call[0].length, depth ? j : j - 1);
       const fn = /(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(own);
       args = fn ? own.slice(0, fn.index) : own.slice(0, Math.max(0, own.lastIndexOf(',')));
     }
-    const mw = (args.match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isGuardName);
+    const mw = splitArgs(args).map(tokenGuard).find(Boolean) || (args.match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isGuardName);
     const next = routes[idx + 1]?.line || r.line + 60;
-    const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
+    // the route's own lines, plus what this file defines under the names its arguments call or pass,
+    // one level deep: app.post('/x', bodyLimit, (c) => postConsent(c, deps)) or app.post('/x', handleX)
+    const named = [...new Set(own.match(/(?<![\w$.])[A-Za-z_$][\w$]*(?![\w$]|\s*\.)/g) || [])].slice(0, 12).map((name) => {
+      if (!bodyOf.has(name)) bodyOf.set(name, definitionOf(src, name));
+      return bodyOf.get(name);
+    });
+    const body = [lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n'), ...named].join('\n');
     const prior = uses.find((u) => u.v === r.var && u.line < r.line);
     if (mw) Object.assign(rec, { guard: mw, via: 'middleware' });
     else if (prior) Object.assign(rec, { guard: prior.name, via: 'router' });
@@ -432,6 +466,34 @@ function jsRoutes(src, f, out) {
     if (PUBLIC_RESPONSE.test(body)) rec.publicResponse = true;
     out.push(rec);
   });
+}
+
+/**
+ * The code of a function or constant this file defines under `name` (`function name(`, `async function
+ * name(`, `const name =`), up to where it ends, at most 150 lines. '' when the file doesn't define it.
+ */
+function definitionOf(src, name) {
+  const def = new RegExp(`(?:^|[^\\w$.])(?:async\\s+)?function\\s*\\*?\\s*${escapeRe(name)}\\s*[<(]|(?:^|[^\\w$.])(?:const|let|var)\\s+${escapeRe(name)}\\s*(?::[^=;\\n]+)?=(?![=>])`, 'm').exec(src);
+  if (!def) return '';
+  const start = def.index + (/^[\w$]/.test(def[0]) ? 0 : 1);
+  const lineHead = /[ \t]*(\S?)/y;
+  const indentAt = (i) => { lineHead.lastIndex = i; const m = lineHead.exec(src); return { n: m[0].length - m[1].length, first: m[1] }; };
+  const indent = indentAt(src.lastIndexOf('\n', start) + 1).n;
+  let depth = 0, lines = 0;
+  for (let i = start; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') i = stringEnd(src, i);
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') { depth--; if (!depth && c === '}') return src.slice(start, i + 1); }
+    else if (c === ';' && !depth) return src.slice(start, i + 1);
+    else if (c === '\n') {
+      // a statement without a semicolon ends where the next line is no deeper than its first
+      const next = indentAt(i + 1);
+      if (!depth && next.first && next.n <= indent && !/[.?:|&+)\]}{]/.test(next.first)) return src.slice(start, i);
+      if (++lines >= 150) return src.slice(start, i);
+    }
+  }
+  return src.slice(start);
 }
 
 /**
@@ -961,9 +1023,20 @@ export function buildHealth({ graph, scan, arch, root }) {
     });
   }
 
+  const sourceOf = new Map();
+  const readSource = (p) => {
+    if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
+    return sourceOf.get(p);
+  };
+
   // ---------- Stripe webhooks that don't check Stripe's signature ----------
   const stripeFiles = new Map(); // file -> finding
   for (const f of scan.files) if (live(f.path)) { const x = findings(f.path).find((y) => y.k === 'stripe-unsigned'); if (x) stripeFiles.set(f.path, x); }
+  // event handlers kept in their own file, imported only by webhooks that check the signature first
+  for (const file of [...stripeFiles.keys()]) {
+    const importers = graph.links.filter((l) => l.k === 'import' && l.b === 'f:' + file && l.a.startsWith('f:')).map((l) => l.a.slice(2)).filter((p) => !TEST_FILE.test(p));
+    if (importers.length && importers.every((p) => STRIPE_VERIFIED.test(readSource(p)))) stripeFiles.delete(file);
+  }
   for (const [file, x] of stripeFiles) {
     const routesHere = graph.routes.map((r, i) => ({ r, i })).filter(({ r }) => r.f === file && r.m !== 'GET');
     const it = itemFor(file);
@@ -1065,12 +1138,10 @@ export function buildHealth({ graph, scan, arch, root }) {
   }
   // a sign-in check applied where the route's router is mounted: app.use('/admin', requireStaff, adminRouter),
   // or app.include_router(admin.router, dependencies=[Depends(require_admin)]) (a database session isn't one)
-  const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isGuardDep)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardDep)]));
-  const sourceOf = new Map();
-  const readSource = (p) => {
-    if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
-    return sourceOf.get(p);
-  };
+  // (a middleware handed a secret somewhere, privateCaller(token), counts as one too)
+  const tokenGuards = new Set(scan.files.filter((f) => !TEST_FILE.test(f.path)).flatMap((f) => findings(f.path).filter((x) => x.k === 'token-guard').map((x) => x.name)));
+  const isMountGuard = (name) => isGuardDep(name) || tokenGuards.has(name);
+  const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isMountGuard)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isMountGuard)]));
   const published = new Map(); // repo -> addresses it lists for crawlers and AI tools
   for (const f of scan.files) {
     if (!LISTING_FILE.test(f.path) || TEST_FILE.test(f.path) || EXAMPLE_FILE.test(f.path)) continue;
