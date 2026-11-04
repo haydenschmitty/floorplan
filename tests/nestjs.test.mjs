@@ -39,10 +39,10 @@ test('a controller prefix joins each route decorator, and the handler is the met
     `  public async ship(@Param('id') id: string) {}`,
     `}`,
     ``,
-    `@Controller({ path: '/admin/stats', version: '1' })`,
-    `export class StatsController {`,
-    `  @Delete('cache')`,
-    `  clearCache() {}`,
+    `@Controller({ path: '/catalog/coupons', version: '1' })`,
+    `export class CouponsController {`,
+    `  @Delete('expired')`,
+    `  clearExpired() {}`,
     `}`,
     ``,
     `@Controller()`,
@@ -51,7 +51,7 @@ test('a controller prefix joins each route decorator, and the handler is the met
     `}`,
   ].join('\n'), 'typescript', 'api/src/orders.controller.ts');
   assert.deepEqual(r.routes.map((x) => `${x.method} ${x.path} ${x.handler}`), [
-    'GET /orders findAll', 'POST /orders/:id/ship ship', 'DELETE /admin/stats/cache clearCache', 'GET /health check',
+    'GET /orders findAll', 'POST /orders/:id/ship ship', 'DELETE /catalog/coupons/expired clearExpired', 'GET /health check',
   ]);
   assert.ok(r.routes.every((x) => x.framework === 'nest'));
   // the decorators' own arguments aren't requests the server makes
@@ -68,18 +68,18 @@ test('route decorators outside a NestJS file are left alone', () => {
 
 test('endpoints get the controller prefix, and the file-level handler is not swapped for the next class', () => {
   assert.deepEqual(routeKeys(graph), [
-    'DELETE /admin/stats/cache', 'GET /admin/reports/sales', 'GET /admin/stats', 'GET /health', 'GET /orders', 'GET /orders/:id',
+    'DELETE /catalog/coupons/expired', 'GET /catalog/coupons', 'GET /catalog/products/featured', 'GET /health', 'GET /orders', 'GET /orders/:id',
     'PATCH /orders/:id/ship', 'POST /orders',
   ]);
-  // ReportsController.sales is followed by the StatsController class: the endpoint is still named after sales()
-  const sales = graph.routes.find((r) => r.p === '/admin/reports/sales');
-  assert.equal(sales.h, 'sales');
+  // ProductsController.featured is followed by the CouponsController class: the endpoint is still named after featured()
+  const featured = graph.routes.find((r) => r.p === '/catalog/products/featured');
+  assert.equal(featured.h, 'featured');
 });
 
 test("the website's requests reach the controller that answers them", () => {
   const http = graph.links.filter((l) => l.k === 'http').map((l) => `${l.a.slice(2)} -> ${l.b.slice(2)} ${l.labels.join(', ')}`).sort();
   assert.deepEqual(http, [
-    'web/src/api.ts -> api/src/admin/admin.controller.ts GET /admin/reports/sales, DELETE /admin/stats/cache',
+    'web/src/api.ts -> api/src/catalog/catalog.controller.ts GET /catalog/products/featured, DELETE /catalog/coupons/expired',
     'web/src/api.ts -> api/src/orders/orders.controller.ts GET /orders, GET /orders/:id, POST /orders, PATCH /orders/:id/ship',
   ]);
 });
