@@ -33,10 +33,10 @@ after(() => cleanup(root));
 
 test('a router made by a call is a mount, also when the call wraps onto the next lines; Express mounts read as before', () => {
   const r = extract([
-    `import { createAdminWorldRoutes } from './admin-world.js';`,
+    `import { createAdminCatalogRoutes } from './admin-catalog.js';`,
     `import { createChatRoutes } from './chat.js';`,
     `import orders from './orders.js';`,
-    `app.route('/api/admin/world', createAdminWorldRoutes(secret));`,
+    `app.route('/api/admin/catalog', createAdminCatalogRoutes(secret));`,
     `app.route(`,
     `  "/api/chat",`,
     `  createChatRoutes(token, liveDeps(platform)),`,
@@ -47,7 +47,7 @@ test('a router made by a call is a mount, also when the call wraps onto the next
     `app.use('/ping', auth, (req, res) => res.send('ok'));`,
   ].join('\n'), 'typescript', 'api/app.ts');
   assert.deepEqual(r.mounts.map((m) => [m.prefix, m.var || m.spec, !!m.call, m.mw || []]), [
-    ['/api/admin/world', 'createAdminWorldRoutes', true, []],
+    ['/api/admin/catalog', 'createAdminCatalogRoutes', true, []],
     ['/api/chat', 'createChatRoutes', true, []],
     ['/admin', 'orders', false, ['requireStaff']],
     ['/legacy', './legacy', false, []],
@@ -61,24 +61,24 @@ test("a use() whose path ends in * is a check in front of the later mounts and r
   const r = extract([
     `app.route('/api/admin/early', early());`,
     `app.use('/api/admin/*', adminGate(secret, options));`,
-    `app.route('/api/admin/world', createWorld(secret));`,
+    `app.route('/api/admin/catalog', createCatalog(secret));`,
     `app.route('/api/shop', createShop());`,
     `app.get('/api/admin/stats', (c) => c.json({}));`,
     `app.get('/api/public', (c) => c.json({}));`,
-    `router.use('*', privateCaller(token));`,
+    `router.use('*', requireServiceKey(token));`,
     `router.post('/resolve', (c) => c.json({}));`,
   ].join('\n'), 'typescript', 'api/app.ts');
   assert.deepEqual(r.mounts.map((m) => [m.prefix, m.mw || []]), [
-    ['/api/admin/early', []], ['/api/admin/world', ['adminGate']], ['/api/shop', []],
+    ['/api/admin/early', []], ['/api/admin/catalog', ['adminGate']], ['/api/shop', []],
   ]);
   assert.deepEqual(r.routes.map((x) => [x.path, x.mw || []]), [
-    ['/api/admin/stats', ['adminGate']], ['/api/public', []], ['/resolve', ['privateCaller']],
+    ['/api/admin/stats', ['adminGate']], ['/api/public', []], ['/resolve', ['requireServiceKey']],
   ]);
 });
 
 test('Hono header reads, constant-time compares, named handlers and token middleware count as checks', () => {
   assert.deepEqual(routeChecks([
-    `async function postConsent(c, deps) {`,
+    `async function postNewsletter(c, deps) {`,
     `  const session = await deps.auth.getSession(c.req.raw.headers);`,
     `  return c.json(session);`,
     `}`,
@@ -92,13 +92,13 @@ test('Hono header reads, constant-time compares, named handlers and token middle
     `app.post('/a', async (c) => { if (!safeEqual(c.req.header('Authorization') ?? '', secret)) return c.text('no', 401); });`,
     `app.post('/b', async (c) => { const sig = c.req.header('X-Shop-Signature'); return c.json(await save(sig)); });`,
     `app.post('/c', async (c) => { if (!constantTimeEqual(a, b)) return c.text('no'); });`,
-    `app.post('/d', bodyLimit, (c) => postConsent(c, deps));`,
+    `app.post('/d', bodyLimit, (c) => postNewsletter(c, deps));`,
     `app.post('/e', handleRefund);`,
-    `app.post('/f', privateCaller(token), (c) => c.json({}));`,
+    `app.post('/f', requireServiceKey(token), (c) => c.json({}));`,
     `app.post('/g', rateLimit(limits), (c) => saveThing(c));`,
   ].join('\n')), [
     ['POST', 'inline', null], ['POST', 'inline', null], ['POST', 'inline', null], ['POST', 'inline', null], ['POST', 'inline', null],
-    ['POST', 'middleware', 'privateCaller'],
+    ['POST', 'middleware', 'requireServiceKey'],
     // a middleware handed nothing secret, and a handler that checks nothing, stay open
     ['POST', null, null],
   ]);
@@ -107,7 +107,7 @@ test('Hono header reads, constant-time compares, named handlers and token middle
 test('routes get the full address of every mount above them', () => {
   assert.deepEqual(routeKeys(graph), [
     'DELETE /api/admin/products/:id', 'GET /api/admin/orders', 'GET /api/admin/products', 'GET /health',
-    'POST /api/admin/products', 'POST /api/consent', 'POST /api/reviews', 'POST /internal/stock/release',
+    'POST /api/admin/products', 'POST /api/newsletter', 'POST /api/reviews', 'POST /internal/stock/release',
     'POST /internal/stock/reserve', 'POST /webhooks/inventory', 'POST /webhooks/payments', 'PUT /api/admin/orders/:id/refund',
   ]);
 });

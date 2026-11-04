@@ -6,7 +6,7 @@ import { createOrderAdminRoutes } from './admin/orders.js';
 import { createStockRoutes } from './internal/stock.js';
 import { createInventoryWebhookRoutes } from './webhooks/inventory.js';
 import { createPaymentWebhookRoutes } from './webhooks/payments.js';
-import { createConsentRoutes } from './consent.js';
+import { createNewsletterRoutes } from './newsletter.js';
 import { createReviewRoutes } from './reviews.js';
 
 const app = new Hono();
@@ -26,7 +26,7 @@ app.route(
 app.route('/internal/stock', createStockRoutes(stockToken));
 app.route('/webhooks/inventory', createInventoryWebhookRoutes(adminSecret));
 app.route('/webhooks/payments', createPaymentWebhookRoutes());
-app.route('/api/consent', createConsentRoutes({ pageSize: 10 }));
+app.route('/api/newsletter', createNewsletterRoutes({ pageSize: 10 }));
 app.route('/api/reviews', createReviewRoutes());
 
 export default app;

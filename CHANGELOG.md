@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- **Hono endpoints get their full address, and Health reads Hono's checks:** Floorplan now reads a router that a function makes, as in `app.route('/api/admin/world', createWorldRoutes(secret))`, also when the call continues on the next lines. Before, Floorplan missed these mounts, so the endpoints had no prefix (`PUT /filters`) and Health said that anyone could change data through them. Health now also finds these checks:
+- **Hono endpoints get their full address, and Health reads Hono's checks:** Floorplan now reads a router that a function makes, as in `app.route('/api/admin/catalog', createCatalogRoutes(secret))`, also when the call continues on the next lines. Before, Floorplan missed these mounts, so the endpoints had no prefix (`PUT /filters`) and Health said that anyone could change data through them. Health now also finds these checks:
   - a check on all addresses under a path, `app.use('/api/admin/*', adminGate(secret))`, for the routers and endpoints that come after it, and `app.use('*', check)` in a router;
-  - a middleware that gets a secret, like `privateCaller(token)`;
+  - a middleware that gets a secret, like `requireServiceKey(token)`;
   - `c.req.header('Authorization')`, `safeEqual()` and `constantTimeEqual()` in a handler;
-  - a check in a function that the route names, like `(c) => postConsent(c)`, when the same file defines that function;
+  - a check in a function that the route names, like `(c) => postNewsletter(c)`, when the same file defines that function;
   - Stripe event code in a file of its own, when each file that imports it checks Stripe's signature.
 
   Health still reports an endpoint that has no check. Fixed by @asigdel29.

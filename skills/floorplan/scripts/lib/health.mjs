@@ -225,7 +225,7 @@ const INLINE_CHECK_BASE = /request\.headers(?:\.get)?\(?\s*\[?\s*['"](authorizat
 const ci = (word) => word.replace(/[a-z]/g, (ch) => `[${ch}${ch.toUpperCase()}]`);
 const HONO_HEADER = String.raw`\.req\.header\(\s*['"\x60](?:${ci('authorization')}|[xX]-[\w-]*(?:${ci('token')}|${ci('key')}|${ci('secret')}|${ci('signature')})[\w-]*)['"\x60]`;
 const INLINE_CHECK = new RegExp(`${INLINE_CHECK_BASE.source}|${HONO_HEADER}`, 'm');
-// A secret handed straight to a middleware, privateCaller(token) or requireKey(env.API_KEY): it checks
+// A secret handed straight to a middleware, requireServiceKey(token) or requireKey(env.API_KEY): it checks
 // callers with that secret. Matched on the snake_case name of each argument.
 const SECRET_ARG = /(?:^|_)(?:token|secret|key|apikey|bearer)$/;
 /** The function a middleware argument calls when it's handed a secret, else null. */
@@ -398,7 +398,7 @@ function jsRoutes(src, f, out) {
     if (names.some(isGuardName)) uses.push({ v: m[1], line: src.slice(0, m.index).split('\n').length, name: names.find(isGuardName) });
   }
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
-  // a middleware handed a secret, app.use('*', privateCaller(token)): build counts that name as a check
+  // a middleware handed a secret, app.use('*', requireServiceKey(token)): build counts that name as a check
   // wherever it is mounted; without a path it guards this router's later routes (but isn't app-wide,
   // since a router file often calls its own app `app`)
   const tokenNames = new Set();
@@ -452,7 +452,7 @@ function jsRoutes(src, f, out) {
     const mw = splitArgs(args).map(tokenGuard).find(Boolean) || (args.match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isGuardName);
     const next = routes[idx + 1]?.line || r.line + 60;
     // the route's own lines, plus what this file defines under the names its arguments call or pass,
-    // one level deep: app.post('/x', bodyLimit, (c) => postConsent(c, deps)) or app.post('/x', handleX)
+    // one level deep: app.post('/x', bodyLimit, (c) => postNewsletter(c, deps)) or app.post('/x', handleX)
     const named = [...new Set(own.match(/(?<![\w$.])[A-Za-z_$][\w$]*(?![\w$]|\s*\.)/g) || [])].slice(0, 12).map((name) => {
       if (!bodyOf.has(name)) bodyOf.set(name, definitionOf(src, name));
       return bodyOf.get(name);
@@ -1138,7 +1138,7 @@ export function buildHealth({ graph, scan, arch, root }) {
   }
   // a sign-in check applied where the route's router is mounted: app.use('/admin', requireStaff, adminRouter),
   // or app.include_router(admin.router, dependencies=[Depends(require_admin)]) (a database session isn't one)
-  // (a middleware handed a secret somewhere, privateCaller(token), counts as one too)
+  // (a middleware handed a secret somewhere, requireServiceKey(token), counts as one too)
   const tokenGuards = new Set(scan.files.filter((f) => !TEST_FILE.test(f.path)).flatMap((f) => findings(f.path).filter((x) => x.k === 'token-guard').map((x) => x.name)));
   const isMountGuard = (name) => isGuardDep(name) || tokenGuards.has(name);
   const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isMountGuard)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isMountGuard)]));
