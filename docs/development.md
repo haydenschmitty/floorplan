@@ -85,6 +85,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `stack-health.test.mjs` | Health's checks for Supabase row-level security, Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
 | `django.test.mjs` | Django: an app's `urls.py` included under a prefix, and the website's requests matched to it |
 | `fastify.test.mjs` | Fastify: plugins registered with a prefix, nested registers, and the website's requests reaching the right plugin (sample in `fixtures/`) |
+| `url-builders.test.mjs` | web requests whose address a method of the same class builds (Angular services), directly or through another such method, and calls whose address wraps onto the next line; a builder's own template and a link that is never requested are left out |
 | `route-table-keys.test.mjs` | route tables keyed by `"METHOD /path"` in JavaScript and Python: which tables count, each entry's handler, the website's requests reaching them, and Health staying quiet about their sign-in (sample in `fixtures/`) |
 | `firebase.test.mjs` | Firebase Cloud Functions: callables and onRequest functions as endpoints, the website's calls to them, Screens, Health, background functions (React + Firebase sample in `fixtures/`) |
 | `blueprint.test.mjs` | a map planned from a PRD before any code exists: plan.json errors, endpoints and calls, Screens, the design review, refreshing and switching to the real code (sample PRD in `fixtures/`) |

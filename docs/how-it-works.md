@@ -35,7 +35,9 @@ The most useful lines on the map connect a screen's web requests to the server c
 - **Finds requests** made with `fetch`, axios, ky, `requests` and similar, including:
   - addresses built in a variable first: `const url = …; api.get(url)`;
   - template strings with nested parts;
-  - small helpers in the same file that add a prefix, like `call('/definitions')`.
+  - small helpers in the same file that add a prefix, like `call('/definitions')`;
+  - methods of a service class that build the address, like `this.http.post(this.url(id, '/ship'), body)` (Angular services and the like), including one that builds on another;
+  - calls whose address is on the line below, like `this.http.patch<Order>(` followed by the template string.
 - **Firebase Cloud Functions** are called by name rather than by address. A callable function (`onCall`) shows up as `CALL /approveItem` under the name your functions entry file exports it as, and the website's `httpsCallable(functions, 'approveItem')` calls reach it, including through a helper of your own that wraps `httpsCallable`. An `onRequest` function is an ordinary endpoint at `/<name>`, and an Express app passed to it keeps its own routes under that name. Scheduled and other background functions (Firestore, Storage, Pub/Sub) are listed for the AI to place on the map.
 - **Matches** the two. When a request only spells out part of the address, because the base URL lives in settings, Floorplan learns each client's base path and prefers matches that fit it.
 

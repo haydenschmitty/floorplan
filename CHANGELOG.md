@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Requests built by a service method:** an Angular service (or any class) that builds its addresses in a method, like `this.http.post(this.url(id, '/ship'), {})` with `url()` returning a template string, now has those requests on the map, including methods that build on another one (`itemUrl()` calling `url()`). Before, they were missed or matched to the wrong endpoint from their last piece alone (`/ship`).
+- **Requests whose address is on the next line:** `this.http.patch<Order>(` with the address on the line below now counts, with its method. Before, such a request was only found when its address happened to contain a word like `api` or `base`.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.
