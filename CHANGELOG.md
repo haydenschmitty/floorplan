@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Interface language (EN/FR):** a language picker (flag button + first-visit setup) translates the whole map UI to French, persisted in `~/.floorplan/settings.json`; the glossary pop-ups and all extension panels follow the choice.
+- **Answering engines:** the Ask bar can run on Claude, Codex, Devin (`devin -p`) or Devin Cloud, with a per-engine model picker; a guided sign-in dialog helps when the engine can't answer, and an MCP mode (`floorplan-mcp.mjs` stdio server) lets your own agent answer instead.
+- **Theme toggle** now cycles light ↔ dark only.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

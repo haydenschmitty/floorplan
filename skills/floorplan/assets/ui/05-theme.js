@@ -1,19 +1,22 @@
-// The Theme button: Auto (follows your device) -> Light -> Dark -> Auto. The choice is remembered on this
+// The Theme button toggles Light <-> Dark. The choice is remembered on this
 // device. The theme itself is picked by a tiny script at the top of viewer.html, before anything is drawn,
 // so the page never flashes the wrong colours; this file only adds the button and keeps it in step.
 (() => {
   const SC = window.Floorplan;
   const T = window.floorplanTheme;
   if (!SC || !T) return;
+  const TT = (s, v) => { s = (SC.t || ((x) => x))(s); if (v) for (const k in v) s = s.replaceAll('{' + k + '}', v[k]); return s; };
 
   const ICON = {
     auto: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
     light: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>',
     dark: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
   };
-  const NAME = { auto: 'Auto (follows your device)', light: 'Light', dark: 'Dark' };
-  const WORD = { auto: 'Auto', light: 'Light', dark: 'Dark' };
-  const NEXT = { auto: 'light', light: 'dark', dark: 'auto' };
+  const NAME = { light: 'Light', dark: 'Dark' };
+  const WORD = { light: 'Light', dark: 'Dark' };
+  const NEXT = { light: 'dark', dark: 'light' };
+  // current applied theme (never 'auto'): read what the page actually shows
+  const current = () => document.documentElement.getAttribute('data-theme') || 'light';
 
   const style = document.createElement('style');
   style.textContent = `
@@ -34,16 +37,16 @@
   status.setAttribute('role', 'status');
   document.body.appendChild(status);
 
-  const btn = SC.addHeaderButton({ id: 'theme-toggle', svg: ICON.auto, onClick: () => {
-    const next = NEXT[T.get()];
+  const btn = SC.addHeaderButton({ id: 'theme-toggle', svg: ICON.light, onClick: () => {
+    const next = NEXT[current()];
     T.set(next);
-    status.textContent = `Theme is now ${next === 'auto' ? 'Auto, following your device' : WORD[next]}.`;
+    status.textContent = TT('Theme is now {w}.', { w: TT(WORD[next]) });
   } });
 
   const show = () => {
-    const c = T.get();
+    const c = current();
     btn.querySelector('svg').innerHTML = ICON[c];
-    const text = `Theme: ${NAME[c]}. Press for ${WORD[NEXT[c]]}.`;
+    const text = TT('Theme: {cur}. Press for {next}.', { cur: TT(NAME[c]), next: TT(WORD[NEXT[c]]) });
     btn.title = text;
     btn.setAttribute('aria-label', text);
   };
