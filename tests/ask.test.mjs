@@ -1,4 +1,4 @@
-// Asking questions on the map: serve.mjs runs the Claude Code CLI or Codex on the person's own sign-in,
+// Asking questions on the map: serve.mjs runs a supported agent CLI on the person's own sign-in,
 // read-only, and turns their event stream into progress lines and an answer board. Stand-in CLIs
 // (fixtures/fake-cli) record what they were given, so these run without either one installed.
 import { test, before, after } from 'node:test';
@@ -67,6 +67,72 @@ test('with only Codex installed, questions run through Codex, read-only and out 
   assert.equal(fs.realpathSync(flag('-C')), fs.realpathSync(root));
   assert.match(call.input, /How do refunds work\?/);
   assert.match(call.input, /node floorplan\/query\.mjs/);
+});
+
+test('with only GitHub Copilot installed, questions run through its read-only programmatic mode', async () => {
+  const s = await serve({
+    FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'),
+    FLOORPLAN_CODEX: path.join(root, 'no-such-cli'),
+    FLOORPLAN_COPILOT: path.join(FAKE, 'fake-copilot.mjs'),
+    COPILOT_CLI: '1',
+    COPILOT_ALLOW_ALL: 'true',
+    COPILOT_ASSISTED_APPROVAL: 'true',
+    COPILOT_AGENT_SESSION_ID: 'parent-session',
+    COPILOT_MCP_APPS: 'parent-apps',
+    COPILOT_TRAMPOLINE_TOKEN: 'parent-token',
+  });
+  assert.equal(s.page.engine, 'copilot');
+  assert.equal(s.page.cli, true);
+  assert.equal(s.page.change, false);
+
+  const events = await ask(s, 'How do refunds work?');
+  assert.deepEqual(pick(events, 'progress').map((p) => p.text), ['Searching code for "refund"', 'Reading shop-api/routes/orders.js']);
+  const [answer] = pick(events, 'answer');
+  assert.equal(answer.title, 'Refunds');
+  assert.deepEqual(answer.items.map((i) => i.id), ['f:shop-api/routes/orders.js']);
+  assert.equal(answer.session, 'test-copilot-session');
+
+  const [call] = s.calls();
+  assert.ok(call.args.includes('--output-format'));
+  assert.equal(call.args[call.args.indexOf('--output-format') + 1], 'json');
+  assert.ok(call.args.includes('--no-ask-user'));
+  assert.ok(call.args.includes('--sync-session=off'));
+  assert.ok(call.args.includes('--no-custom-instructions'));
+  assert.ok(call.args.includes('--disable-builtin-mcps'));
+  assert.ok(call.args.includes('--deny-tool=write'));
+  assert.ok(call.args.includes('--deny-tool=url'));
+  assert.ok(call.args.includes('--deny-tool=memory'));
+  assert.ok(call.args.includes('--deny-tool=shell'));
+  const available = call.args.indexOf('--available-tools');
+  assert.deepEqual(call.args.slice(available + 1, available + 4), ['view', 'rg', 'glob']);
+  assert.ok(!call.args.some((arg) => arg.startsWith('--allow-tool=shell')));
+  assert.equal(call.args[call.args.indexOf('-C') + 1], root);
+  assert.match(call.input, /How do refunds work\?/);
+  assert.match(call.input, /floorplan\/graph\.json/);
+  assert.doesNotMatch(call.input, /node floorplan\/query\.mjs/);
+  assert.deepEqual(call.inherited, []);
+});
+
+test('GitHub Copilot follow-ups resume the same local session', async () => {
+  const s = await serve({
+    FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'),
+    FLOORPLAN_CODEX: path.join(root, 'no-such-cli'),
+    FLOORPLAN_COPILOT: path.join(FAKE, 'fake-copilot.mjs'),
+  });
+  const [first] = pick(await ask(s, 'How do refunds work?'), 'answer');
+  await ask(s, 'Who can ask for one?', first.session);
+  const calls = s.calls();
+  assert.ok(calls[1].args.includes('--resume=test-copilot-session'));
+});
+
+test('a signed-out GitHub Copilot says so, so the map can tell the person to sign in', async () => {
+  const s = await serve({
+    FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'),
+    FLOORPLAN_CODEX: path.join(root, 'no-such-cli'),
+    FLOORPLAN_COPILOT: path.join(FAKE, 'fake-copilot.mjs'),
+  });
+  const [failure] = pick(await ask(s, 'SIGNED-OUT question'), 'failure');
+  assert.equal(failure.code, 'not_logged_in');
 });
 
 test('Codex gets an answer schema it accepts: every property required, nothing extra', async () => {

@@ -5,7 +5,7 @@ Thanks for helping. Bug reports, ideas and pull requests are all welcome.
 ## Reporting a bug
 
 [Open an issue](https://github.com/haydenschmitty/floorplan/issues/new/choose) and include:
-- what you asked Claude Code or Codex, and what happened;
+- what you asked your coding agent, which agent you used, and what happened;
 - the output it showed, especially lines starting with `✗` or `!`;
 - your project's languages and frameworks, and whether it's one repo or several;
 - your OS and Node version.

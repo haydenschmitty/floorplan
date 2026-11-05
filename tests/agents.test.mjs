@@ -8,9 +8,11 @@ import { lib, shopApp, run, readGraph, readJson, cleanup } from './helpers.mjs';
 
 const { detectAgent } = await lib('agent.mjs');
 
-test('Codex is recognised by the variables it sets for every command', () => {
+test('Codex and GitHub Copilot are recognised by the variables they set for every command', () => {
   assert.equal(detectAgent({}, { CODEX_THREAD_ID: 'abc' }), 'codex');
   assert.equal(detectAgent({}, { CODEX_SESSION_ID: 'abc' }), 'codex');
+  assert.equal(detectAgent({}, { COPILOT_CLI: '1' }), 'copilot');
+  assert.equal(detectAgent({}, { COPILOT_AGENT_SESSION_ID: 'abc' }), 'copilot');
   assert.equal(detectAgent({}, {}), 'claude');
   assert.equal(detectAgent({}, { CLAUDECODE: '1' }), 'claude');
 });
@@ -18,6 +20,7 @@ test('Codex is recognised by the variables it sets for every command', () => {
 test('--agent and FLOORPLAN_AGENT override the guess, and nonsense is ignored', () => {
   assert.equal(detectAgent({ agent: 'codex' }, {}), 'codex');
   assert.equal(detectAgent({ agent: 'Claude' }, { CODEX_THREAD_ID: 'abc' }), 'claude');
+  assert.equal(detectAgent({ agent: 'copilot' }, {}), 'copilot');
   assert.equal(detectAgent({}, { FLOORPLAN_AGENT: 'codex' }), 'codex');
   assert.equal(detectAgent({ agent: 'gpt' }, { CODEX_THREAD_ID: 'abc' }), 'codex');
 });
@@ -31,6 +34,20 @@ test('a map built under Codex records it, and leaves the project notes alone', (
     assert.match(out, /AGENT {2}Codex/);
     assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no CLAUDE.local.md');
     assert.ok(!fs.existsSync(path.join(root, 'AGENTS.md')), 'no AGENTS.md');
+  } finally { cleanup(root); }
+});
+
+test('a map built under GitHub Copilot records it, labels it, and leaves Claude notes alone', () => {
+  const root = shopApp();
+  try {
+    run('scan.mjs', root);
+    const out = run('build.mjs', root, '--agent', 'copilot');
+    assert.equal(readGraph(root).meta.agent, 'copilot');
+    assert.match(out, /AGENT {2}GitHub Copilot/);
+    assert.doesNotMatch(out, /CLAUDE\.LOCAL\.MD/);
+    assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no Claude notes');
+    assert.ok(!fs.existsSync(path.join(root, 'AGENTS.md')), 'no shared notes');
+    assert.match(fs.readFileSync(path.join(root, 'floorplan', 'index.html'), 'utf8'), /GitHub Copilot/);
   } finally { cleanup(root); }
 });
 

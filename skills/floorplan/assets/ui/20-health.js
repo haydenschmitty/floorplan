@@ -1,6 +1,6 @@
 // Health check panel: plain-language warnings from graph.health (lib/health.mjs) — leaked keys,
 // endpoints anyone can call, unused and oversized files — each with "Show on map" and a ready
-// prompt to paste into Claude Code or Codex. Talks to the viewer only through window.Floorplan.
+// prompt to paste into the coding agent. Talks to the viewer only through window.Floorplan.
 (() => {
   const SC = window.Floorplan;
   // an exported copy without Health leaves the button out: an empty list would read as "all clear"

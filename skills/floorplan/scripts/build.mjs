@@ -19,6 +19,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(HERE, '..');
 const args = parseArgs(process.argv.slice(2));
 const agent = detectAgent(args);
+const agentName = { claude: 'Claude Code', codex: 'Codex', copilot: 'GitHub Copilot' }[agent];
 const root = path.resolve(args._[0] || '.');
 const outDir = path.resolve(args.out || mapDir(root));
 const archFile = path.resolve(args.arch || path.join(outDir, 'architecture.json'));
@@ -456,7 +457,7 @@ fs.writeFileSync(path.join(outDir, 'index.html'), html);
 // (and without the reasons on dismissed health issues, which are notes to self)
 const sharedHealth = graph.health?.dismissed ? { ...graph.health, dismissed: graph.health.dismissed.map(({ reason, ...d }) => d) } : graph.health;
 if (args.artifact) fs.writeFileSync(path.join(outDir, 'artifact.html'), page({ ...graph, ...(sharedHealth ? { health: sharedHealth } : {}), meta: { ...graph.meta, root: null, agent: 'claude' } }));
-// Self-contained helpers next to the map: ask questions through the Claude Code CLI or Codex (serve.mjs)
+// Self-contained helpers next to the map: ask questions through the coding agent's CLI (serve.mjs)
 // and the graph lookups it hands to them (query.mjs). They need only Node, not this skill.
 fs.writeFileSync(path.join(outDir, 'query.mjs'), `${graphQuery}
 // ---- cli ----
@@ -477,11 +478,11 @@ if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detecte
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
   : `RECENT WORK  none highlighted${fs.existsSync(recentFile) ? '' : ' (no recent-work.json)'}`);
-// point future Claude Code sessions in this project at the map. Codex has no personal, uncommitted
-// equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone.
-if (agent === 'codex') report.push('AGENT  Codex: questions on the map run through Codex');
+// Point future Claude Code sessions in this project at the map. Other agents have no personal,
+// uncommitted equivalent, so they leave the project's notes alone.
+if (agent !== 'claude') report.push(`AGENT  ${agentName}: questions on the map run through ${agentName}`);
 if (scan.blueprint) report.push('BLUEPRINT  planned, not built yet: drawn from floorplan/plan.json');
-else if (agent !== 'codex' && !args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${writeClaudeMd(root, outDir, { add: !!args['claude-md'] })}`);
+else if (agent === 'claude' && !args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${writeClaudeMd(root, outDir, { add: !!args['claude-md'] })}`);
 report.push(trackedWarning ? `GIT  ! ${trackedWarning}` : 'GIT  floorplan/ is kept out of git (it ignores itself)');
 report.push('');
 report.push(`✓ wrote ${path.relative(root, path.join(outDir, 'index.html'))} (${fmtNum(Math.round(html.length / 1024))} KB) and graph.json`);
