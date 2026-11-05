@@ -38,7 +38,7 @@ For a **first-pass map** when a full file-by-file description pass is too expens
 
 This is a deliberate partial map, not a claim that every file has been reviewed. For larger projects, worksheets are split by module/key for parallel independent description work. A refresh retains lite mode and compares fingerprints even without git. The build summary reports excluded categories and files without detected static links; runtime-built URLs may not be resolved.
 
-**Windows PowerShell:** examples with `&&`, `${CLAUDE_SKILL_DIR}` and POSIX shell syntax assume bash/zsh. Run the Node scripts as separate PowerShell commands with ordinary quoted Windows paths, for example `node "C:\\path\\to\\floorplan\\skills\\floorplan\\scripts\\scan.mjs" "C:\\path\\to\\project"`. Git is optional.
+**Windows PowerShell:** examples with `&&`, `${CLAUDE_SKILL_DIR}` and POSIX shell syntax assume bash/zsh. Run the Node scripts as separate PowerShell commands with ordinary quoted Windows paths, for example `node "C:\path\to\floorplan\skills\floorplan\scripts\scan.mjs" "C:\path\to\project"`. Git is optional.
 
 ## Nothing built yet? Draw a blueprint
 
