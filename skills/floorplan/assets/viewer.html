@@ -120,6 +120,20 @@ header > * { pointer-events: auto; }
 .btn:hover { background: rgba(var(--ink), .07); color: var(--text); }
 .btn:active { transform: scale(.97); }
 .btn.icon { width: 36px; padding: 0; justify-content: center; }
+.btn.sel { padding: 0 10px; font: inherit; font-size: 13px; cursor: pointer; appearance: none; -webkit-appearance: none; background: transparent; }
+.btn.sel option { background: var(--bg, #fff); color: var(--text, #111); }
+.btn.icon { width: 36px; padding: 0; justify-content: center; font-size: 16px; }
+#setup-ov { position: fixed; inset: 0; z-index: 400; background: rgba(var(--ink, 255,255,255), .28); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; }
+.setup-card { width: min(330px, 88vw); background: var(--raise); border: 1px solid rgba(var(--ink), .1); border-radius: 16px; padding: 22px; color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.45); }
+.setup-title { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
+.setup-sub { margin: 0; color: var(--text-3); font-size: 12.5px; }
+.setup-card label { display: block; margin: 14px 0 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
+.setup-card select, .setup-card input { width: 100%; height: 38px; border-radius: 10px; border: 1px solid rgba(var(--ink), .16); background: var(--bg); color: var(--text); padding: 0 10px; font: inherit; box-sizing: border-box; }
+.setup-card input { margin-top: 6px; }
+.setup-card select option { background: var(--bg); color: var(--text); }
+.setup-note { font-size: 11.5px; color: var(--text-4); margin: 12px 0 0; min-height: 1em; }
+.setup-ok { margin-top: 14px; width: 100%; height: 40px; border-radius: 999px; border: 0; cursor: pointer; font-weight: 700; font-size: 14px; background: var(--accent, #4f7cff); color: #fff; }
+.setup-ok:hover { filter: brightness(1.1); }
 .btn.soft { background: rgba(var(--ink), .06); color: var(--text); }
 .btn.soft:hover { background: rgba(var(--ink), .1); }
 .btn.primary { background: var(--on); color: var(--on-text); }
@@ -614,11 +628,17 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
 'use strict';
 const G = window.FLOORPLAN;
 // who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map
-const AGENT = (window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent) === 'codex'
-  ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
-      signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
-  : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
-      signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
+// every engine the map can answer or take "Fix with" prompts through, keyed by id
+const AGENTS = {
+  claude: { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
+            signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' },
+  codex: { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
+           signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' },
+  devin: { id: 'devin', name: 'Devin', app: 'Devin', cli: 'the Devin CLI', docs: 'https://devin.ai/cli',
+           signIn: 'Run <code>devin auth login</code> in a terminal once to sign in, then ask again.' },
+};
+const agentFor = (id) => AGENTS[id] || AGENTS.claude;
+let AGENT = agentFor(window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent);
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
 if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.mjs.</p>'; return; }
 // a blueprint: planned from a PRD, so its files don't exist yet (no line counts, nothing to open in an editor)
@@ -640,6 +660,216 @@ let technicalFlag = false;
 const technical = () => technicalFlag;
 const METHODS = { GET: 1, POST: 1, PUT: 1, PATCH: 1, DELETE: 1, CALL: 1 };
 const store = { get(k, d) { try { return JSON.parse(localStorage.getItem('floorplan:' + k) ?? localStorage.getItem('show-code:' + k)) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem('floorplan:' + k, JSON.stringify(v)); } catch {} } };
+// ---------- i18n ----------
+// LANG: saved server-side in ~/.floorplan/settings.json (via /api/settings), with localStorage as
+// fallback for exported maps. t() translates a source string; translateDom() rewrites the rendered DOM
+// so every string — including ones built inside template literals — is covered.
+const LANGS = { en: 'English', fr: 'Français' };
+const I18N = { fr: {"Ask": "Poser une question", "Ask about this": "Poser une question là-dessus", "Ask about this connection": "Poser une question sur cette connexion", "Ask about this view": "Poser une question sur cette vue", "Ask anything about this codebase…": "Pose une question sur ce code…", "Ask a question about the plan": "Pose une question sur le plan", "Ask bar: show why asking is unavailable": "Barre de question : voir pourquoi elle est indisponible", "Asking is unavailable": "Les questions sont indisponibles", "Ask for a change, addition or removal, and the map is redrawn": "Demande un changement, un ajout ou un retrait, et la carte se redessine", "Answers come from Claude in the Claude app, using the map (not the source files)": "Les réponses viennent de Claude, en se basant sur la carte (pas sur les fichiers sources)", "Back to map": "Retour à la carte", "Behind the scenes": "Coulisses", "Build flow": "Créer le parcours", "Called from": "Appelé depuis", "Cancel": "Annuler", "Change": "Modifier", "Change undone": "Modification annulée", "Close": "Fermer", "Connection types": "Types de connexions", "Copy": "Copier", "Copy command": "Copier la commande", "Copy endpoint": "Copier l'endpoint", "Copy name": "Copier le nom", "Copy path": "Copier le chemin", "Could not load the ELK layout engine. Rebuild the map with build.mjs.": "Impossible de charger le moteur de disposition ELK. Reconstruis la carte avec build.mjs.", "Couldn't undo": "Impossible d'annuler", "Defined in": "Défini dans", "Delete flow": "Supprimer le parcours", "Depends on": "Dépend de", "Developer tools": "Outils développeur", "Drag to resize": "Glisser pour redimensionner", "Engine changed": "Moteur IA changé", "Saved, but this engine is not installed": "Enregistré, mais ce moteur n'est pas installé", "Answering engine": "Moteur de réponses", "Exit": "Quitter", "Exported copy": "Copie exportée", "Files involved": "Fichiers concernés", "Fit to screen": "Ajuster à l'écran", "Fit to screen (F)": "Ajuster à l'écran (F)", "Floorplan": "Floorplan", "Flows": "Parcours", "Guided flows": "Parcours guidés", "Go to source": "Aller à la source", "Go to target": "Aller à la cible", "Got it": "Compris", "Handled by": "Géré par", "Highlight recent work": "Surligner le travail récent", "Imported by": "Importé par", "Imported names": "Noms importés", "Install it": "L'installer", "Install the Claude Code CLI for a better experience": "Installe le CLI de l'agent pour une meilleure expérience", "Made with": "Fait avec", "Make this change": "Appliquer ce changement", "Map updated": "Carte mise à jour", "No call sites matched in the scanned code. It may be called by an external system, or through a URL built at runtime.": "Aucun appel trouvé dans le code analysé. Il est peut-être appelé par un système externe, ou via une URL construite à l'exécution.", "No data. Run build.mjs.": "Pas de données. Lance build.mjs.", "No description yet": "Pas encore de description", "No description yet.": "Pas encore de description.", "No flows in this copy.": "Pas de parcours dans cette copie.", "No matches": "Aucun résultat", "Nothing inside.": "Rien à l'intérieur.", "Nothing on the map matches that.": "Rien sur la carte ne correspond.", "On this board": "Sur ce panneau", "Open in editor": "Ouvrir dans l'éditeur", "Other": "Autre", "Outside services": "Services externes", "Plan updated": "Plan mis à jour", "Planned files": "Fichiers prévus", "Recent work": "Travail récent", "Redrawing the map": "Redessin de la carte", "Remove": "Retirer", "Search by name, description, path or route…": "Rechercher par nom, description, chemin ou route…", "Search files, routes, modules": "Rechercher fichiers, routes, modules", "Shortest chain of imports/HTTP calls from anything inside one item to anything inside another. Returns hops with ids.": "Chaîne la plus courte d'imports/appels HTTP entre deux éléments. Renvoie les étapes avec leurs ids.", "Show answer board": "Voir le panneau de réponse", "Show connections": "Voir les connexions", "Show details": "Voir les détails", "Show on map": "Voir sur la carte", "Show technical detail": "Voir le détail technique", "Something went wrong.": "Une erreur est survenue.", "Start here": "Commencer ici", "Systems": "Systèmes", "The CLI ended without an answer.": "Le CLI s'est terminé sans réponse.", "Toggle details": "Afficher/masquer les détails", "Toggle details (P)": "Afficher/masquer les détails (P)", "Tracing a dependency path": "Suivi d'un chemin de dépendance", "Up one level": "Monter d'un niveau", "Up one level (Backspace)": "Monter d'un niveau (Retour arrière)", "Used by": "Utilisé par", "Walkthrough": "Visite guidée", "What changed": "Ce qui a changé", "What should change here?": "Que faut-il changer ici ?", "Zoom in (+)": "Zoomer (+)", "Zoom out (−)": "Dézoomer (−)", "Apps people use": "Applications que les gens utilisent", "Added": "Ajouté", "claude": "claude", "click": "clic", "close": "fermer", "details": "détails", "endpoints": "endpoints", "esc": "échap", "for a better experience: it can read your source code, not just this map.": "pour une meilleure expérience : il peut lire ton code source, pas seulement cette carte.", "go there": "y aller", "inspector": "inspecteur", "installed to work.": "installé pour fonctionner.", "lines": "lignes", "more": "de plus", "navigate": "naviguer", "open": "ouvrir", "right-click": "clic droit", "screens": "écrans", "uses": "utilise", "yours": "à toi", "About the Claude Code CLI": "À propos du moteur de réponses", "Claude access was declined for this map. Reload the page to be asked again.": "L'accès à Claude a été refusé pour cette carte. Recharge la page pour redemander.", "Laying out…": "Mise en page…", "Loading": "Chargement", "Export": "Exporter", "Health": "Santé", "Screens": "Écrans", "Undo": "Annuler", "Question": "Question", "Answer": "Réponse", "Search": "Rechercher", "Working on the updated plan": "Travail sur le plan mis à jour", "Reading the map overview": "Lecture de la vue d'ensemble", "Searching the map": "Recherche dans la carte", "Querying the map": "Interrogation de la carte", "Searching code": "Recherche dans le code", "Listing files": "Liste des fichiers", "Reading a file": "Lecture d'un fichier", "Running a command": "Exécution d'une commande", "Reading the rest of a long file": "Lecture de la suite d'un long fichier", "e.g. How does an order end up charged through Stripe?": "ex. Comment une commande finit-elle facturée via Stripe ?", "Request a new flow": "Demander un nouveau parcours", "Fix with Claude": "Corriger avec Claude", "Fix with Codex": "Corriger avec Codex", "Build this with Claude": "Construire avec Claude", "Build this with Codex": "Construire ça avec Codex", "Resolve on the map": "Résoudre sur la carte", "Notify me": "Me prévenir", "Updated plan": "Plan mis à jour", "Assumptions": "Hypothèses", "Open questions": "Questions ouvertes", "Warnings": "Avertissements", "Design review": "Revue de conception", "Edit this file": "Modifier ce fichier", "Stop": "Arrêter", "Sending": "Envoi", "Ask a question": "Poser une question", "Type your question": "Écris ta question", "copy": "copier", "copied": "copié", "Copied": "Copié", "Copied!": "Copié !", "Loading…": "Chargement…", "saved": "enregistré", "new": "nouveau", "changed": "modifié", "New": "Nouveau", "Changed": "Modifié", "unassigned": "non assigné", "Unassigned": "Non assigné", "files": "fichiers", "file": "fichier", "route": "route", "routes": "routes", "session": "session", "Overview": "Vue d'ensemble", "Tour": "Visite", "Notes": "Notes", "Contains": "Contient", "Uses": "Utilise", "Web requests": "Requêtes web", "Calls": "Appels", "Events": "Événements", "Background jobs": "Tâches de fond", "Reads & writes data": "Lit et écrit des données", "Settings": "Réglages", "Imports": "Imports", "HTTP": "HTTP", "RPC": "RPC", "Queues": "Files d'attente", "Data": "Données", "Config": "Config", "Filters": "Filtres", "Show": "Afficher", "Hide": "Masquer", "Close tour": "Fermer la visite", "Next": "Suivant", "Previous": "Précédent", "Done": "Terminé", "Skip": "Passer", "Rename": "Renommer", "Delete": "Supprimer", "Yes": "Oui", "No": "Non", "OK": "OK", "Retry": "Réessayer", "Error": "Erreur", "Warning": "Avertissement", "Important": "Important", "All": "Tout", "None": "Aucun", "This card": "Cette carte", "this part": "cette partie", "In this copy": "Dans cette copie", "external services": "services externes", "external": "externe", "database": "base de données", "api": "api", "ui": "interface", "service": "service", "worker": "worker", "library": "bibliothèque", "feature": "fonctionnalité", "data": "données", "config": "config", "test": "test", "script": "script", "infra": "infra", "misc": "divers", "About the Claude CLI": "À propos du CLI Claude", "About the Codex CLI": "À propos du CLI Codex", "Codex access was declined for this map. Reload the page to be asked again.": "L'accès à Codex a été refusé pour cette carte. Recharge la page pour redemander.", "Answers come from Codex in the Codex app, using the map (not the source files)": "Les réponses viennent de Codex, en se basant sur la carte (pas sur les fichiers sources)", "Fix with Devin": "Corriger avec Devin", "Build this with Devin": "Construire ça avec Devin", "About the Devin CLI": "À propos du CLI Devin", "Devin access was declined for this map. Reload the page to be asked again.": "L'accès à Devin a été refusé pour cette carte. Recharge la page pour redemander.", "Answers come from Devin in the Devin app, using the map (not the source files)": "Les réponses viennent de Devin, en se basant sur la carte (pas sur les fichiers sources)", "Run <code>devin auth login</code> in a terminal once to sign in, then ask again.": "Lance <code>devin auth login</code> dans un terminal une fois pour te connecter, puis redemande.", "Run <code>claude</code> in a terminal once to sign in, then ask again.": "Lance <code>claude</code> dans un terminal une fois pour te connecter, puis redemande.", "Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.": "Ouvre l'app Codex (ou lance <code>codex login</code> dans un terminal) pour te connecter, puis redemande.", "More": "Plus", "Open": "Ouvrir", "Files": "Fichiers", "Recent work inside": "Travail récent à l'intérieur", "Not a problem": "Pas un problème", "Request a new flow…": "Demander un nouveau parcours…", "What was just worked on, on one board": "Ce qui vient d'être fait, sur un panneau", "A one-minute tour of this codebase": "Une visite d'une minute de ce code", "Export a copy of this map to share": "Exporter une copie de cette carte à partager", "Close (Esc)": "Fermer (Échap)", "Welcome to Floorplan": "Bienvenue dans Floorplan", "Pick your language and answering engine.": "Choisis ta langue et ton moteur de réponses.", "Language": "Langue", "You can change these later via the gear button.": "Tu pourras les modifier plus tard via le bouton engrenage.", "Let’s go": "C’est parti", "Language & engine": "Langue et moteur", "First visit? Pick your language and answering engine.": "Première visite ? Choisis ta langue et ton moteur de réponses.", "API key": "Clé API", "API keys": "Clés API", "credentials": "identifiants", "API": "API", "APIs": "API", "API client": "Client API", "App Router": "App Router", "Auto, following your device": "Auto, suit ton appareil", "Backend": "Backend", "Background job": "Tâche de fond", "Behind these screens": "Derrière ces écrans", "Blueprint": "Blueprint", "Build it": "Le construire", "CDN": "CDN", "CDNs": "CDN", "Cache": "Cache", "Claude Code": "Claude Code", "Cloud Run": "Cloud Run", "Coming soon": "Bientôt", "Component": "Composant", "Copy prompt": "Copier la demande", "Copy this request and paste it into": "Copie cette requête et colle-la dans", "Database": "Base de données", "Deploy": "Déployer", "Health check": "Bilan santé", "Details": "Détails", "Docker": "Docker", "container": "conteneur", "containers": "conteneurs", "Don't ask again": "Ne plus demander", "Download": "Télécharger", "Endpoint": "Endpoint", "One specific request the app can receive, like": "Une requête précise que l’app peut recevoir, comme", "Enter": "Entrée", "Environment variable": "Variable d’environnement", "Escape": "Échap", "Export a copy": "Exporter une copie", "Failed to fetch": "Échec de la récupération", "Find a screen…": "Trouver un écran…", "Fix these first": "À corriger en premier", "Flask": "Flask", "A Python toolkit for building web servers.": "Une boîte à outils Python pour créer des serveurs web.", "Floorplan Cloud": "Floorplan Cloud", "Good to tidy up": "Bon à ranger", "HTTP method": "Méthode HTTP", "HTTP methods": "Méthodes HTTP", "How would you use it?": "Comment l'utiliserais-tu ?", "Just me": "Juste moi", "Let me know": "Me tenir au courant", "MCP": "MCP", "MCP server": "Serveur MCP", "Model Context Protocol": "Model Context Protocol", "Mark as not a problem": "Marquer comme pas un problème", "Marked as not a problem": "Marqué comme pas un problème", "Marked as not a problem. Thanks for the report.": "Marqué comme pas un problème. Merci pour le signalement.", "Middleware": "Middleware", "Migration": "Migration", "Model": "Modèle", "Next.js": "Next.js", "NextJS": "Next.js", "Not a problem?": "Pas un problème ?", "Not now": "Pas maintenant", "Nothing urgent": "Rien d'urgent", "No problems found": "Aucun problème trouvé", "OAuth": "OAuth", "The standard behind": "Le standard derrière", "ORM": "ORM", "ORM model": "Modèle ORM", "ORM models": "Modèles ORM", "data model": "modèle de données", "One real path": "Un vrai parcours", "One shared map we all work from": "Une carte partagée sur laquelle on travaille tous", "Permissions": "Permissions", "Planned, not built yet: every card is a part the system would need.": "Planifié, pas encore construit : chaque carte est une partie dont le système aurait besoin.", "Postgres": "Postgres", "PostgreSQL": "PostgreSQL", "RDS": "RDS", "Cloud SQL": "Cloud SQL", "Pub/Sub": "Pub/Sub", "PubSub": "Pub/Sub", "Query": "Requête", "A question the app asks the database, like": "Une question que l’app pose à la base, comme", "Queue": "File d’attente", "React": "React", "Record": "Enregistrement", "Repository": "Dépôt", "Request": "Requête", "Resolve": "Résoudre", "Fix": "Corriger", "Review": "Revue", "Route": "Route", "SDK": "SDK", "SDKs": "SDK", "SQLAlchemy": "SQLAlchemy", "Scheduled job": "Tâche planifiée", "Screen": "Écran", "Everything behind": "Tout ce qui se cache derrière", "Script": "Script", "Secret": "Secret", "See everything behind this screen": "Voir tout ce qui est derrière cet écran", "Sending…": "Envoi…", "Server": "Serveur", "Session": "Session", "Show again": "Réafficher", "Shown on these screens": "Affiché sur ces écrans", "Start from a screen": "Partir d'un écran", "Start here tour": "Visite « Commencer ici »", "Storage bucket": "Bucket de stockage", "Tests": "Tests", "The codebase": "Le code", "There is not enough on this map for a tour yet.": "Il n'y a pas encore assez de choses sur cette carte pour une visite.", "These are automatic hints from when this copy was exported.": "Ce sont des indices automatiques datant de l'export de cette copie.", "This codebase": "Ce code", "This is a screen": "Ceci est un écran", "Token": "Jeton", "Type your answer, then press Enter": "Tape ta réponse, puis appuie sur Entrée", "Use my Claude email": "Utiliser mon email Claude", "Vitest": "Vitest", "Want an email when it launches?": "Tu veux un email au lancement ?", "We'll email": "On t’enverra un email à", "Webhook": "Webhook", "What people use": "Ce que les gens utilisent", "Where should we email you?": "À quelle adresse t'écrire ?", "Where the data lives": "Où vivent les données", "Who may use it": "Qui peut l'utiliser", "Why not? (optional) e.g. that value is a bcrypt hash, not the password": "Pourquoi ? (facultatif) ex. cette valeur est un hash bcrypt, pas le mot de passe", "With my team": "Avec mon équipe", "Worth fixing soon": "À corriger bientôt", "You asked:": "Tu as demandé :", "You're on the list": "Tu es sur la liste", "The decisions the plan still leaves open.": "Les décisions que le plan laisse encore ouvertes.", "The notes shown on file cards.": "Les notes affichées sur les fiches des fichiers.", "What was just changed, and why.": "Ce qui vient d'être changé, et pourquoi.", "Quick automatic check of the plan": "Vérification automatique rapide du plan", "Flows and the tour": "Parcours et visite", "Notes pinned to files": "Notes épinglées aux fichiers", "Show on the map": "Voir sur la carte", "Board": "Panneau", "Updated just now": "Mis à jour à l’instant", "Use my email": "Utiliser mon email", "Codebase": "Base de code", "Entrypoints": "Points d’entrée", "Click a card to inspect it · double-click to open it": "Clique sur une carte pour l’inspecter · double-clique pour l’ouvrir", "Language and engine settings": "Réglages de langue et de moteur", "other companies your app relies on": "les services externes dont ton app dépend", "Quick automatic check of secrets, open endpoints and leftover files": "Vérification automatique des secrets, endpoints ouverts et fichiers oubliés", "search": "recherche", "up": "remonter", "fit": "ajuster", "everything behind this screen": "tout ce qui se cache derrière cet écran", "1 of 3": "1 sur 3", "of": "sur", "Devin API key": "Clé API Devin", "Get a key at app.devin.ai → Settings → API Keys. It is stored in this project’s .env, never sent anywhere else.": "Récupère une clé sur app.devin.ai → Settings → API Keys. Elle est stockée dans le .env du projet, jamais envoyée ailleurs.", "Devin Cloud API": "Devin Cloud (API)", "free": "gratuit", "Local": "local", "Cloud": "cloud", "A map of the main parts of this app and how they talk to each other.": "Une carte des grandes parties de cette app et de la façon dont elles communiquent.", "Press Play to follow it through the code, one step at a time.": "Appuie sur Play pour le suivre dans le code, étape par étape.", "It also relies on {list}. They sit at the edge of the map; the lines show which parts talk to them.": "Elle repose aussi sur {list}. Ils sont au bord de la carte ; les lignes montrent quelles parties leur parlent.", "It has {n} screens.": "Elle contient {n} écrans.", "{n} outside services": "{n} services externes", "Replay this tour any time from <b>Start here</b> at the top.": "Rejoue cette visite quand tu veux depuis <b>Commencer ici</b> en haut.", " <b>Screens</b> shows everything behind any page.": " <b>Écrans</b> montre tout ce qui est derrière n'importe quelle page.", "Play it": "Lire", "Auto (follows your device)": "Auto (suit ton appareil)", "Light": "Clair", "Dark": "Sombre", "Auto": "Auto", "Theme is now {w}.": "Thème : {w}.", "Couldn't reach the map server, so this wasn't saved.": "Impossible de joindre le serveur de la carte, rien n'a été enregistré.", "Couldn't reach the map server.": "Impossible de joindre le serveur de la carte.", "important": "important", "worth fixing": "à corriger", "minor": "mineur", "design review": "revue de conception", "health check": "bilan santé", "Fix with {agent}": "Corriger avec {agent}", "Resolve with {agent}": "Résoudre avec {agent}", "This one isn't on the map. Use “{fix}” instead.": "Celui-ci n'est pas sur la carte. Utilise « {fix} » à la place.", "Edit the request if you like, then press Enter": "Modifie la demande si tu veux, puis appuie sur Entrée", "Copy this request and paste it into {app}, opened in your project folder. It explains what to change and asks before anything risky.": "Copie cette demande et colle-la dans {app}, ouvert dans le dossier de ton projet. Elle explique quoi changer et demande avant tout ce qui est risqué.", "Copy this request and paste it into {app}, opened in your project folder.": "Copie cette demande et colle-la dans {app}, ouvert dans le dossier de ton projet.", "Copied. Paste it into {app}.": "Copié. Colle-la dans {app}.", "Mark “{title}” as a false alarm and it moves to the bottom of the {check}, out of the count. It comes back if this check finds something new there.": "Marque « {title} » comme fausse alerte et elle passe en bas du {check}, hors du compte. Elle revient si ce contrôle trouve quelque chose de nouveau à cet endroit.", "Also tell the Floorplan developer, so the check gets better. This opens a GitHub issue you can read and edit before sending. It includes only what's shown below, never your code or any values.": "Préviens aussi le développeur de Floorplan pour améliorer le contrôle. Ça ouvre un ticket GitHub que tu peux lire et modifier avant envoi. Il ne contient que ce qui est montré ci-dessous, jamais ton code ni tes valeurs.", "Marked as not a problem.": "Marqué comme pas un problème.", "nothing urgent": "rien d'urgent", "We checked the plan for parts anyone on the internet could use, decisions the PRD leaves open, and pieces nothing connects to. Settling these now is cheaper than after it's built.": "On a vérifié le plan : les parties que n'importe qui sur internet pourrait utiliser, les décisions que le PRD laisse ouvertes et les morceaux auxquels rien ne se connecte. Les trancher maintenant coûte moins cher qu'une fois construit.", "We looked for keys left in the code or sent to the browser, data and parts of your app anyone on the internet can reach (Supabase tables, Firebase rules, Stripe webhooks, endpoints), leftover files and files too big to edit safely. It's a quick check, not a security audit.": "On a cherché les clés laissées dans le code ou envoyées au navigateur, les données et parties de ton app accessibles à n'importe qui sur internet (tables Supabase, règles Firebase, webhooks Stripe, endpoints), les fichiers oubliés et les fichiers trop gros pour être modifiés sans risque. C'est un contrôle rapide, pas un audit de sécurité.", "Nothing left to look at: you marked {n} {items} as not a problem.": "Plus rien à voir : tu as marqué {n} {items} comme pas un problème.", "item": "élément", "items": "éléments", "Nothing stood out.": "Rien n'a retenu l'attention.", "This is a quick automatic check, not a full {kind} review.": "C'est un contrôle automatique rapide, pas une revue {kind} complète.", "design": "conception", "security": "sécurité", "Back": "Retour", "These are automatic hints.": "Ce sont des indices automatiques.", "If one is wrong, “Not a problem” sets it aside.": "Si l'un est faux, « Pas un problème » le met de côté.", "“Resolve on the map” puts a request in the Ask bar's Change mode: finish or edit it, press Enter, and {agent} updates the plan and redraws the map. Undo puts it back.": "« Résoudre sur la carte » met une demande dans le mode Modifier de la barre de question : complète-la ou modifie-la, appuie sur Entrée, et {agent} met à jour le plan et redessine la carte. Annuler la remet.", "“{fix}” gives you a request to paste into {app}; {tail}": "« {fix} » te donne une demande à coller dans {app} ; {tail}", "it explains the choice and updates the plan once you decide": "elle explique le choix et met à jour le plan une fois décidé", "it checks the code before changing anything": "elle vérifie le code avant de changer quoi que ce soit", "You asked: {request}": "Tu as demandé : {request}", "Everything behind {url}": "Tout ce qui est derrière {url}", "No screen matches “{q}”.": "Aucun écran ne correspond à « {q} ».", "Find a screen.": "Trouver un écran.", "Pick a screen of the app to see everything behind it": "Choisis un écran de l'app pour voir tout ce qui est derrière", "Pick a page of the app to see the parts on it, the requests it makes and the server code behind them.": "Choisis une page de l'app pour voir les parties qui la composent, les requêtes qu'elle fait et le code serveur derrière.", "anyone": "tout le monde", "signed-in users": "les utilisateurs connectés", "only the team that runs the service": "seulement l'équipe qui gère le service", "the service that sends it, which must prove it": "le service qui l'envoie, et doit le prouver", "only our own services": "seulement nos propres services", "who may use it isn't decided yet: ask me": "qui peut l'utiliser n'est pas encore décidé : demande-moi", "for": "pour", "because": "parce que", "Planned{from}, not built yet. Every dashed card is a part the system would need.{pick}": "Planifié{from}, pas encore construit. Chaque carte en pointillés est une partie dont le système aurait besoin.{pick}", " from <b>{source}</b>": " depuis <b>{source}</b>", " Pick one and choose <b>{build}</b> to start on it.": " Choisis-en une et clique <b>{build}</b> pour commencer.", "Build this with {agent}": "Construire ça avec {agent}", "Not decided yet.": "Pas encore décidé.", " The design review lists it.": " La revue de conception le liste.", " Open on purpose: {why}": " Ouvert volontairement : {why}", "A ready request for {app} to build {what} the way the plan describes.": "Une demande toute prête pour {app} afin de construire {what} comme le plan le décrit.", "this file": "ce fichier", "One shared map for your whole team: notes everyone can see, kept in sync with GitHub and updated on every push.": "Une carte partagée pour toute ton équipe : des notes visibles par tous, synchronisées avec GitHub et mises à jour à chaque push.", "A map of my own projects": "Une carte de mes propres projets", "Only this email and your answer ({use}) are sent, to a private Google Sheet kept by Floorplan's maker. It's used only to tell you when Floorplan Cloud launches.": "Seuls cet email et ta réponse ({use}) sont envoyés, vers un Google Sheet privé gardé par le créateur de Floorplan. Il sert uniquement à te prévenir du lancement de Floorplan Cloud.", "with my team": "avec mon équipe", "just me": "juste moi", "Looking up your Claude Code account…": "Recherche de ton compte Claude Code…", "Claude Code isn't signed in with a Claude account here. Type an email instead.": "Claude Code n'est pas connecté avec un compte Claude ici. Tape un email à la place.", "Couldn't ask Claude Code. Type an email instead.": "Impossible de demander à Claude Code. Tape un email à la place.", "That doesn't look like an email address.": "Ça ne ressemble pas à une adresse email.", "Too many sign-ups right now. Try again in a little while.": "Trop d'inscriptions en ce moment. Réessaie dans un petit moment.", "Couldn't send that. Check your connection and try again.": "Impossible de l'envoyer. Vérifie ta connexion et réessaie.", "We'll email {v} when Floorplan Cloud launches. Thanks!": "On écrira à {v} au lancement de Floorplan Cloud. Merci !", "The guided walkthroughs, including ones you requested.": "Les visites guidées, y compris celles que tu as demandées.", "Lists the endpoints anyone can use and where secrets sit in the code (never their values). Only include it for people you trust.": "Liste les endpoints utilisables par n'importe qui et où sont les secrets dans le code (jamais leurs valeurs). Ne l'inclus que pour des gens de confiance.", "The map's server has restarted since this page opened. Reload the page and try again.": "Le serveur de la carte a redémarré depuis l'ouverture de cette page. Recharge la page et réessaie.", "The map's server couldn't export it.": "Le serveur de la carte n'a pas pu l'exporter.", "Downloaded {name}": "{name} téléchargé", "Couldn't reach the map's server. Ask {agent} to open the floorplan again, then try again.": "Impossible de joindre le serveur de la carte. Demande à {agent} de rouvrir le floorplan, puis réessaie.", "Exporting needs the map's server. Ask {agent} to “export the floorplan”, or run this in the project folder:": "L'export a besoin du serveur de la carte. Demande à {agent} « exporte le floorplan », ou lance ceci dans le dossier du projet :", "One HTML file with the whole map, to send to anyone. It opens in any browser with nothing to install, and has no Ask bar.": "Un seul fichier HTML avec toute la carte, à envoyer à n'importe qui. Il s'ouvre dans n'importe quel navigateur sans rien installer, et n'a pas de barre de question.", "It shows how {name} is put together: every part, file and endpoint, and the names of the functions inside, but not the code itself.": "Ça montre comment {name} est assemblé : chaque partie, fichier et endpoint, et les noms des fonctions à l'intérieur, mais pas le code lui-même.", "Sign in with…": "Se connecter avec…", "and": "et", "Back (←)": "Retour (◄)", "Theme: {cur}. Press for {next}.": "Thème : {cur}. Appuie pour {next}.", "Not decided yet.{listed}": "Pas encore décidé.{listed}", "Fix it": "Réparer", "Sign in to Devin": "Connexion à Devin", "Sign in to Claude Code": "Connexion à Claude Code", "Sign in to Codex": "Connexion à Codex", "Add a Devin API key": "Ajouter une clé API Devin", "I did it — check": "J’ai fait — vérifier", "Checking…": "Vérification…", "Signed in — retry your question": "Connecté — repose ta question", "Still not signed in — follow the steps then check again.": "Toujours pas connecté — suis les étapes puis revérifie.", "Could not reach the map server": "Impossible de joindre le serveur de la carte", "1. Open a terminal and run: <code>devin auth logout</code> then <code>devin auth login --force-manual-token-flow</code>": "1. Ouvre un terminal et lance : <code>devin auth logout</code> puis <code>devin auth login --force-manual-token-flow</code>", "2. Get your personal API key at <a href=\"https://app.devin.ai/settings/api-keys\" target=\"_blank\" rel=\"noopener\">app.devin.ai → Settings → API Keys</a> and paste it when asked": "2. Récupère ta clé API perso sur <a href=\"https://app.devin.ai/settings/api-keys\" target=\"_blank\" rel=\"noopener\">app.devin.ai → Settings → API Keys</a> et colle-la quand demandé", "3. Come back here and press <b>I did it — check</b>": "3. Reviens ici et appuie sur <b>J’ai fait — vérifier</b>", "1. In a terminal, run <code>claude auth login</code> and follow the link": "1. Dans un terminal, lance <code>claude auth login</code> et suis le lien", "2. Come back and press <b>I did it — check</b>": "2. Reviens et appuie sur <b>J’ai fait — vérifier</b>", "1. In a terminal, run <code>codex login</code>": "1. Dans un terminal, lance <code>codex login</code>", "1. Open <a href=\"https://app.devin.ai/settings/api-keys\" target=\"_blank\" rel=\"noopener\">app.devin.ai → Settings → API Keys</a>": "1. Ouvre <a href=\"https://app.devin.ai/settings/api-keys\" target=\"_blank\" rel=\"noopener\">app.devin.ai → Settings → API Keys</a>", "2. Put <code>DEVIN_API_KEY=your_key</code> in this project’s <code>.env</code> (or paste it in ⚙ → Devin Cloud API)": "2. Mets <code>DEVIN_API_KEY=ta_clé</code> dans le <code>.env</code> de ce projet (ou colle-la dans ⚙ → Devin Cloud API)", "3. Press <b>I did it — check</b>": "3. Appuie sur <b>J’ai fait — vérifier</b>", "1. Open a terminal and run, one at a time:<br><code>{EXE} auth logout</code><br><code>{EXE} auth login --force-manual-token-flow</code>": "1. Ouvre un terminal et lance, l’une après l’autre :<br><code>{EXE} auth logout</code><br><code>{EXE} auth login --force-manual-token-flow</code>", "2. When it asks for a token, paste your personal API key from <a href=\"https://app.devin.ai/settings/api-keys\" target=\"_blank\" rel=\"noopener\">app.devin.ai → Settings → API Keys</a>": "2. Quand il demande un token, colle ta clé API perso depuis <a href=\"https://app.devin.ai/settings/api-keys\" target=\"_blank\" rel=\"noopener\">app.devin.ai → Settings → API Keys</a>", "1. In a terminal, run <code>{EXE} auth login</code> and follow the link": "1. Dans un terminal, lance <code>{EXE} auth login</code> et suis le lien", "1. In a terminal, run <code>{EXE} login</code>": "1. Dans un terminal, lance <code>{EXE} login</code>", "Start sign-in": "Lancer la connexion", "Signing you in — check your browser…": "Connexion en cours — regarde ton navigateur…", "If a sign-in page opened, finish it, then press the button below.": "Si une page de connexion s’est ouverte, termine-la, puis appuie sur le bouton ci-dessous.", "1. Press <b>Start sign-in</b> below — I log you out and open the Devin sign-in in your browser": "1. Appuie sur <b>Lancer la connexion</b> ci-dessous — je te déconnecte et j’ouvre la connexion Devin dans ton navigateur", "2. Sign in (or paste your personal API key if it asks for one — get it at <a href=\"https://app.devin.ai/settings/api-keys\" target=\"_blank\" rel=\"noopener\">app.devin.ai → Settings → API Keys</a>)": "2. Connecte-toi (ou colle ta clé API perso s’il en demande une — sur <a href=\"https://app.devin.ai/settings/api-keys\" target=\"_blank\" rel=\"noopener\">app.devin.ai → Settings → API Keys</a>)", "Open API keys page": "Ouvrir la page des clés API", "Could not start the sign-in — run the commands manually.": "Impossible de lancer la connexion — fais les commandes à la main.", "Use my agent via MCP instead": "Utiliser mon agent via MCP à la place", "No luck signing in?": "La connexion ne marche pas ?", "MCP mode on — your agent answers via floorplan_ask": "Mode MCP activé — ton agent répond via floorplan_ask", "via MCP": "via MCP", "Use your own agent: it calls the floorplan_ask MCP tool": "Utilise ton agent : il appelle l’outil MCP floorplan_ask", "Ask through your agent — the floorplan MCP server exposes floorplan_ask, floorplan_engines, floorplan_set_engine": "Questionne via ton agent — le serveur MCP floorplan expose floorplan_ask, floorplan_engines, floorplan_set_engine", "MCP mode: the Ask bar is handled by <b>your own agent</b> — it calls <code>floorplan_ask</code> on the floorplan MCP server. Re-enable a built-in engine via ⚙.": "Mode MCP : la barre de question passe par <b>ton propre agent</b> — il appelle <code>floorplan_ask</code> sur le serveur MCP floorplan. Réactive un moteur intégré via ⚙.", "My own agent (MCP)": "Mon propre agent (MCP)", "Sign-in can fail on some accounts. You can keep using the map through <b>your own agent</b>: it calls <code>floorplan_ask</code> on the floorplan MCP server and reads the map for you.": "La connexion peut échouer sur certains comptes. Tu peux continuer à utiliser la carte via <b>ton propre agent</b> : il appelle <code>floorplan_ask</code> sur le serveur MCP floorplan et lit la carte pour toi.", "None of your endpoints check who is calling": "Aucun de tes endpoints ne vérifie qui appelle"} };
+let LANG = window.FLOORPLAN_SERVER?.lang || store.get('lang') || 'en';
+const t = (s) => (LANG === 'en' || !s ? s : (I18N[LANG]?.[s] ?? I18N[LANG]?.[s.replace(/’/g, "'")] ?? I18N[LANG]?.[s.replace(/'/g, '’')] ?? tr_tpl(s) ?? s));
+// ui/*.js helpers call T(text, {vars}) — same lookup plus {var} interpolation
+window.T = (s, vars) => { let r = t(s); for (const [k, v] of Object.entries(vars || {})) r = r.split('{' + k + '}').join(v); return r; };
+const TRANSLATE_ATTRS = ['title', 'placeholder', 'aria-label', 'value'];
+// strings with numbers or names inside them get regex templates instead of exact matches
+const T_TH = { Light: 'Clair', Dark: 'Sombre', Auto: 'Auto' };
+const TPL = [
+  [/^Affects (\d+) places? in here$/, (m) => `Concerne ${m[1]} endroit${m[1] === '1' ? '' : 's'} ici`],
+  [/^Health check: (\d+) things? needs? attention$/, (m) => `Bilan santé : ${m[1]} point${m[1] === '1' ? '' : 's'} à vérifier`],
+  [/^Theme: (\w+) \(follows your device\)\. Press for (\w+)\.$/, (m) => `Thème : ${T_TH[m[1]] || m[1]} (suit ton appareil). Appuie pour ${T_TH[m[2]] || m[2]}.`],
+  [/^Fix with (.+)$/, (m) => `Corriger avec ${m[1]}`],
+  [/^Ask anything about (.+)…$/, (m) => `Pose une question sur ${m[1]}…`],
+  [/^Answers come from the (.+?) CLI on this computer, which can read the source$/, (m) => `Les réponses viennent du CLI ${m[1]} sur cet ordinateur, qui peut lire les sources`],
+  [/^Answers come from (.+?), using the map \(not the source files\)$/, (m) => `Les réponses viennent de ${m[1]}, en se basant sur la carte (pas sur les fichiers sources)`],
+  [/^Requires the (.+?) CLI installed to work\.$/, (m) => `Nécessite le CLI ${m[1]} installé pour fonctionner.`],
+  [/^Install the (.+?) CLI for a better experience$/, (m) => `Installe le CLI ${m[1]} pour une meilleure expérience`],
+  [/^Walkthrough \((\d+)\)$/, (m) => `Étapes (${m[1]})`],
+  [/^Updated (\d+) minutes ago$/, (m) => `Mis à jour il y a ${m[1]} min`],
+  [/^Updated (\d+) hours ago$/, (m) => `Mis à jour il y a ${m[1]} h`],
+  [/^Updated (\d+) days ago$/, (m) => `Mis à jour il y a ${m[1]} j`],
+  [/^Updated just now$/, () => 'Mis à jour à l’instant'],
+  [/^Show (\d+) cards$/, (m) => `Voir les ${m[1]} cartes`],
+  [/^Show (\d+) changes?$/, (m) => `Voir ${m[1]} modification${m[1] === '1' ? '' : 's'}`],
+  [/^Show (\d+) things$/, (m) => `Voir ${m[1]} éléments`],
+  [/^(\d+) things? needs? attention$/, (m) => `${m[1]} point${m[1] === '1' ? '' : 's'} à vérifier`],
+  [/^(\d+) of (\d+)$/, (m) => `${m[1]} sur ${m[2]}`],
+  [/^(\d+) files?$/, (m) => `${m[1]} fichier${m[1] === '1' ? '' : 's'}`],
+  [/^(\d+) lines?$/, (m) => `${m[1]} ligne${m[1] === '1' ? '' : 's'}`],
+  [/^(\d+) endpoints?$/, (m) => `${m[1]} endpoint${m[1] === '1' ? '' : 's'}`],
+  [/^(\d+) cards?$/, (m) => `${m[1]} carte${m[1] === '1' ? '' : 's'}`],
+  [/^It has (\d+) screens\.$/, (m) => `Elle contient ${m[1]} écran${m[1]==='1'?'':'s'}.`],
+  [/^(\d+) outside services$/, (m) => `${m[1]} services externes`],
+  [/^You asked: (.+)$/, (m) => `Tu as demandé : ${m[1]}`],
+  [/^(\d+) (important|worth fixing|minor)$/, (m) => `${m[1]} ${m[2]==='important'?'important'+(m[1]==='1'?'':'s'):m[2]==='worth fixing'?'à corriger':'mineur'+(m[1]==='1'?'':'s')}`],
+  [/^Theme is now (.+)\.$/, (m) => `Thème : ${m[1]}.`],
+  [/^Downloaded (.+)$/, (m) => `${m[1]} téléchargé`],
+];
+function tr_tpl(s) { if (LANG === 'en' || !s) return null; for (const [re, f] of TPL) { const m = s.match(re); if (m) return f(m); } return null; }
+function translateDom(rootEl = document.body) {
+  if (LANG === 'en') return;
+  const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, { acceptNode: (n) => {
+    const p = n.parentElement;
+    if (!p || /^(SCRIPT|STYLE|CODE|PRE|KBD|svg)$/i.test(p.tagName) || p.closest('svg,script,style,code,pre,kbd')) return NodeFilter.FILTER_REJECT;
+    return t(n.nodeValue.trim()) !== n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+  }});
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const n of nodes) { const v = n.nodeValue.trim(); const trd = t(v) === v ? null : t(v); if (trd) n.nodeValue = n.nodeValue.replace(v, trd); }
+  for (const e of rootEl.querySelectorAll('[title],[placeholder],[aria-label]')) {
+    for (const a of TRANSLATE_ATTRS) { const v = e.getAttribute(a); if (v) { const trd = t(v) === v ? null : t(v); if (trd) e.setAttribute(a, trd); } }
+  }
+}
+// re-translate whatever renders later (panels, menus, boards, toasts)
+let _trTimer = null;
+const _trObs = new MutationObserver(() => {
+  if (LANG === 'en') return;
+  clearTimeout(_trTimer);
+  _trTimer = setTimeout(() => { _trObs.disconnect(); translateDom(); _trObs.observe(document.body, { childList: true, subtree: true }); }, 60);
+});
+function setLang(l) {
+  LANG = I18N[l] ? l : 'en';
+  store.set('lang', LANG);
+  if (window.FLOORPLAN_SERVER) fetch('/api/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': window.FLOORPLAN_SERVER.token }, body: JSON.stringify({ lang: LANG }) }).catch(() => {});
+  document.documentElement.lang = LANG;
+  if (LANG === 'en') { location.reload(); return; }
+  translateDom();
+}
+_trObs.observe(document.body, { childList: true, subtree: true });
+// ---------- engine picker ----------
+async function setEngine(id) {
+  const S = window.FLOORPLAN_SERVER;
+  if (!S) return;
+  try {
+    const r = await fetch('/api/engine', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': S.token }, body: JSON.stringify({ engine: id }) }).then((x) => x.json());
+    toast(r.cli ? t('Engine changed') : t('Saved, but this engine is not installed'));
+    location.reload();
+  } catch { toast(t('Something went wrong.')); }
+}
+function initLangEngineBar() {
+  const S = window.FLOORPLAN_SERVER;
+  const host = $('.hr');
+  if (!host) return;
+  document.documentElement.lang = LANG;
+  // small gear: opens the language/engine dialog on demand
+  const gear = document.createElement('button');
+  gear.id = 'setup-btn'; gear.className = 'btn icon'; gear.title = 'Language & engine';
+  gear.setAttribute('aria-label', 'Language and engine settings');
+  gear.textContent = '⚙';
+  gear.onclick = () => openSetupModal(false);
+  host.prepend(gear);
+  // flag buttons in the header: one small flag per language, active one highlighted
+  const FLAGS = {
+    en: '<svg width="20" height="14" viewBox="0 0 20 14"><rect width="20" height="14" fill="#012169"/><path d="M0 0l20 14M20 0L0 14" stroke="#fff" stroke-width="2.8"/><path d="M0 0l20 14M20 0L0 14" stroke="#C8102E" stroke-width="1.4"/><path d="M10 0v14M0 7h20" stroke="#fff" stroke-width="4.6"/><path d="M10 0v14M0 7h20" stroke="#C8102E" stroke-width="2.8"/></svg>',
+    fr: '<svg width="20" height="14" viewBox="0 0 20 14"><rect width="6.67" height="14" fill="#0055A4"/><rect x="6.67" width="6.67" height="14" fill="#fff"/><rect x="13.33" width="6.67" height="14" fill="#EF4135"/></svg>',
+  };
+  // one flag button shows the active language; a dropdown lists every language with its flag (scales to many)
+  const langWrap = document.createElement('div');
+  langWrap.id = 'lang-btns'; langWrap.style.position = 'relative';
+  const flagBtn = document.createElement('button');
+  flagBtn.className = 'btn icon'; flagBtn.title = t('Language'); flagBtn.setAttribute('aria-label', t('Language'));
+  flagBtn.innerHTML = (FLAGS[LANG] || LANG) + '<svg width="7" height="5" viewBox="0 0 7 5" style="margin-left:3px"><path d="M0 0l3.5 5L7 0z" fill="currentColor"/></svg>';
+  flagBtn.style.cssText = 'display:flex;align-items:center;padding:6px 8px;width:auto;height:auto';
+  let langMenu = null;
+  const closeLangMenu = () => { langMenu?.remove(); langMenu = null; };
+  document.addEventListener('click', (e) => { if (langMenu && !langMenu.contains(e.target) && !flagBtn.contains(e.target)) closeLangMenu(); });
+  flagBtn.onclick = (e) => {
+    e.stopPropagation();
+    if (langMenu) return closeLangMenu();
+    langMenu = document.createElement('div');
+    langMenu.style.cssText = 'position:absolute;top:calc(100% + 6px);right:0;z-index:1000;background:var(--bg);border:1px solid var(--raise-2);border-radius:10px;padding:4px;min-width:150px;box-shadow:0 8px 24px rgba(0,0,0,.25)';
+    langMenu.innerHTML = Object.entries(LANGS).map(([k, v]) => `<button class="btn soft" data-lang="${k}" style="width:100%;justify-content:flex-start;gap:8px;margin:0;display:flex;align-items:center">${FLAGS[k] || ''}<span>${v}</span>${k === LANG ? '<span style="margin-left:auto">✓</span>' : ''}</button>`).join('');
+    langMenu.querySelectorAll('[data-lang]').forEach((b) => b.onclick = async () => {
+      const nl = b.dataset.lang; closeLangMenu();
+      if (nl === LANG) return;
+      if (S && !EXPORTED) {
+        try { await fetch('/api/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': S.token }, body: JSON.stringify({ lang: nl }) }); } catch {}
+        location.reload();
+      } else { store.set('lang', nl); location.reload(); }
+    });
+    langWrap.appendChild(langMenu);
+  };
+  langWrap.appendChild(flagBtn);
+  host.prepend(langWrap);
+  const configured = S && !EXPORTED ? S.configured : !!store.get('setup-done');
+  if (!configured) setTimeout(() => openSetupModal(true), 700);
+  // MCP mode: ask bar stays dimmed — the user's own agent answers via floorplan_ask
+  if (S?.useMcp) setTimeout(() => {
+    askInput.disabled = true; askSend.disabled = true;
+    askInput.placeholder = t('Use your own agent: it calls the floorplan_ask MCP tool');
+    $('#ask-engine')?.classList.remove('ok'); $('#ask-engine')?.classList.add('warn');
+    const tag = $('#ask-engine'); if (tag) tag.innerHTML = '<i></i>' + h(t('via MCP'));
+    askInput.title = askSend.title = t('Ask through your agent — the floorplan MCP server exposes floorplan_ask, floorplan_engines, floorplan_set_engine');
+    setWarning('mcp_mode');
+  }, 100);
+  // self-test: if the chosen engine can't answer (not signed in / no key), guide the user right away
+  if (S && !EXPORTED && configured && !S.useMcp) {
+    fetch('/api/auth-check', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': S.token }, body: '{}' })
+      .then((r) => r.json())
+      .then((r) => { if (r && r.loggedIn === false) setTimeout(() => openAuthGuide(), 900); })
+      .catch(() => {});
+  }
+}
+function openSetupModal(first) {
+  const S = window.FLOORPLAN_SERVER;
+  document.getElementById('setup-ov')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'setup-ov';
+  const showEng = S && !EXPORTED && S.engines?.length;
+  ov.innerHTML = `<div class="setup-card" role="dialog" aria-modal="true">
+    <div class="setup-title">${h(t('Welcome to Floorplan'))}</div>
+    <p class="setup-sub">${h(t('Pick your language and answering engine.'))}</p>
+    <label for="setup-lang">${h(t('Language'))}</label>
+    <select id="setup-lang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}"${k === LANG ? ' selected' : ''}>${v}</option>`).join('')}</select>
+    ${showEng ? `<label for="setup-eng">${h(t('Answering engine'))}</label>
+    <select id="setup-eng">${S.engines.map((id) => `<option value="${id}"${id === (S.configured ? (S.want || S.engine) : (S.engine || S.want)) && !S.useMcp ? ' selected' : ''}>${h(S.engineNames?.[id] || id)}${S.engineScope?.[id] === 'cloud' ? ' · cloud' : ' · local'}</option>`).join('')}<option value="mcp"${S.useMcp ? ' selected' : ''}>${h(t('My own agent (MCP)'))}</option></select>
+    <div id="setup-modelrow" style="display:none">
+      <label for="setup-model">${h(t('Model'))}</label>
+      <select id="setup-model"></select>
+    </div>
+    <div id="setup-keyrow" style="display:none">
+      <label for="setup-key">${h(t('Devin API key'))}</label>
+      <input id="setup-key" type="password" autocomplete="off" spellcheck="false" placeholder="apk_…" />
+      <p class="setup-note">${h(t('Get a key at app.devin.ai → Settings → API Keys. It is stored in this project’s .env, never sent anywhere else.'))}</p>
+    </div>` : ''}
+    <p class="setup-note">${first ? h(t('You can change these later via the gear button.')) : ''}</p>
+    <button class="setup-ok">${h(t('Let’s go'))}</button>
+  </div>`;
+  ov.addEventListener('click', (e) => { if (e.target === ov && !first) ov.remove(); });
+  const engSel2 = ov.querySelector('#setup-eng'), keyRow = ov.querySelector('#setup-keyrow'), modelRow = ov.querySelector('#setup-modelrow'), modelSel = ov.querySelector('#setup-model');
+  const fillModels = () => {
+    const id = engSel2?.value;
+    const list = S.engineModels?.[id] || [];
+    if (modelSel) {
+      modelSel.innerHTML = list.length ? list.map((m) => `<option value="${h(m.id)}"${m.id === (S.savedModels?.[id] || '') ? ' selected' : ''}>${h(m.label)}${m.free ? ' · ' + h(t('free')) : ''}</option>`).join('') : '';
+      if (list.length && !list.some((m) => m.id === (S.savedModels?.[id] || ''))) modelSel.value = list[0].id;
+    }
+    if (modelRow) modelRow.style.display = list.length && engSel2?.value !== 'mcp' ? 'block' : 'none';
+  };
+  const syncKeyRow = () => { const mcp = engSel2?.value === 'mcp'; if (keyRow) keyRow.style.display = engSel2?.value === 'devincloud' ? 'block' : 'none'; if (modelRow && mcp) modelRow.style.display = 'none'; fillModels(); };
+  if (engSel2) engSel2.addEventListener('change', syncKeyRow);
+  syncKeyRow();
+  document.body.appendChild(ov);
+  ov.querySelector('.setup-ok').onclick = async () => {
+    const lang = ov.querySelector('#setup-lang').value;
+    const eng = ov.querySelector('#setup-eng')?.value;
+    const keyVal = ov.querySelector('#setup-key')?.value?.trim();
+    const modelVal = ov.querySelector('#setup-model')?.value;
+    store.set('setup-done', 1);
+    store.set('lang', lang);
+    ov.remove();
+    if (S && !EXPORTED) {
+      try {
+        const payload = { lang, configured: true, useMcp: eng === 'mcp' };
+        if (eng && eng !== 'mcp' && eng !== (S.want || S.engine)) payload.engine = eng;
+        if (keyVal) payload.devinKey = keyVal;
+        if (modelVal && eng) payload.models = { ...(S.savedModels || {}), [eng]: modelVal };
+        await fetch('/api/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': S.token }, body: JSON.stringify(payload) });
+      } catch {}
+      if (lang !== LANG || eng) { setTimeout(() => location.reload(), 250); return; }
+    }
+    if (lang !== LANG) setLang(lang);
+  };
+}
 const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const fmt = (n) => n >= 10000 ? Math.round(n / 1000) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
 const dirname = (p) => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
@@ -1902,6 +2132,7 @@ const WARNINGS = {
   no_engine: `Asking needs <b>${AGENT.cli}</b>. From the codebase root run <code>node floorplan/serve.mjs</code>${AGENT.id === 'claude' ? ', or open this map in the Claude app' : ''}.`,
   cli_missing: `Requires <b>${AGENT.cli}</b> installed to work. <a href="${AGENT.docs}" target="_blank" rel="noopener">Install it</a>, then restart <code>serve.mjs</code>.`,
   not_logged_in: `${Cap(AGENT.cli)} isn't signed in. ${AGENT.signIn}`,
+  mcp_mode: `MCP mode: the Ask bar is handled by <b>your own agent</b> — it calls <code>floorplan_ask</code> on the floorplan MCP server. Re-enable a built-in engine via ⚙.`,
   app_unavailable: `Claude isn't available for this map in this view.`,
   not_granted: `Claude access was declined for this map. Reload the page to be asked again.`,
   cli_tip: `Install the <b>Claude Code CLI</b> for a better experience: it can read your source code, not just this map. <a href="${DOCS}" target="_blank" rel="noopener">Install it</a>, then run <code>node floorplan/serve.mjs</code> in the codebase.`,
@@ -1910,9 +2141,73 @@ function setWarning(code) {
   warn.hidden = !code;
   warn.classList.toggle('info', code === 'cli_tip');
   if (!code) return;
-  warn.innerHTML = `<svg class="i" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>${WARNINGS[code] || h(code)}</span>${code === 'no_engine' ? '<button type="button" data-copycmd>Copy command</button>' : code === 'cli_tip' ? '<button type="button" data-dismiss>Got it</button>' : ''}`;
+  warn.innerHTML = `<svg class="i" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>${t(WARNINGS[code] || code)}</span>${code === 'no_engine' ? '<button type="button" data-copycmd>Copy command</button>' : code === 'cli_tip' ? '<button type="button" data-dismiss>Got it</button>' : code === 'not_logged_in' ? `<button type="button" data-authfix>${t('Fix it')}</button>` : ''}`;
+  warn.querySelector('[data-authfix]')?.addEventListener('click', () => openAuthGuide());
   warn.querySelector('[data-dismiss]')?.addEventListener('click', () => setWarning(null));
   warn.querySelector('[data-copycmd]')?.addEventListener('click', (e) => { navigator.clipboard?.writeText('node floorplan/serve.mjs'); e.target.textContent = 'Copied'; });
+}
+// guided re-auth: shows the exact commands for the CLI and re-checks once the user says it's done.
+// {EXE} is replaced by the detected CLI path, so commands are ready to paste as-is.
+const AUTH_GUIDE = {
+  devin: {
+    title: 'Sign in to Devin',
+    steps: [
+      '1. Press <b>Start sign-in</b> below — I log you out and open the Devin sign-in in your browser',
+      '2. Sign in (or paste your personal API key if it asks for one — get it at <a href="https://app.devin.ai/settings/api-keys" target="_blank" rel="noopener">app.devin.ai → Settings → API Keys</a>)',
+      '3. Come back here and press <b>I did it — check</b>',
+    ],
+  },
+  claude: { title: 'Sign in to Claude Code', steps: ['1. In a terminal, run <code>{EXE} auth login</code> and follow the link', '2. Come back and press <b>I did it — check</b>'] },
+  codex: { title: 'Sign in to Codex', steps: ['1. In a terminal, run <code>{EXE} login</code>', '2. Come back and press <b>I did it — check</b>'] },
+  devincloud: { title: 'Add a Devin API key', steps: ['1. Open <a href="https://app.devin.ai/settings/api-keys" target="_blank" rel="noopener">app.devin.ai → Settings → API Keys</a>', '2. Put <code>DEVIN_API_KEY=your_key</code> in this project’s <code>.env</code> (or paste it in ⚙ → Devin Cloud API)', '3. Press <b>I did it — check</b>'] },
+};
+async function openAuthGuide() {
+  const S = window.FLOORPLAN_SERVER;
+  const g = AUTH_GUIDE[S?.want || S?.engine] || AUTH_GUIDE.devin;
+  document.getElementById('setup-ov')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'setup-ov';
+  ov.innerHTML = `<div class="setup-card" role="dialog" aria-modal="true">
+    <div class="setup-title">${h(t(g.title))}</div>
+    <div class="setup-sub" style="text-align:left;line-height:1.6">${g.steps.map((s) => `<p style="margin:6px 0">${t(s).split('{EXE}').join(`<wbr>` + h(S.cliPath || 'devin'))}</p>`).join('')}</div>
+    <p class="setup-note" id="auth-guide-note"></p>
+    <p class="setup-note" style="margin-top:10px" id="auth-mcp-note"><a href="#" id="auth-mcp-link" style="color:var(--accent)">${h(t('No luck signing in?'))}</a></p>
+    <div id="auth-mcp-box" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--raise-2);border-radius:8px;font-size:.85rem;line-height:1.5">
+      ${t('Sign-in can fail on some accounts. You can keep using the map through <b>your own agent</b>: it calls <code>floorplan_ask</code> on the floorplan MCP server and reads the map for you.')}
+      <button class="setup-ok" id="auth-mcp-btn" style="background:var(--raise-2);color:var(--text);margin-top:8px">${h(t('Use my agent via MCP instead'))}</button>
+    </div>
+    <button class="setup-ok" id="auth-start-btn" style="background:var(--raise-2);color:var(--text)">${h(t('Start sign-in'))}</button>
+    <button class="setup-ok" id="auth-check-btn">${h(t('I did it — check'))}</button>
+  </div>`;
+  ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  const note = ov.querySelector('#auth-guide-note'), btn = ov.querySelector('#auth-check-btn');
+  const mcpLink = ov.querySelector('#auth-mcp-link'), mcpBox = ov.querySelector('#auth-mcp-box');
+  const revealMcp = () => { if (mcpBox) mcpBox.style.display = 'block'; if (mcpLink) mcpLink.closest('p').style.display = 'none'; };
+  if (mcpLink) mcpLink.onclick = (e) => { e.preventDefault(); revealMcp(); };
+  const mcpBtn = ov.querySelector('#auth-mcp-btn');
+  mcpBtn.onclick = async () => {
+    mcpBtn.disabled = true;
+    try { await fetch('/api/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': S.token }, body: JSON.stringify({ useMcp: true }) }); } catch {}
+    ov.remove(); toast(t('MCP mode on — your agent answers via floorplan_ask')); setTimeout(() => location.reload(), 600);
+  };
+  const startBtn = ov.querySelector('#auth-start-btn');
+  if ((S.engine || S.want) === 'devincloud') startBtn.textContent = t('Open API keys page');
+  startBtn.onclick = async () => {
+    if ((S.engine || S.want) === 'devincloud') { window.open('https://app.devin.ai/settings/api-keys', '_blank', 'noopener'); return; }
+    startBtn.disabled = true; note.textContent = t('Signing you in — check your browser…');
+    try { const r = await fetch('/api/auth-start', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': S.token }, body: '{}' }).then((x) => x.json());
+      note.textContent = r?.ok ? t('If a sign-in page opened, finish it, then press the button below.') : t('Could not start the sign-in — run the commands manually.');
+    } catch { note.textContent = t('Could not start the sign-in — run the commands manually.'); startBtn.disabled = false; }
+  };
+  btn.onclick = async () => {
+    btn.disabled = true; note.textContent = t('Checking…');
+    try {
+      const r = await fetch('/api/auth-check', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': S.token }, body: '{}' }).then((x) => x.json());
+      if (r.loggedIn) { ov.remove(); toast(t('Signed in — retry your question')); setWarning(null); askInput.focus(); }
+      else { note.textContent = t('Still not signed in — follow the steps then check again.'); btn.disabled = false; const p = ov.querySelector('#auth-mcp-note'); if (p) p.style.display = 'block'; revealMcp(); }
+    } catch { note.textContent = t('Could not reach the map server'); btn.disabled = false; }
+  };
 }
 function setEngine(engine, label, warning) {
   askState.engine = engine;
@@ -2371,6 +2666,7 @@ window.Floorplan = Object.freeze({
   icons: P,
   technical, setTechnical,
   store,
+  t, lang: () => LANG,
   on(event, fn) { (ext.listeners[event] ||= []).push(fn); },
 });
 technicalFlag = !!store.get('technical', false);
@@ -2379,7 +2675,8 @@ const init = readHash();
 state.container = init.v; state.selected = init.s;
 if (init.s && isPhone()) { document.body.classList.remove('no-panel'); $('#btn-panel').setAttribute('aria-expanded', 'true'); } // a shared link to a box opens its details
 const fontsReady = document.fonts?.ready ? Promise.race([document.fonts.ready, new Promise((ok) => setTimeout(ok, 1500))]) : Promise.resolve();
-fontsReady.then(() => render({ after: () => { renderPanel(); emit('ready', {}); if (PLAN && window.FLOORPLAN_SERVER) showChangeResult(); } }));
+initLangEngineBar();
+fontsReady.then(() => render({ after: () => { renderPanel(); emit('ready', {}); translateDom(); if (PLAN && window.FLOORPLAN_SERVER) showChangeResult(); } }));
 })();
 </script>
 <!--__UI_EXTENSIONS__-->

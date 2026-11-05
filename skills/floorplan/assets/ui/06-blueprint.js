@@ -7,6 +7,7 @@
   const BP = SC && SC.graph.meta.blueprint;
   if (!BP) return;
   const { h } = SC;
+  const T = (s, v) => { s = (SC.t || ((x) => x))(s); if (v) for (const k in v) s = s.replaceAll('{' + k + '}', v[k]); return s; };
   const Cap = (t) => t[0].toUpperCase() + t.slice(1);
   const A = SC.agent || { name: 'Claude', app: 'Claude Code' };
   const G = SC.graph;
@@ -26,21 +27,21 @@
   const addPill = () => {
     const k = document.querySelector('#context .k');
     if (!k || k.querySelector('.bp-pill')) return;
-    k.insertAdjacentHTML('beforeend', '<span class="bp-pill" title="Planned, not built yet: every card is a part the system would need.">Blueprint</span>');
+    k.insertAdjacentHTML('beforeend', '<span class="bp-pill" title="' + T('Planned, not built yet: every card is a part the system would need.') + '">' + T('Blueprint') + '</span>');
   };
   SC.on('render', addPill);
   SC.on('ready', addPill);
 
-  const ACCESS = { public: 'anyone', 'signed-in': 'signed-in users', team: 'only the team that runs the service', webhook: 'the service that sends it, which must prove it', internal: 'only our own services' };
+  const ACCESS = { public: T('anyone'), 'signed-in': T('signed-in users'), team: T('only the team that runs the service'), webhook: T('the service that sends it, which must prove it'), internal: T('only our own services') };
   /** "for signed-in users: managers of that location", or the open question when nobody decided. */
-  const whoMay = (r) => !r.access ? 'who may use it isn’t decided yet: ask me'
-    : `for ${r.access === 'signed-in' && r.who ? r.who : ACCESS[r.access] || r.access}${r.publicBecause ? `, because ${r.publicBecause.replace(/\.$/, '')}` : ''}`;
+  const whoMay = (r) => !r.access ? T('who may use it isn’t decided yet: ask me')
+    : `${T('for')} ${r.access === 'signed-in' && r.who ? r.who : ACCESS[r.access] || r.access}${r.publicBecause ? `, ${T('because')} ${r.publicBecause.replace(/\.$/, '')}` : ''}`;
 
   SC.addPanelSection('overview', () => ({
     html: `<div class="sec"><h3>Blueprint</h3>
-      <p class="pd">Planned${BP.source ? ` from <b>${h(BP.source)}</b>` : ''}, not built yet. Every dashed card is a part the system would need.${SC.exported ? '' : ` Pick one and choose <b>Build this with ${h(A.name)}</b> to start on it.`}</p>
+      <p class="pd">${T('Planned{from}, not built yet. Every dashed card is a part the system would need.{pick}', { from: BP.source ? T(' from <b>{source}</b>', { source: h(BP.source) }) : '', pick: SC.exported ? '' : T(' Pick one and choose <b>{build}</b> to start on it.', { build: T('Build this with {agent}', { agent: h(A.name) }) }) })}</p>
       ${BP.stack?.length ? `<div class="tags" style="margin-top:10px">${BP.stack.map((s) => `<span class="tag">${h(s)}</span>`).join('')}</div>` : ''}
-      ${BP.assumptions?.length ? `<h3 style="margin-top:14px">Assumptions</h3><ul class="bp-list">${BP.assumptions.map((a) => `<li>${h(a)}</li>`).join('')}</ul>` : ''}
+      ${BP.assumptions?.length ? `<h3 style="margin-top:14px">${T('Assumptions')}</h3><ul class="bp-list">${BP.assumptions.map((a) => `<li>${h(a)}</li>`).join('')}</ul>` : ''}
     </div>`,
   }));
 
@@ -80,21 +81,21 @@
     if (id.startsWith('r:')) {
       const r = SC.routes[+id.slice(2)];
       if (!r) return '';
-      const text = !r.access ? `Not decided yet.${SC.graph.health ? ' The design review lists it.' : ''}` : `${Cap(r.access === 'signed-in' && r.who ? r.who : ACCESS[r.access] || r.access)}.${r.publicBecause ? ` Open on purpose: ${r.publicBecause}` : ''}`;
-      return `<div class="sec"><h3>Who may use it</h3><p class="pd">${h(text)}</p></div>`;
+      const text = !r.access ? T('Not decided yet.{listed}', { listed: SC.graph.health ? T(' The design review lists it.') : '' }) : `${Cap(r.access === 'signed-in' && r.who ? r.who : ACCESS[r.access] || r.access)}.${r.publicBecause ? T(' Open on purpose: {why}', { why: r.publicBecause }) : ''}`;
+      return `<div class="sec"><h3>${T('Who may use it')}</h3><p class="pd">${h(text)}</p></div>`;
     }
     const i = SC.info(id);
     if (SC.exported || !i || (i.type === 'node' && i.n.kind === 'external') || !filesIn(id).length) return '';
     return {
-      html: `<div class="sec"><h3>Build it</h3><p class="pd">A ready request for ${h(A.app)} to build ${i.type === 'file' ? 'this file' : 'this part'} the way the plan describes.</p>
-        <div class="actions"><button class="btn soft" data-bp-build>${SC.iconI('spark')}Build this with ${h(A.name)}</button></div></div>`,
+      html: `<div class="sec"><h3>${T('Build it')}</h3><p class="pd">${T('A ready request for {app} to build {what} the way the plan describes.', { app: h(A.app), what: T(i.type === 'file' ? 'this file' : 'this part') })}</p>
+        <div class="actions"><button class="btn soft" data-bp-build>${SC.iconI('spark')}${T('Build this with {agent}', { agent: h(A.name) })}</button></div></div>`,
       bind: (el) => el.querySelector('[data-bp-build]')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
         const prompt = buildPrompt(id);
         SC.modal({
-          title: `Build this with ${A.name}`,
-          html: `<p class="hc-hint">Copy this request and paste it into <b>${h(A.app)}</b>, opened in your project folder.</p><pre>${h(prompt)}</pre>`,
-          actions: [{ label: 'Copy prompt', primary: true, icon: 'copy', onClick: () => { SC.copy(prompt); SC.toast(`Copied. Paste it into ${A.app}.`); } }],
+          title: T('Build this with {agent}', { agent: A.name }),
+          html: `<p class="hc-hint">${T('Copy this request and paste it into {app}, opened in your project folder.', { app: '<b>' + h(A.app) + '</b>' })}</p><pre>${h(prompt)}</pre>`,
+          actions: [{ label: T('Copy prompt'), primary: true, icon: 'copy', onClick: () => { SC.copy(prompt); SC.toast(T('Copied. Paste it into {app}.', { app: A.app })); } }],
         });
       }),
     };

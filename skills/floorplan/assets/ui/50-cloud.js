@@ -7,6 +7,7 @@
   const S = window.FLOORPLAN_SERVER;
   if (!SC || !S) return;
   const { h } = SC;
+  const T = (s, v) => { s = (SC.t || ((x) => x))(s); if (v) for (const k in v) s = s.replaceAll('{' + k + '}', v[k]); return s; };
   const AFTER = 120; // seconds of the map being on screen
   const PRIVACY = 'https://github.com/haydenschmitty/floorplan/blob/main/docs/privacy-and-security.md#floorplan-cloud-waitlist';
   const api = (p, body) => fetch('/api/cloud/' + p, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', 'x-floorplan-token': S.token }, ...(body ? { body: JSON.stringify(body) } : {}) }).then((r) => r.json());
@@ -46,52 +47,52 @@
   const never = () => { api('dismiss', { forever: true }).catch(() => {}); close(); };
 
   function view(html, bind) {
-    card.innerHTML = `<button class="btn icon cx" data-x title="Close">${SC.iconI('x')}</button>${html}`;
+    card.innerHTML = `<button class="btn icon cx" data-x title="${T('Close')}">${SC.iconI('x')}</button>${html}`;
     card.querySelector('[data-x]').onclick = card.dataset.done ? close : later;
     bind?.(card);
   }
 
   function pitch() {
-    view(`<div class="ce">Coming soon</div><h3>Floorplan Cloud</h3>
-      <p>One shared map for your whole team: notes everyone can see, kept in sync with GitHub and updated on every push.</p>
-      <p>Want an email when it launches?</p>
-      <div class="ca"><button class="btn primary" data-yes>Let me know</button><button class="btn soft" data-later>Not now</button><button class="cl" data-never>Don't ask again</button></div>`,
+    view(`<div class="ce">${T('Coming soon')}</div><h3>Floorplan Cloud</h3>
+      <p>${T('One shared map for your whole team: notes everyone can see, kept in sync with GitHub and updated on every push.')}</p>
+      <p>${T('Want an email when it launches?')}</p>
+      <div class="ca"><button class="btn primary" data-yes>${T('Let me know')}</button><button class="btn soft" data-later>${T('Not now')}</button><button class="cl" data-never>${T('Don’t ask again')}</button></div>`,
     (el) => { el.querySelector('[data-yes]').onclick = use; el.querySelector('[data-later]').onclick = later; el.querySelector('[data-never]').onclick = never; });
   }
 
   function use() {
-    view(`<div class="ce">Floorplan Cloud</div><h3>How would you use it?</h3>
-      <div class="co"><button data-use="solo"><b>Just me</b><span>A map of my own projects</span></button><button data-use="team"><b>With my team</b><span>One shared map we all work from</span></button></div>`,
+    view(`<div class="ce">Floorplan Cloud</div><h3>${T('How would you use it?')}</h3>
+      <div class="co"><button data-use="solo"><b>${T('Just me')}</b><span>${T('A map of my own projects')}</span></button><button data-use="team"><b>${T('With my team')}</b><span>${T('One shared map we all work from')}</span></button></div>`,
     (el) => el.querySelectorAll('[data-use]').forEach((b) => b.onclick = () => { answer.use = b.dataset.use; email(); }));
   }
 
   function email() {
-    view(`<div class="ce">Floorplan Cloud</div><h3>Where should we email you?</h3>
+    view(`<div class="ce">Floorplan Cloud</div><h3>${T('Where should we email you?')}</h3>
       <input type="email" placeholder="you@example.com" autocomplete="email" spellcheck="false" maxlength="254">
       <div class="cm"></div>
-      <div class="ca"><button class="btn primary" data-send>Notify me</button>${S.cli && S.engine !== 'codex' ? '<button class="btn soft" data-claude>Use my Claude email</button>' : ''}</div>
-      <div class="cf">Only this email and your answer (${answer.use === 'team' ? 'with my team' : 'just me'}) are sent, to a private Google Sheet kept by Floorplan's maker. It's used only to tell you when Floorplan Cloud launches. <a href="${PRIVACY}" target="_blank" rel="noopener">Details</a></div>`,
+      <div class="ca"><button class="btn primary" data-send>${T('Notify me')}</button>${S.cli && S.engine !== 'codex' ? '<button class="btn soft" data-claude>' + T('Use my Claude email') + '</button>' : ''}</div>
+      <div class="cf">${T('Only this email and your answer ({use}) are sent, to a private Google Sheet kept by Floorplan’s maker. It’s used only to tell you when Floorplan Cloud launches.', { use: T(answer.use === 'team' ? 'with my team' : 'just me') })} <a href="${PRIVACY}" target="_blank" rel="noopener">${T('Details')}</a></div>`,
     (el) => {
       const input = el.querySelector('input'), msg = el.querySelector('.cm'), send = el.querySelector('[data-send]');
       const say = (t, err) => { msg.textContent = t || ''; msg.classList.toggle('err', !!err); };
       const mine = el.querySelector('[data-claude]');
       if (mine) mine.onclick = async () => {
-        mine.disabled = true; say('Looking up your Claude Code account…');
+        mine.disabled = true; say(T('Looking up your Claude Code account…'));
         try {
           const r = await api('claude-email', {});
-          if (r.email) { input.value = r.email; say(''); input.focus(); } else say('Claude Code isn\'t signed in with a Claude account here. Type an email instead.');
-        } catch { say('Couldn\'t ask Claude Code. Type an email instead.'); }
+          if (r.email) { input.value = r.email; say(''); input.focus(); } else say(T('Claude Code isn’t signed in with a Claude account here. Type an email instead.'));
+        } catch { say(T('Couldn’t ask Claude Code. Type an email instead.')); }
         mine.disabled = false;
       };
       const submit = async () => {
         const v = input.value.trim();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) { say('That doesn\'t look like an email address.', true); input.focus(); return; }
-        send.disabled = true; say('Sending…');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) { say(T('That doesn’t look like an email address.'), true); input.focus(); return; }
+        send.disabled = true; say(T('Sending…'));
         try {
           const r = await api('join', { email: v, use: answer.use });
           if (r.ok) return done(v);
-          say(r.error === 'bad_email' ? 'That doesn\'t look like an email address.' : r.error === 'rate_limited' ? 'Too many sign-ups right now. Try again in a little while.' : 'Couldn\'t send that. Check your connection and try again.', true);
-        } catch { say('Couldn\'t send that. Check your connection and try again.', true); }
+          say(r.error === 'bad_email' ? T('That doesn’t look like an email address.') : r.error === 'rate_limited' ? T('Too many sign-ups right now. Try again in a little while.') : T('Couldn’t send that. Check your connection and try again.'), true);
+        } catch { say(T('Couldn’t send that. Check your connection and try again.'), true); }
         send.disabled = false;
       };
       send.onclick = submit;
@@ -102,7 +103,7 @@
 
   function done(v) {
     card.dataset.done = '1';
-    view(`<div class="ce">Floorplan Cloud</div><h3>You're on the list</h3><p>We'll email <b>${h(v)}</b> when Floorplan Cloud launches. Thanks!</p>`);
+    view(`<div class="ce">Floorplan Cloud</div><h3>${T('You’re on the list')}</h3><p>${T('We’ll email {v} when Floorplan Cloud launches. Thanks!', { v: '<b>' + h(v) + '</b>' })}</p>`);
     setTimeout(close, 8000);
   }
 
