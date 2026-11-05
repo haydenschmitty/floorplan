@@ -2,17 +2,19 @@
 
 Prefer to watch? The [walkthrough video](https://youtu.be/NTUUzC7L_NQ) covers installing Floorplan and touring a finished map.
 
-Floorplan works in **Claude Code** and in **Codex**. Making and using a map is the same in both; only installing differs. This guide shows Claude Code, and [Floorplan in Codex](codex.md) has the Codex steps.
+Floorplan works in **Claude Code**, **Codex** and **GitHub Copilot**. Making and using a map is mostly the same; installation and a few agent-specific features differ. This guide shows Claude Code. See [Floorplan in Codex](codex.md) or [Floorplan in GitHub Copilot](copilot.md) for those steps.
 
 ## What you need
 
-- **Claude Code** (the Code tab in the Claude desktop app, or the Claude Code CLI in a terminal), or **Codex** (the app or the CLI, signed in with ChatGPT).
+- **Claude Code** (the Code tab in the Claude desktop app, or the Claude Code CLI), **Codex** (the app or CLI), or **GitHub Copilot** (the app or CLI).
 - **[Node.js](https://nodejs.org) 18 or newer.** Floorplan's scripts run on it. Check with `node --version`.
-- **With Claude Code, recommended: the [Claude Code CLI](https://code.claude.com/docs/en/overview)**, even if you mainly use the desktop app. With it, the map's Ask bar can read your actual code when answering questions. Codex needs nothing extra: its app includes what the Ask bar uses.
+- **With Claude Code, recommended: the [Claude Code CLI](https://code.claude.com/docs/en/overview)**, even if you mainly use the desktop app. With it, the map's Ask bar can read your actual code when answering questions. Codex and GitHub Copilot need their CLIs available; their apps include or share them.
 
 ## Install
 
 **In Codex**, open **Plugins → Add a marketplace**, enter `haydenschmitty/floorplan`, and install Floorplan. Details in [Floorplan in Codex](codex.md#install).
+
+**In GitHub Copilot**, add the same marketplace under **Customize**, or use the CLI commands in [Floorplan in GitHub Copilot](copilot.md#install).
 
 **In Claude Code**, run these once, in any terminal:
 
@@ -29,7 +31,7 @@ The first command adds this repository as a plugin source. The second installs F
 
 ## Make your first map
 
-1. **Open your project.** In the Claude desktop app's Code tab, choose your project's folder in the row under the prompt box before sending your first message. In the Codex app, open the project's folder. In a terminal, run `claude` or `codex` from the project folder.
+1. **Open your project.** In the Claude desktop app's Code tab, choose your project's folder in the row under the prompt box before sending your first message. In Codex or GitHub Copilot, open the project's folder. In a terminal, run `claude`, `codex` or `copilot` from the project folder.
 
    If your app is split across several repos (say `web/` and `api/` side by side), open the folder that contains them all. Floorplan maps them together and connects the requests between them.
 
@@ -37,11 +39,11 @@ The first command adds this repository as a plugin source. The second installs F
 
    > Make me a floorplan of this app.
 
-   In Claude Code you can also pick **floorplan** from the **/** menu, or type `/floorplan:floorplan`. In Codex, type `$floorplan`.
+   In Claude Code you can also pick **floorplan** from the **/** menu, or type `/floorplan:floorplan`. In Codex, type `$floorplan`. In GitHub Copilot, say `Use /floorplan`.
 
 3. **Let it work.** This is what happens:
    - A scan lists every file, import, endpoint and web request. This takes seconds and costs no tokens.
-   - Claude or Codex reads your READMEs, setup files and entry points, then decides the main parts of your app and what each one is for.
+   - Your coding agent reads your READMEs, setup files and entry points, then decides the main parts of your app and what each one is for.
    - It writes a plain-English name and a one-line description for every file and endpoint. In Claude Code, projects with more than about 150 files are split across parallel helpers.
    - The map is built and checked: connections, Health issues and screens.
 
@@ -65,14 +67,16 @@ Everything above is about Floorplan's main job: mapping code that already exists
 
 > Here's my PRD. Make me a floorplan of what we'd need to build.
 
-You get a **blueprint**: the same map, with every part, file, endpoint and screen the app would need, how they connect, and the outside services they rely on. Its cards have dashed outlines so you can tell it's a plan. The reply names the stack Claude or Codex chose, what it assumed, and the questions your PRD leaves open.
+You get a **blueprint**: the same map, with every part, file, endpoint and screen the app would need, how they connect, and the outside services they rely on. Its cards have dashed outlines so you can tell it's a plan. The reply names the stack your coding agent chose, what it assumed, and the questions your PRD leaves open.
 
 On the map:
 - **Review** lists what the plan still has to decide, like endpoints anyone could use or open questions. **Resolve on the map** settles one: for a question, you just type your answer.
 - Switch the Ask bar to **Change** to shape the plan ("also plan out refunds"). The map redraws with what changed highlighted, and **Undo** puts it back.
-- Each part has **Build this with Claude** (or Codex), a ready request to build just that part.
+- Each part has **Build this with** your coding agent, a ready request to build just that part.
 
-Once the code exists, ask Claude or Codex to "map the real code now", and the blueprint becomes a normal map. See [Blueprints](how-it-works.md#blueprints) for how it works.
+In GitHub Copilot, the map's **Change** switch is unavailable because Copilot CLI does not yet enforce the response schema Floorplan requires before replacing plan files. Ask Copilot in the project session to change the blueprint, then update the floorplan.
+
+Once the code exists, ask your coding agent to "map the real code now", and the blueprint becomes a normal map. See [Blueprints](how-it-works.md#blueprints) for how it works.
 
 ## Open the map yourself
 
@@ -92,7 +96,7 @@ node floorplan/serve.mjs --stop
 
 ## Update the plugin
 
-For Codex, see [Update or remove it](codex.md#update-or-remove-it).
+For Codex, see [Update or remove it](codex.md#update-or-remove-it). For GitHub Copilot, see [Update or remove it](copilot.md#update-or-remove-it).
 
 In Claude Code, plugins installed from GitHub don't update automatically unless you turn that on. To get the latest version:
 
@@ -108,4 +112,4 @@ Or turn on automatic updates: in a Claude Code session, run `/plugin`, open **Ma
 claude plugin uninstall floorplan@floorplan
 ```
 
-In Codex, see [Update or remove it](codex.md#update-or-remove-it). Then delete the `floorplan/` folder (and, if you used Claude Code, the Floorplan section of `CLAUDE.local.md`) from any project you used it in.
+In Codex or GitHub Copilot, see the agent-specific guide linked above. Then delete the `floorplan/` folder (and, if you used Claude Code, the Floorplan section of `CLAUDE.local.md`) from any project you used it in.

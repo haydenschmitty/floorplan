@@ -29,7 +29,7 @@ test('the Codex plugin matches the Claude Code plugin and points at the same ski
   for (const k of ['composerIcon', 'logo']) assert.ok(fs.existsSync(path.join(REPO, codex.interface[k])), `${k}: ${codex.interface[k]}`);
 });
 
-test('the Codex marketplace lists this plugin, from this repo', () => {
+test('the Codex and GitHub Copilot marketplace lists this plugin, from this repo', () => {
   const codexMarket = readJson(path.join(REPO, '.agents', 'plugins', 'marketplace.json'));
   const entry = codexMarket.plugins.find((p) => p.name === plugin.name);
   assert.ok(entry, `.agents/plugins/marketplace.json lists ${plugin.name}`);

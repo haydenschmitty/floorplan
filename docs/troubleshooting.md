@@ -21,14 +21,23 @@ node floorplan/serve.mjs --codex /path/to/codex
 
 If it says Codex isn't signed in, open the Codex app (or run `codex login`) and sign in with ChatGPT. More in [Floorplan in Codex](codex.md).
 
+### GitHub Copilot: the Ask bar says it needs GitHub Copilot CLI
+Install and sign in to [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli), or point the server at an unusual install:
+
+```bash
+node floorplan/serve.mjs --copilot /path/to/copilot
+```
+
+If it says Copilot isn't signed in, run `copilot login`. More in [Floorplan in GitHub Copilot](copilot.md).
+
 ### Codex: the map didn't open, or Ask stopped working after Codex opened it
 Codex runs commands in a sandbox, and the map's server needs to keep running and reach the network. Allow the server to run outside the sandbox when Codex asks, or run `node floorplan/serve.mjs` yourself from the project folder.
 
 ### `node` isn't recognized
-Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so Claude Code or Codex picks it up.
+Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so your coding agent picks it up.
 
-### Claude or Codex keeps asking to run `node` scripts
-In Claude Code, Floorplan pre-approves its own scripts while it's running, but it may still ask in some setups. Choose the option to always allow them for this project. Codex asks according to your approval settings; allowing Floorplan's `node` scripts for the project stops the prompts.
+### My coding agent keeps asking to run `node` scripts
+In Claude Code, Floorplan pre-approves its own scripts while it's running, but it may still ask in some setups. Choose the option to always allow them for this project. Codex and GitHub Copilot ask according to their approval settings; allowing Floorplan's `node` scripts for the project stops the prompts.
 
 ### The skill doesn't show up
 Plugins load when a session starts, so start a new one after installing. Check that it's installed and enabled:
@@ -41,14 +50,16 @@ Plain requests like "make me a floorplan" work without the slash command. If you
 
 In Codex, check **Plugins** in the app, or run `codex plugin list`, and start a new chat after installing. To call it by name, type `$floorplan`.
 
+In GitHub Copilot, check **Customize → Installed** in the app, or run `copilot plugin list`, then start a new session. To call it by name, say `Use /floorplan`.
+
 ### The map looks out of date
-Ask Claude or Codex to "update the floorplan". If a tab was already open, it reloads itself once the update finishes.
+Ask your coding agent to "update the floorplan". If a tab was already open, it reloads itself once the update finishes.
 
 ### The map is blank, or stuck on "Laying out"
 Maps made before version 0.1.3 load their layout engine from the internet, so check your connection or any content blocker, or ask Claude to "update the floorplan". Newer maps have everything built in and work offline.
 
 ### The Ask bar has no Change switch
-**Change** appears only on a [blueprint](getting-started.md#plan-something-you-havent-built-yet), opened through its server (`node floorplan/serve.mjs`) with the Claude Code CLI or Codex available. A map of real code doesn't have it: ask Claude Code or Codex to change the code, then update the floorplan.
+**Change** appears only on a [blueprint](getting-started.md#plan-something-you-havent-built-yet), opened through its server (`node floorplan/serve.mjs`) with a CLI that enforces Floorplan's response schema. Claude Code and Codex support it; GitHub Copilot currently does not. A map of real code doesn't have it: ask your coding agent to change the code, then update the floorplan.
 
 ### A change to a blueprint failed, or I don't like it
 If the updated plan doesn't pass Floorplan's checks after a second try, nothing is saved and the map stays as it was; try asking more specifically. If a change went through but isn't what you wanted, press **Undo** in its summary, or ask for another change. The previous versions are kept in `floorplan/.cache/history/`.
@@ -81,4 +92,4 @@ node floorplan/serve.mjs --stop
 It also stops by itself two hours after the last tab closes.
 
 ### Still stuck?
-[Open an issue](https://github.com/haydenschmitty/floorplan/issues/new/choose) with what you asked, what happened, whether you used Claude Code or Codex, and the output it showed. Please leave out anything private from your code.
+[Open an issue](https://github.com/haydenschmitty/floorplan/issues/new/choose) with what you asked, what happened, which coding agent you used, and the output it showed. Please leave out anything private from your code.

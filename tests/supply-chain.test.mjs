@@ -100,7 +100,7 @@ test('it runs a fixed list of programs, and never through a shell', () => {
   assert.deepEqual([...new Set(names)].sort(), ['execFileSync', 'spawn'], `child_process functions used. ${UPDATE}`);
   assert.deepEqual(find(/(?<![.\w])(exec|execSync|fork|spawnSync|execFile)\(/).map((x) => `${x.file}:${x.line} ${x.text}`), [], `other ways to start programs. ${UPDATE}`);
   assert.deepEqual(find(/shell:\s*true/).map((x) => `${x.file}:${x.line}`), [], 'never through a shell');
-  // what each call starts: where/which, the Claude Code or Codex CLI, Node running the skill's own scripts,
+  // what each call starts: where/which, the selected agent CLI, Node running the skill's own scripts,
   // git, and the system's "open this address in the browser" command
   const ALLOWED = new Set([
     "process.platform === 'win32' ? 'where' : 'which'",

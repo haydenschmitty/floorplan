@@ -9,10 +9,11 @@
 
 **See how your app actually fits together.**
 
-Claude or Codex reads your codebase and draws an interactive map of it. Every part, file and web request gets a plain-English name, and every connection between them is shown.
+Claude Code, Codex or GitHub Copilot reads your codebase and draws an interactive map of it. Every part, file and web request gets a plain-English name, and every connection between them is shown.
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
+[![GitHub Copilot plugin](https://img.shields.io/badge/GitHub%20Copilot-plugin-111?style=flat-square)](docs/copilot.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/haydenschmitty/floorplan/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/haydenschmitty/floorplan/actions/workflows/test.yml)
 [![Version](https://img.shields.io/badge/version-0.6.3-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
@@ -35,11 +36,11 @@ Claude or Codex reads your codebase and draws an interactive map of it. Every pa
 
 You built an app, probably with a lot of help from AI, and it works. But ask "what happens when someone checks out?" or "what breaks if I change this?" and the honest answer is *no idea*.
 
-Floorplan gives you the diagram nobody drew. Ask Claude Code or Codex for a floorplan and a few minutes later you have a map you can explore, ask questions on, and keep up to date as you work.
+Floorplan gives you the diagram nobody drew. Ask your coding agent for a floorplan and a few minutes later you have a map you can explore, ask questions on, and keep up to date as you work.
 
 - **For builders:** understand the app you made, in your own words, without reading the code.
 - **For teams:** onboard someone in minutes, from the big picture down to the exact file.
-- **For working with AI:** after every change Claude or Codex makes, see exactly which parts it touched and why.
+- **For working with AI:** after every change your coding agent makes, see exactly which parts it touched and why.
 
 ## Floorplan, Archify or Understand Anything?
 
@@ -51,7 +52,7 @@ All three turn code into something you can see, and all three are worth knowing.
 | **Made for** | People who build with AI and don't read the code | Anyone explaining a system, a process or an idea | Developers getting to know a large codebase |
 | **What you get** | A zoomable map of your whole app: parts, files and endpoints, the screens, the requests between frontend and backend (even across repos), and outside services | A polished diagram in one of 10 types (architecture, sequence, ERD…) or a one-page explainer, from a repo or just a description | A knowledge graph of every file, function and class, with layers, a business-domain view and guided tours |
 | **Only here** | **Health check** (keys in code, open Supabase tables and Firebase rules, fakeable Stripe webhooks, endpoints anyone can use), **Recent work** (what your AI just changed, and why), blueprints from a PRD | 10 diagram types, image and video exports, diagrams of things that aren't code | Diff impact, a dashboard that adapts to your role, knowledge-base graphs |
-| **Runs in** | Claude Code, Codex | Claude Code, Codex, Cursor, OpenCode and more | Claude Code, Codex, Cursor, Copilot, Gemini CLI and more |
+| **Runs in** | Claude Code, Codex, GitHub Copilot | Claude Code, Codex, Cursor, OpenCode and more | Claude Code, Codex, Cursor, Copilot, Gemini CLI and more |
 
 **Pick Floorplan** to understand and check an app you own. **Pick Archify** to draw a diagram for a doc, a talk or a decision. **Pick Understand Anything** to study a large codebase function by function.
 
@@ -163,7 +164,7 @@ Want to click around yourself? Open the [live demo](https://haydenschmitty.githu
 
 ## Install
 
-You need [Node.js 18+](https://nodejs.org) and either Claude Code or Codex. Floorplan runs on the plan you already have, with no API keys.
+You need [Node.js 18+](https://nodejs.org) and Claude Code, Codex or GitHub Copilot. Floorplan runs on the plan you already have, with no API keys.
 
 ### Claude Code
 
@@ -193,13 +194,26 @@ codex plugin add floorplan@floorplan
 
 Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask bar runs on your own Codex sign-in, with no API key. More in [Floorplan in Codex](docs/codex.md).
 
+### GitHub Copilot
+
+In the GitHub Copilot app, add `haydenschmitty/floorplan` as a plugin marketplace under **Customize**, then install **Floorplan**.
+
+Or, from a terminal:
+
+```bash
+copilot plugin marketplace add haydenschmitty/floorplan
+copilot plugin install floorplan@floorplan
+```
+
+Start a new session and ask for a floorplan, or say `Use /floorplan`. The map's Ask bar runs through GitHub Copilot CLI with only file-reading and search tools available. More in [Floorplan in GitHub Copilot](docs/copilot.md).
+
 ## Quick start
 
-1. Open your project in Claude Code or Codex. For a frontend and backend in separate repos, open the folder that holds both.
+1. Open your project in Claude Code, Codex or GitHub Copilot. For a frontend and backend in separate repos, open the folder that holds both.
 2. Ask:
    > Make me a floorplan of this app.
 
-   (In Codex you can also type `$floorplan`.)
+   (In Codex you can type `$floorplan`; in GitHub Copilot, say `Use /floorplan`.)
 3. Explore. The map opens on its own, starting with a short tour.
 
 When you've done more work, ask:
@@ -216,7 +230,7 @@ You get a [blueprint](#also-blueprints-for-apps-you-havent-built-yet) of the pla
 
 ### Things to try
 
-| Ask Claude Code or Codex | Ask the map |
+| Ask your coding agent | Ask the map |
 |---|---|
 | "Make me a floorplan of this app" | "What happens when someone places an order?" |
 | "Update the floorplan" | "Where do we talk to Stripe?" |
@@ -230,13 +244,13 @@ You get a [blueprint](#also-blueprints-for-apps-you-havent-built-yet) of the pla
 ```mermaid
 flowchart LR
     code["Your codebase<br/>one repo or several"] --> scan["Scan<br/>files, imports, routes, requests"]
-    scan --> agent["Claude or Codex<br/>names the parts, describes every file"]
+    scan --> agent["Your coding agent<br/>names the parts, describes every file"]
     agent --> build["Build<br/>map, health, screens, recent work"]
     build --> map["floorplan/index.html<br/>opens in your browser"]
     map -. "update the floorplan" .-> scan
 ```
 
-Scripts do the mechanical work: finding repos, parsing code in a dozen languages, matching web requests to endpoints, laying out the map. They're plain Node with no dependencies. Claude or Codex does the part only a reader can: deciding what the parts of your app *are*, and saying so plainly. Details in [How it works](docs/how-it-works.md).
+Scripts do the mechanical work: finding repos, parsing code in a dozen languages, matching web requests to endpoints, laying out the map. They're plain Node with no dependencies. Your coding agent does the part only a reader can: deciding what the parts of your app *are*, and saying so plainly. Details in [How it works](docs/how-it-works.md).
 
 **Languages:** TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, plus Vue, Svelte and Astro files, with lighter support for others.<br>
 **Endpoints:** Express, Fastify, Koa, Hono, Next.js, Firebase Cloud Functions, Flask, FastAPI, Django, Go's net/http, Gin, Echo and chi, Actix, Axum, Spring, and route tables keyed by method and path (`"GET /api/orders": listOrders`) in JavaScript and Python.<br>
@@ -244,13 +258,13 @@ Scripts do the mechanical work: finding repos, parsing code in a dozen languages
 
 ## What it adds to your project
 
-A `floorplan/` folder holding the map. In Claude Code, if you say yes, it also adds a short section to `CLAUDE.local.md` so future sessions know the map is there. **Neither is committed:** the folder ignores itself in git, and `CLAUDE.local.md` goes in your clone's private ignore list. In Codex, only the `floorplan/` folder is added. Your `.gitignore` and other tracked files are never touched. See [What's in your project](docs/project-files.md).
+A `floorplan/` folder holding the map. In Claude Code, if you say yes, it also adds a short section to `CLAUDE.local.md` so future sessions know the map is there. **Neither is committed:** the folder ignores itself in git, and `CLAUDE.local.md` goes in your clone's private ignore list. In Codex and GitHub Copilot, only the `floorplan/` folder is added. Your `.gitignore` and other tracked files are never touched. See [What's in your project](docs/project-files.md).
 
 ## Privacy
 
 - The scan, the map and its small local server all run on your computer. The server only accepts connections from your own machine.
 - No dependencies or install scripts, and the map works offline: its layout engine and fonts are built in.
-- Questions on the map go to your own account, through the Claude Code CLI or Codex, which can read your code but not change it.
+- Questions on the map go to your own account through Claude Code, Codex or GitHub Copilot CLI, which can read your code but not change it.
 - The Health check never stores or shows secret values, only where they are.
 - No analytics or tracking. The map may ask once whether you'd like an email when Floorplan Cloud launches. Nothing is sent unless you sign up, and then only your email and "just me" or "with my team".
 
@@ -262,6 +276,7 @@ More in [Privacy and security](docs/privacy-and-security.md). Wondering whether 
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, first map, updating, planning from a PRD, removing |
 | [Floorplan in Codex](docs/codex.md) | Installing and using it in Codex |
+| [Floorplan in GitHub Copilot](docs/copilot.md) | Installing and using it in Copilot CLI and the Copilot app |
 | [Using the map](docs/using-the-map.md) | Every button, view, shortcut and menu |
 | [How it works](docs/how-it-works.md) | The pipeline, connection matching, refreshes |
 | [What's in your project](docs/project-files.md) | Every file Floorplan creates, and how to edit it |
@@ -281,19 +296,19 @@ Floorplan has no hooks, no MCP servers and no dependencies, downloads nothing, a
 <details>
 <summary><b>Does my code leave my computer?</b></summary>
 
-Only the way Claude Code and Codex always work: the AI reads the files it needs to describe your app, through your own account. The map itself is a local file and its server only listens on your machine. If you choose to open the map in the Claude app instead, Claude uploads the map (names, descriptions and structure, not your source code) to your private claude.ai account, and asks first. The one thing Floorplan itself ever sends is your email, and only if you sign up for the [Floorplan Cloud waitlist](docs/privacy-and-security.md#floorplan-cloud-waitlist).
+Only the way Claude Code, Codex and GitHub Copilot normally work: the AI reads the files it needs to describe your app through your own account. The map itself is a local file and its server only listens on your machine. If you choose to open the map in the Claude app instead, Claude uploads the map (names, descriptions and structure, not your source code) to your private claude.ai account, and asks first. The one thing Floorplan itself ever sends is your email, and only if you sign up for the [Floorplan Cloud waitlist](docs/privacy-and-security.md#floorplan-cloud-waitlist).
 </details>
 
 <details>
 <summary><b>How long does it take, and what does it cost?</b></summary>
 
-A first map takes a few minutes for a small app and longer for a big one, because every file and endpoint gets described. It uses your Claude or ChatGPT plan like any other task. Big projects are split across parallel helpers. Updates re-read only what changed, so they're quick and cheap.
+A first map takes a few minutes for a small app and longer for a big one, because every file and endpoint gets described. It uses your Claude, ChatGPT or GitHub Copilot plan like any other task. Big projects are split across parallel helpers. Updates re-read only what changed, so they're quick and cheap.
 </details>
 
 <details>
 <summary><b>Do I need a CLI for the Ask bar?</b></summary>
 
-No. The map works without one. The Ask bar answers through the Claude Code CLI or Codex, which can read your real code. Codex's desktop app already includes what it needs. With Claude, without the CLI you can ask from the Claude app instead, using the map alone.
+No. The map works without one. The Ask bar answers through Claude Code, Codex or GitHub Copilot CLI, which can read your real code. Codex's desktop app already includes what it needs. With Claude, without the CLI you can ask from the Claude app instead, using the map alone.
 </details>
 
 <details>
@@ -309,9 +324,9 @@ Yes. Just ask ("rename 'Main server' to 'Shop API' on the floorplan"), or edit `
 </details>
 
 <details>
-<summary><b>Does it work with Codex as well as Claude Code?</b></summary>
+<summary><b>Does it work with Codex and GitHub Copilot as well as Claude Code?</b></summary>
 
-Yes. It's the same plugin, the same map and the same Health check. Each app runs it on your own plan: Claude Code on your Claude account, Codex on your ChatGPT sign-in. A map made in one opens fine with the other. See [Floorplan in Codex](docs/codex.md).
+Yes. It's the same skill, map and Health check. Each agent runs it on your own plan: Claude Code on your Claude account, Codex on your ChatGPT sign-in, and Copilot on your GitHub Copilot account. A map made in one opens fine with the others. See [Floorplan in Codex](docs/codex.md) and [Floorplan in GitHub Copilot](docs/copilot.md).
 </details>
 
 <details>

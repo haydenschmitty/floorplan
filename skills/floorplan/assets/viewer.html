@@ -614,16 +614,20 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
 'use strict';
 const G = window.FLOORPLAN;
 // who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map
-const AGENT = (window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent) === 'codex'
-  ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
-      signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
-  : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
-      signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
+const AGENTS = {
+  claude: { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
+    signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' },
+  codex: { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
+    signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' },
+  copilot: { id: 'copilot', name: 'GitHub Copilot', app: 'GitHub Copilot', cli: 'GitHub Copilot CLI', docs: 'https://docs.github.com/copilot/how-tos/copilot-cli',
+    signIn: 'Run <code>copilot login</code> in a terminal to sign in, then ask again.' },
+};
+const AGENT = AGENTS[window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent] || AGENTS.claude;
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
 if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.mjs.</p>'; return; }
 // a blueprint: planned from a PRD, so its files don't exist yet (no line counts, nothing to open in an editor)
 const PLAN = !!G.meta.blueprint;
-// an exported copy (serve.mjs --export, or the Export button): read-only, for people without Claude or Codex
+// an exported copy (serve.mjs --export, or the Export button): read-only, for people without an agent
 const EXPORTED = G.meta.exported || null;
 if (typeof ELK === 'undefined') { document.body.innerHTML = '<p style="padding:2rem">Could not load the ELK layout engine. Rebuild the map with build.mjs.</p>'; return; }
 
@@ -1638,7 +1642,7 @@ function itemPanel(item, viaConnector) {
   } else if (i.type === 'file' || i.type === 'module') {
     const f = i.f, fid = 'f:' + f.p, url = editorUrl(f.p);
     if (f.note) html += `<div class="callout">${h(f.note)}</div>`;
-    if (f.tooLarge) html += `<div class="callout">Too big for Floorplan to read, so what it uses, its endpoints and any secrets in it weren’t checked. Ask Claude or Codex to update the floorplan with a bigger file limit to include it.</div>`;
+    if (f.tooLarge) html += `<div class="callout">Too big for Floorplan to read, so what it uses, its endpoints and any secrets in it weren’t checked. Ask your coding agent to update the floorplan with a bigger file limit to include it.</div>`;
     html += pathBox(f.p);
     if (url) actions.push(`<a class="btn soft" href="${url}">${iconI('open')}Open in editor</a>`);
     if (actions.length) html += `<div class="actions">${actions.join('')}</div>`;
@@ -1893,7 +1897,7 @@ function highlightFlow(a, b) {
   anim.beginElement?.();
 }
 
-// ======================= ask (Claude Code CLI or Codex via serve.mjs, or the Claude app) =======================
+// ======================= ask (a supported CLI via serve.mjs, or the Claude app) =======================
 const Q = createGraphQuery(G);
 const askState = { engine: null, sample: null, busy: false, ctl: null, session: null, turns: [], last: null };
 const askInput = $('#ask-input'), askSend = $('#ask-send'), sheet = $('#ask-sheet'), warn = $('#ask-warn');
@@ -2189,7 +2193,7 @@ if (EXPORTED) {
   const tag = document.createElement('span');
   tag.className = 'xtag';
   tag.textContent = isNaN(at) ? 'Exported copy' : `Exported ${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
-  tag.title = 'A copy of this map to look around in. Asking questions needs Floorplan with Claude Code or Codex, in the codebase itself.';
+  tag.title = 'A copy of this map to look around in. Asking questions needs Floorplan with a supported coding agent in the codebase itself.';
   $('#proj-name').after(tag);
   // whoever receives a copy can find where it came from
   const made = document.createElement('a');

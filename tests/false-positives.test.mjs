@@ -146,7 +146,7 @@ before(async () => {
   run('build.mjs', root, '--no-claude-md');
   const port = 20000 + Math.floor(Math.random() * 20000);
   server = spawn(process.execPath, [mapFile('serve.mjs'), '--port', String(port), '--no-open'], {
-    cwd: root, env: { ...process.env, FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-codex') },
+    cwd: root, env: { ...process.env, FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-codex'), FLOORPLAN_COPILOT: path.join(root, 'no-such-copilot') },
   });
   base = await new Promise((resolve, reject) => {
     let out = '';

@@ -11,9 +11,9 @@
   plugin.json          the same plugin for Codex (same skill, same version)
   icon.png
 .agents/plugins/
-  marketplace.json     this repo as a Codex marketplace
+  marketplace.json     this repo as a Codex and GitHub Copilot marketplace
 skills/floorplan/
-  SKILL.md             the workflow Claude and Codex follow
+  SKILL.md             the workflow supported coding agents follow
   agents/openai.yaml   how Codex lists the skill
   references/          formats and style guides Claude reads while working
     schema.md                architecture.json and recent-work.json
@@ -34,7 +34,7 @@ skills/floorplan/
     viewer.html    the map (template the build fills in)
     ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
-    serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
+    serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code, Codex or Copilot
     query-cli.mjs  becomes floorplan/query.mjs
     logo.png, favicon.png
     vendor/        bundled layout engine (elkjs) and fonts, with their licenses
@@ -55,7 +55,7 @@ claude plugin install floorplan@floorplan
 
 A plugin installed from a local folder runs straight from it, so edits apply in the next session with no update step.
 
-To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
+To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). To try it in GitHub Copilot, see [Trying a working copy](copilot.md#trying-a-working-copy). `--agent claude|codex|copilot` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex|copilot` on serve.mjs let you try any supported agent's map from anywhere.
 
 The scripts also run on their own, which is the fastest way to work on them:
 
@@ -94,8 +94,8 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
-| `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
-| `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
+| `ask.test.mjs` | asking through Claude Code, Codex or GitHub Copilot: which one is used, read-only restrictions, follow-ups and sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
+| `agents.test.mjs` | telling the supported agents apart, and what a map built by each records and writes |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |
@@ -112,7 +112,7 @@ Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order
 - `addHeaderButton` and `addPanelSection('overview' | 'item', fn)`;
 - `modal`, `toast`, `store`;
 - events (`on('ready' | 'render' | 'panel' | 'technical')`);
-- `exported`, set in an exported copy: leave out anything there that needs Claude, Codex or the map's server.
+- `exported`, set in an exported copy: leave out anything there that needs a coding agent or the map's server.
 
 `20-health.js` and `25-recent.js` are good examples.
 
