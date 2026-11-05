@@ -5,15 +5,15 @@
 // usage: node recent.mjs [root] [--days 7]
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, parseArgs, mapDir } from './lib/common.mjs';
+import { git, parseArgs, mapDir, readJsonFile } from './lib/common.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
 const dir = mapDir(root);
 const graphFile = path.join(dir, 'graph.json');
 if (!fs.existsSync(graphFile)) { console.error('✗ No floorplan/graph.json. Run build.mjs first.'); process.exit(1); }
-const G = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
-const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+const G = readJsonFile(graphFile);
+const readJson = (f) => { try { return readJsonFile(f); } catch { return null; } };
 const changes = readJson(path.join(dir, '.cache', 'changes.json'));
 const current = readJson(path.join(dir, 'recent-work.json'));
 
@@ -51,6 +51,15 @@ if (changes) {
 }
 
 const since = changes?.since || current?.updatedAt || new Date(Date.now() - (Number(args.days) || 7) * 86400000).toISOString();
+if (!(G.meta.repos || []).length) {
+  L.push('', 'NO GIT REPOSITORIES  Refresh compares fingerprints without git.');
+  if (!changes) {
+    const days = Number(args.days) || 7, cutoff = Date.now() - days * 86400000;
+    const touched = G.files.filter((f) => { try { return fs.statSync(path.join(root, f.p)).mtimeMs >= cutoff; } catch { return false; } });
+    L.push(`FILES MODIFIED IN THE LAST ${days} DAYS (mtime hints, not a diff): ${touched.length}`);
+    list(touched.map((f) => `${f.p}  → ${card(f.p)}`));
+  }
+}
 for (const r of G.meta.repos || []) {
   const abs = path.join(root, r.path);
   const prefix = r.path === '.' ? '' : r.path + '/';

@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, parseArgs, mapDir } from './lib/common.mjs';
+import { compileGlob, parseArgs, mapDir, readJsonFile } from './lib/common.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
@@ -22,8 +22,8 @@ if (!fs.existsSync(graphFile) || !fs.existsSync(archFile)) {
   console.log('No existing map here (floorplan/graph.json + architecture.json). Do a full run instead.');
   process.exit(0);
 }
-const old = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
-const arch = JSON.parse(fs.readFileSync(archFile, 'utf8'));
+const old = readJsonFile(graphFile);
+const arch = readJsonFile(archFile);
 
 // A blueprint is redrawn from plan.json, not from code. --from-code maps the real code instead
 // (plan.json is kept, so the blueprint can be drawn again with plan.mjs + build.mjs).
@@ -39,7 +39,7 @@ if (old.meta?.blueprint && !args['from-code']) {
 // ---------- 1. re-scan (no tokens) ----------
 const node = process.execPath;
 execFileSync(node, [path.join(HERE, 'scan.mjs'), root], { stdio: ['ignore', 'ignore', 'inherit'] });
-const scan = JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'scan.json'), 'utf8'));
+const scan = readJsonFile(path.join(outDir, '.cache', 'scan.json'));
 
 const include = Array.isArray(arch.include) ? arch.include : ['code'];
 const ignore = (arch.ignore || []).map(compileGlob);
