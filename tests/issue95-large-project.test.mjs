@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { makeProject, run, readGraph, writeJson, cleanup } from './helpers.mjs';
 
 const arch = { project: { name: 'Example' }, nodes: [{ id: 'core', kind: 'service', label: 'Core', summary: 'Does the work.', paths: ['src/**'] }] };
@@ -49,6 +50,9 @@ test('lite produces labeled placeholders without replacing human descriptions', 
 test('ignored generated directories are excluded even if git tracks them', () => {
   const root = makeProject({ 'src/main.js': 'export const live = 1;', 'dist/bundle.js': 'export const dist = 1;', 'build/app.js': 'export const build = 1;', 'prisma/generated/client.js': 'export const client = 1;', 'src/generated/helper.js': 'export const helper = 1;' }, { repos: ['.'], arch });
   try {
+    execFileSync('git', ['-C', root, 'add', '-f', '--', 'src/main.js', 'src/generated/helper.js', 'dist/bundle.js', 'build/app.js', 'prisma/generated/client.js']);
+    const staged = execFileSync('git', ['-C', root, 'ls-files'], { encoding: 'utf8' });
+    for (const name of ['dist/bundle.js', 'build/app.js', 'prisma/generated/client.js']) assert.ok(staged.split('\n').includes(name), name + ' is tracked');
     run('scan.mjs', root);
     const files = JSON.parse(fs.readFileSync(path.join(root, 'floorplan', '.cache', 'scan.json'), 'utf8')).files.map((f) => f.path);
     assert.ok(files.includes('src/main.js'));
