@@ -211,7 +211,7 @@ function findSecrets(src, f, out) {
 
 // Decorators / middleware / dependencies whose names say "check who is calling".
 const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^guard(?:_|$)|_guard$|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
-const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
+const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt|cors|helmet|compression|morgan|serve_?static|body_?parser|cookie_?parser|urlencoded|favicon)$/i;
 const isGuardName = (name) => !!name && !NOT_GUARD.test(name) && GUARD_NAME.test(snake(name));
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
@@ -379,7 +379,11 @@ function jsRoutes(src, f, out) {
   // app.use(auth) / router.use(requireAuth) without a path guards everything registered after it
   const uses = [];
   for (const m of src.matchAll(/\b(\w+)\.use\(\s*([^'"`)][^)]*)\)/g)) {
-    const names = m[2].match(/[A-Za-z_$][\w$]*/g) || [];
+    // #72 — the arguments include string literals, so `'X-Refreshed-Token'` handed
+    // us `Token` and an app-wide guard nobody wrote silenced the open-endpoint
+    // check. Strip quoted strings before looking for guard names.
+    const argText = m[2].replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, ' ');
+    const names = argText.match(/[A-Za-z_$][\w$]*/g) || [];
     if (names.some(isGuardName)) uses.push({ v: m[1], line: src.slice(0, m.index).split('\n').length, name: names.find(isGuardName) });
   }
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });

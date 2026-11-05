@@ -88,3 +88,10 @@ test('Express: a check before a named handler counts, and each route is judged o
   // (updateUser) isn't a check, and a check on the next route doesn't protect the one before it
   assert.deepEqual(openEndpoints(graph), ['GET /api/books', 'POST /api/notes', 'PUT /api/users/:id']);
 });
+
+test('Express: a string literal in app.use arguments is not a global guard (#72)', () => {
+  // 'X-Refreshed-Token' used to hand the scan `Token`, and a guard nobody wrote
+  // silenced the open-endpoint check for the whole repo.
+  const graph = buildFixture('express-string-header-fp');
+  assert.deepEqual(openEndpoints(graph), ['DELETE /api/admin/users/:id']);
+});
