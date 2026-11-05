@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseArgs, toPosix, mapDir, keepOutOfGit } from './lib/common.mjs';
+import { parseArgs, toPosix, mapDir, keepOutOfGit, readJsonFile } from './lib/common.mjs';
 import { planToScan } from './lib/blueprint.mjs';
 
 const args = parseArgs(process.argv.slice(2));
@@ -19,14 +19,14 @@ const outFile = path.join(outDir, '.cache', 'scan.json');
 const fail = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
 if (!fs.existsSync(planFile)) fail(`No plan at ${planFile}. Write it first (see references/blueprint.md).`);
 let plan;
-try { plan = JSON.parse(fs.readFileSync(planFile, 'utf8')); } catch (e) { fail(`plan.json is not valid JSON: ${e.message}`); }
+try { plan = readJsonFile(planFile); } catch (e) { fail(`plan.json is not valid JSON: ${e.message}`); }
 
 const { scan, errors, warnings } = planToScan(plan, root);
 // "services" and "data" name nodes in architecture.json: check them now if it's written
 const archFile = path.join(outDir, 'architecture.json');
 if (scan && fs.existsSync(archFile)) {
   let ids = null;
-  try { ids = (JSON.parse(fs.readFileSync(archFile, 'utf8')).nodes || []).map((n) => n?.id).filter(Boolean); } catch {}
+  try { ids = (readJsonFile(archFile).nodes || []).map((n) => n?.id).filter(Boolean); } catch {}
   if (ids) for (const l of scan.nodeLinks) if (!ids.includes(l.to)) {
     const near = ids.find((id) => id.toLowerCase().startsWith(l.to.toLowerCase().slice(0, 3)));
     errors.push(`files "${l.from}".${l.kind === 'data' ? 'data' : 'services'} "${l.to}" is not a node id in architecture.json${near ? ` (did you mean "${near}"?)` : ''}`);

@@ -82,3 +82,18 @@ test('non-git recent work is labeled as mtime hints rather than invented commits
     assert.doesNotMatch(out, /commits since/);
   } finally { cleanup(root); }
 });
+
+test('lite mode survives a refresh and original-name skeletons are optional', () => {
+  const root = makeProject({ 'src/paramètres.js': 'export const state = 1;\n' }, { arch });
+  try {
+    run('scan.mjs', root);
+    run('build.mjs', root, '--lite', '--no-claude-md');
+    run('describe.mjs', root, '--keep-names');
+    const skeleton = JSON.parse(fs.readFileSync(path.join(root, 'floorplan', 'descriptions', 'core.json'), 'utf8'));
+    assert.equal(skeleton.files['src/paramètres.js'].name, 'paramètres.js');
+    fs.appendFileSync(path.join(root, 'src', 'paramètres.js'), 'export const count = 2;\n');
+    run('refresh.mjs', root);
+    assert.equal(readGraph(root).meta.lite, true);
+    assert.ok(readGraph(root).files.find((f) => f.p === 'src/paramètres.js').d);
+  } finally { cleanup(root); }
+});

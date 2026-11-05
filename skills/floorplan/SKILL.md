@@ -27,6 +27,19 @@ Arguments: $ARGUMENTS
 
 **In Codex** (or any agent that left the two lines above unfilled): `${CLAUDE_SKILL_DIR}` in every command here means this skill's folder, the one holding this SKILL.md, so use its path. Run `node <that folder>/scripts/status.mjs` from the codebase root yourself to see whether a map exists, and take the path and `--refresh` from the user's request. The scripts notice they're running under Codex, so the map's Ask bar and "Fix with" prompts use Codex.
 
+## Quick path for a large codebase
+
+For a **first-pass map** when a full file-by-file description pass is too expensive, keep the scope small:
+
+1. Run `node ${CLAUDE_SKILL_DIR}/scripts/scan.mjs <root>`.
+2. Write a minimal `floorplan/architecture.json`: the project name and a few meaningful nodes with `id`, `label`, `kind` and `paths`. Use the scan's directory tree to choose the nodes.
+3. Run `node ${CLAUDE_SKILL_DIR}/scripts/build.mjs <root> --lite`. The map is immediately useful: missing file and route descriptions come from docstrings, exports or paths, are marked as **generated**, and never replace hand-written descriptions.
+4. Run `node ${CLAUDE_SKILL_DIR}/scripts/open.mjs <root>`. Improve important areas later with `describe.mjs` (use `--keep-names` if preserving original filenames is preferable) and rebuild.
+
+This is a deliberate partial map, not a claim that every file has been reviewed. For larger projects, worksheets are split by module/key for parallel independent description work. A refresh retains lite mode and compares fingerprints even without git. The build summary reports excluded categories and files without detected static links; runtime-built URLs may not be resolved.
+
+**Windows PowerShell:** examples with `&&`, `${CLAUDE_SKILL_DIR}` and POSIX shell syntax assume bash/zsh. Run the Node scripts as separate PowerShell commands with ordinary quoted Windows paths, for example `node "C:\\path\\to\\floorplan\\skills\\floorplan\\scripts\\scan.mjs" "C:\\path\\to\\project"`. Git is optional.
+
 ## Nothing built yet? Draw a blueprint
 
 If the user wants to plan something they haven't built ("here's my PRD", "I want to build an app that…", a long description of a system), make a **blueprint**: the same map, planned from their document instead of scanned from code. Use this path when there's no code for the system yet, even if the folder holds other things. If the code exists, make a normal map.

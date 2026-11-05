@@ -108,7 +108,7 @@ if (fs.existsSync(descDir)) {
   for (const name of fs.readdirSync(descDir).filter((n) => n.endsWith('.json'))) {
     const fp = path.join(descDir, name);
     let d;
-    try { d = JSON.parse(fs.readFileSync(fp, 'utf8')); } catch { continue; }
+    try { d = readJsonFile(fp); } catch { continue; }
     let changed = false;
     const filesOut = {};
     for (const [p, v] of Object.entries(d.files || {})) {
@@ -144,7 +144,7 @@ fs.writeFileSync(path.join(outDir, '.cache', 'changes.json'), JSON.stringify({
 // ---------- 5. rebuild (no tokens) ----------
 let buildOut = '';
 let buildOk = true;
-try { buildOut = execFileSync(node, [path.join(HERE, 'build.mjs'), root], { encoding: 'utf8' }); }
+try { buildOut = execFileSync(node, [path.join(HERE, 'build.mjs'), root, ...(old.meta?.lite ? ['--lite'] : [])], { encoding: 'utf8' }); }
 catch (e) { buildOut = (e.stdout || '') + (e.stderr || ''); buildOk = false; }
 
 // ---------- 6. report ----------

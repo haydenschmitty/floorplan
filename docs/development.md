@@ -1,5 +1,20 @@
 # Developing Floorplan
 
+## Quick test of a large or no-git project
+
+The scripts need Node 18+ and no npm dependencies. You can test with a regular folder, without git:
+
+```sh
+node skills/floorplan/scripts/scan.mjs /path/to/project
+# Write /path/to/project/floorplan/architecture.json with a project and nodes (see schema.md).
+node skills/floorplan/scripts/build.mjs /path/to/project --lite
+node skills/floorplan/scripts/describe.mjs /path/to/project --keep-names
+```
+
+`--lite` builds the map without waiting for all file and route descriptions. Placeholders are taken from docstrings, exports or paths, clearly marked as generated; hand-written descriptions take precedence. `refresh.mjs` preserves lite mode and tracks changed files via fingerprints without git. `recent.mjs` shows approximate modification times before the first refresh when git is unavailable. The build summary distinguishes excluded file categories, files ignored by architecture rules, unlinked files, and **possible** runtime-built HTTP calls. These are hints rather than guaranteed missing edges.
+
+The examples above assume a POSIX shell. In Windows PowerShell run commands one per line and quote paths; a git installation is not required.
+
 ## Repo layout
 
 ```
