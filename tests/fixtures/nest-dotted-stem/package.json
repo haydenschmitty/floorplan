@@ -1,0 +1,1 @@
+{ "name": "nest-dotted-stem", "private": true, "type": "module", "dependencies": { "@nestjs/common": "^10.0.0" } }
