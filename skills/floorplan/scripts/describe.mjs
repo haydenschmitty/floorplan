@@ -10,7 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseArgs, fmtNum, mapDir } from './lib/common.mjs';
+import { parseArgs, fmtNum, mapDir, readJsonFile } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 
 const args = parseArgs(process.argv.slice(2));
@@ -18,7 +18,7 @@ const root = path.resolve(args._[0] || '.');
 const outDir = mapDir(root);
 const graphFile = path.join(outDir, 'graph.json');
 if (!fs.existsSync(graphFile)) { console.error('✗ No floorplan/graph.json. Run build.mjs first.'); process.exit(1); }
-const g = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
+const g = readJsonFile(graphFile);
 const maxFiles = Number(args['max-files']) || 40;
 const wsDir = path.join(outDir, '.cache', 'worksheets');
 const descDir = path.join(outDir, 'descriptions');
@@ -109,13 +109,13 @@ changed: ${f.review}`);
 
     // skeleton: keep anything already written, add missing keys
     let existing = {};
-    try { existing = JSON.parse(fs.readFileSync(descFile, 'utf8')); } catch {}
+    try { existing = readJsonFile(descFile); } catch {}
     const skel = { files: { ...(existing.files || {}) }, routes: { ...(existing.routes || {}) } };
     for (const f of chunk) {
-      if (!skel.files[f.p]) skel.files[f.p] = { name: f.auto ? fallbackFileName(f.p) : f.name, description: f.auto ? '' : f.d };
+      if (!skel.files[f.p]) skel.files[f.p] = { name: f.auto ? (args['keep-names'] ? path.posix.basename(f.p) : fallbackFileName(f.p)) : f.name, description: f.auto ? '' : f.d };
       for (const r of routesByFile.get(f.p) || []) {
         const k = routeKey({ method: r.m, path: r.p });
-        if (!skel.routes[k]) skel.routes[k] = { name: r.auto ? fallbackRouteName({ handler: r.h, method: r.m, path: r.p }) : r.name, description: r.auto ? '' : r.d };
+        if (!skel.routes[k]) skel.routes[k] = { name: r.auto ? (args['keep-names'] ? `${r.m} ${r.p}` : fallbackRouteName({ handler: r.h, method: r.m, path: r.p })) : r.name, description: r.auto ? '' : r.d };
       }
     }
     if (!Object.keys(skel.routes).length) delete skel.routes;

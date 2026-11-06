@@ -7,7 +7,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit } from './lib/common.mjs';
+import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit, readJsonFile } from './lib/common.mjs';
+import { autoFileDescription, autoRouteDescription } from './lib/auto-descriptions.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 import { buildHealth, withDismissed, dismissalFor } from './lib/health.mjs';
 import { buildPlanHealth } from './lib/blueprint.mjs';
@@ -18,6 +19,7 @@ import { detectAgent } from './lib/agent.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(HERE, '..');
 const args = parseArgs(process.argv.slice(2));
+const lite = !!args.lite;
 const agent = detectAgent(args);
 const root = path.resolve(args._[0] || '.');
 const outDir = path.resolve(args.out || mapDir(root));
@@ -35,9 +37,9 @@ const warn = (msg) => warnings.push(msg);
 const fail = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
 if (!fs.existsSync(scanFile)) fail(`No scan at ${scanFile}. Run: node ${path.join(SKILL_DIR, 'scripts', 'scan.mjs')} "${root}"`);
 if (!fs.existsSync(archFile)) fail(`No architecture file at ${archFile}. Write it first (see references/schema.md).`);
-const scan = JSON.parse(fs.readFileSync(scanFile, 'utf8'));
+const scan = readJsonFile(scanFile);
 let arch;
-try { arch = JSON.parse(fs.readFileSync(archFile, 'utf8')); } catch (e) { fail(`architecture.json is not valid JSON: ${e.message}`); }
+try { arch = readJsonFile(archFile); } catch (e) { fail(`architecture.json is not valid JSON: ${e.message}`); }
 
 // ---------- validate shape ----------
 const isStr = (v) => typeof v === 'string' && v.length > 0;
@@ -111,6 +113,9 @@ const filesAll = scan.files;
 const fileByPath = new Map(filesAll.map((f) => [f.path, f]));
 const included = filesAll.filter((f) => include.includes(f.category) && !ignoreGlobs.some((g) => g.test(f.path)));
 const includedSet = new Set(included.map((f) => f.path));
+const excludedCategories = new Map();
+for (const f of filesAll) if (!include.includes(f.category)) excludedCategories.set(f.category, (excludedCategories.get(f.category) || 0) + 1);
+const ignoredCount = filesAll.filter((f) => include.includes(f.category) && ignoreGlobs.some((g) => g.test(f.path))).length;
 
 // ---------- assign files to nodes ----------
 // A node's `exclude` also applies to its descendants, so "web excludes tests" holds all the way down.
@@ -223,7 +228,7 @@ flows.forEach((fl, i) => {
 const customFile = path.join(outDir, 'custom-flows.json');
 if (fs.existsSync(customFile)) {
   let custom = [];
-  try { custom = JSON.parse(fs.readFileSync(customFile, 'utf8')).flows || []; } catch (e) { warn(`custom-flows.json is not valid JSON: ${e.message}`); }
+  try { custom = readJsonFile(customFile).flows || []; } catch (e) { warn(`custom-flows.json is not valid JSON: ${e.message}`); }
   const routeAt = new Map(routesIn.map((r, i) => [routeKey(r), i]));
   const resolveStep = (ref) => {
     if (typeof ref !== 'string') return null;
@@ -260,7 +265,7 @@ let outRecent = null;
 const recentFile = path.join(outDir, 'recent-work.json');
 if (fs.existsSync(recentFile)) {
   let rw = null;
-  try { rw = JSON.parse(fs.readFileSync(recentFile, 'utf8')); } catch (e) { warn(`recent-work.json is not valid JSON: ${e.message}`); }
+  try { rw = readJsonFile(recentFile); } catch (e) { warn(`recent-work.json is not valid JSON: ${e.message}`); }
   const routeIdx = new Map(routesIn.map((r, i) => [routeKey(r), i]));
   const resolveRecent = (ref) => {
     if (!isStr(ref)) return null;
@@ -306,7 +311,7 @@ const staleEx = [];
 if (fs.existsSync(descDir)) {
   for (const name of fs.readdirSync(descDir).filter((n) => n.endsWith('.json')).sort()) {
     let d;
-    try { d = JSON.parse(fs.readFileSync(path.join(descDir, name), 'utf8')); } catch (e) { err(`descriptions/${name} is not valid JSON: ${e.message}`); continue; }
+    try { d = readJsonFile(path.join(descDir, name)); } catch (e) { err(`descriptions/${name} is not valid JSON: ${e.message}`); continue; }
     for (const [p, v] of Object.entries(d.files || {})) {
       if (!v || typeof v !== 'object') { err(`descriptions/${name}: files["${p}"] must be { name, description }`); continue; }
       if (!includedSet.has(p)) { staleFiles++; if (staleEx.length < 3) staleEx.push(p); continue; }
@@ -348,6 +353,8 @@ if (warnings.length) {
 }
 report.push('');
 report.push(`ASSIGNMENT  ${included.length} files (${include.join('+')}), ${unassigned.length} unassigned (${pct.toFixed(1)}%)`);
+if (excludedCategories.size || ignoredCount) report.push(`EXCLUDED  ${[...excludedCategories].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${v} ${k}`).join(' · ')}${ignoredCount ? `${excludedCategories.size ? ' · ' : ''}${ignoredCount} ignored by architecture` : ''} — add categories to architecture.json include or adjust ignore to map them`);
+if (scan.skipped?.length) report.push(`NOT SCANNED  ${scan.skipped.length} directory(s) skipped during discovery (see scan.mjs output)`);
 for (const n of nodes.filter((n) => n?.id && !n.parent)) {
   const s = stats.get(n.id);
   report.push(`  ${n.id.padEnd(28)} ${String(s.files).padStart(5)} files ${scan.blueprint ? '' : `${fmtNum(s.loc).padStart(6)} loc  `}[${n.kind}]`);
@@ -361,13 +368,19 @@ if (unassigned.length) {
 const byKind = {};
 for (const l of links.values()) byKind[l.k] = (byKind[l.k] || 0) + 1;
 report.push(`LINKS  ${[...links.values()].length} (${Object.entries(byKind).map(([k, v]) => `${k} ${v}`).join(', ')})`);
+const linkedFiles = new Set([...links.values()].flatMap((l) => [l.a, l.b]).filter((id) => id.startsWith('f:')).map((id) => id.slice(2)));
+const unlinkedCount = included.filter((f) => !linkedFiles.has(f.path)).length;
+if (unlinkedCount) report.push(`UNLINKED  ${unlinkedCount} file(s) without detected static connections; this does not prove they are unused`);
+const possibleDynamic = included.filter((f) => f.possibleDynamicCalls).length;
+if (possibleDynamic) report.push(`DYNAMIC URL HINTS  ${possibleDynamic} file(s) contain HTTP calls built from expressions; inspect them before adding manual edges`);
 const describedFiles = included.filter((f) => fileDesc.get(f.path)?.d || f.desc).length;
 const describedRoutes = routesIn.filter((r) => routeDesc.get(routeKey(r))?.d || r.desc).length;
 const noSummary = nodes.filter((n) => n?.id && !isStr(n.summary)).map((n) => n.id);
 const reviewCount = [...fileDesc.values(), ...routeDesc.values()].filter((d) => d.review).length;
 report.push(`DESCRIPTIONS  files ${describedFiles}/${included.length} · routes ${describedRoutes}/${routesIn.length} · modules ${nodes.length - noSummary.length}/${nodes.length}${reviewCount ? ` · ${reviewCount} need review (code changed)` : ''}`);
 if (noSummary.length) report.push(`  modules without a summary: ${noSummary.slice(0, 12).join(', ')}${noSummary.length > 12 ? '…' : ''}`);
-if (describedFiles < included.length || describedRoutes < routesIn.length || reviewCount) report.push(`  Run describe.mjs to get worksheets for the ${included.length - describedFiles} file(s) and ${routesIn.length - describedRoutes} route(s) still missing descriptions.`);
+if (lite && (describedFiles < included.length || describedRoutes < routesIn.length)) report.push('  Lite mode: missing descriptions use generated placeholders; improve them when needed.');
+else if (describedFiles < included.length || describedRoutes < routesIn.length || reviewCount) report.push(`  Run describe.mjs to get worksheets for the ${included.length - describedFiles} file(s) and ${routesIn.length - describedRoutes} route(s) still missing descriptions.`);
 
 if (errors.length) { console.log(report.join('\n')); console.log('\nFix the errors above and run build again.'); process.exit(1); }
 if (args.check) { console.log(report.join('\n')); process.exit(0); }
@@ -378,6 +391,7 @@ const graph = {
   meta: {
     generatedAt: new Date().toISOString(), scanAt: scan.generatedAt, rootName: scan.rootName, root: scan.root,
     audience, agent,
+    ...(lite ? { lite: true } : {}),
     ...(scan.blueprint ? { blueprint: { source: scan.blueprint.source, stack: scan.blueprint.stack, assumptions: scan.blueprint.assumptions } } : {}),
     repos: scan.repos.map(({ path: p, name, branch, head, remote }) => ({ path: p, name, branch, head, remote })),
     counts: { files: included.length, loc: included.reduce((s, f) => s + f.loc, 0), unassigned: unassigned.length },
@@ -395,7 +409,9 @@ const graph = {
     const d = fileDesc.get(f.path);
     return {
       p: f.path, n: owner.get(f.path), r: f.repo, l: f.lang || f.category, loc: f.loc,
-      name: d?.name || f.name || fallbackFileName(f.path), d: d?.d || f.desc || f.doc || '', ...(d?.d || f.desc ? {} : { auto: true }),
+      name: d?.name || f.name || (lite ? path.posix.basename(f.path) : fallbackFileName(f.path)),
+      d: d?.d || f.desc || (lite ? autoFileDescription(f) : f.doc || ''), ...(d?.d || f.desc ? {} : { auto: true }),
+      ...(f.possibleDynamicCalls ? { possibleDynamicCalls: f.possibleDynamicCalls } : {}),
       ...(f.doc ? { doc: f.doc } : {}),
       ...(f.tooLarge ? { tooLarge: true } : {}),
       ...(d?.review ? { review: d.review } : {}),
@@ -406,7 +422,7 @@ const graph = {
   }),
   routes: routesIn.map((r) => {
     const d = routeDesc.get(routeKey(r));
-    return { f: r.file, m: r.method, p: r.path, l: r.line, h: r.handler || null, name: d?.name || r.name || fallbackRouteName(r), d: d?.d || r.desc || r.doc || '', ...(d?.d || r.desc ? {} : { auto: true }), ...(d?.review ? { review: d.review } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(r.access ? { access: r.access } : {}), ...(r.who ? { who: r.who } : {}), ...(r.publicBecause ? { publicBecause: r.publicBecause } : {}) };
+    return { f: r.file, m: r.method, p: r.path, l: r.line, h: r.handler || null, name: d?.name || r.name || (lite ? `${r.method} ${r.path}` : fallbackRouteName(r)), d: d?.d || r.desc || (lite ? autoRouteDescription(r) : r.doc || ''), ...(d?.d || r.desc ? {} : { auto: true }), ...(d?.review ? { review: d.review } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(r.access ? { access: r.access } : {}), ...(r.who ? { who: r.who } : {}), ...(r.publicBecause ? { publicBecause: r.publicBecause } : {}) };
   }),
   links: [...links.values()],
   flows: outFlows,
@@ -421,7 +437,7 @@ if (scan.blueprint) try { graph.health = buildPlanHealth({ graph, scan }); } cat
 // issues people marked "not a problem" on the map (saved by serve.mjs) stay listed, set apart, and leave the counts
 const dismissedFile = path.join(outDir, 'health-dismissed.json');
 if (graph.health?.issues && fs.existsSync(dismissedFile)) {
-  try { graph.health = withDismissed(graph.health, JSON.parse(fs.readFileSync(dismissedFile, 'utf8')).dismissed); } catch (e) { warn(`health-dismissed.json is not valid JSON: ${e.message}`); }
+  try { graph.health = withDismissed(graph.health, readJsonFile(dismissedFile).dismissed); } catch (e) { warn(`health-dismissed.json is not valid JSON: ${e.message}`); }
 }
 fs.mkdirSync(outDir, { recursive: true });
 const trackedWarning = keepOutOfGit(outDir);

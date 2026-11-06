@@ -94,6 +94,7 @@ export const HARD_IGNORE_DIRS = new Set([
   'node_modules', '.git', '.pnpm-store', '.yarn', '__pycache__', '.venv', 'venv', 'site-packages',
   '.tox', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.next', '.nuxt', '.svelte-kit', '.turbo',
   '.parcel-cache', '.gradle', '.idea',
+  'dist', 'build', 'out', 'target', 'coverage',
 ]);
 
 /** The folder the map lives in, at the codebase root. Maps made before the rename used show-code/. */
@@ -245,6 +246,11 @@ export function discover(root, { includeWorktrees = false, maxLooseFiles = 5000 
 }
 
 // ---------- misc ----------
+
+/** Strict JSON reader accepting a leading UTF-8 BOM from Windows editors. */
+export function readJsonFile(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+}
 
 export function readJsonLoose(file) {
   try {
