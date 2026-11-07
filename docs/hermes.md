@@ -28,6 +28,8 @@ hermes --profile <profile> plugins enable floorplan
 
 `--no-enable` installs without turning the plugin on, so checksums and `plugins doctor` run before anything loads. Restart that profile's owning process the way you normally do (Desktop, TUI or gateway), and only that profile. Do not mass-roll out every profile.
 
+Hermes scans every plugin from outside its catalog as it installs it, and blocks a community plugin whose verdict is CAUTION. Floorplan's verdict is CAUTION: the findings are the vendored layout engine (`skills/floorplan/assets/vendor/elk.bundled.js`, minified code that reads as obfuscated), the skill's `!`-prefixed status line (it reads as a command to run), the plugin icon's size, and words in the docs and tests. So the first install stops with `BLOCKED … Use --force to override`. Read the findings, then run the same install command again with `--force`. Nothing in the plugin runs at install: it has no hooks and no dependencies.
+
 Run the checksum check from a clone of that same release: its `CHECKSUMS.txt` and `tools/checksums.mjs` are the reference. The installed folder is `<HERMES_HOME>/plugins/floorplan`; each profile has its own `HERMES_HOME`, its own enabled list and its own installed bytes. Installing or enabling in one profile does not change another.
 
 `plugins doctor --ci` is necessary, not sufficient: it parses the manifest, imports the plugin, runs its registration and reports its hook/tool/MCP counts (none here). It does not prove a provider route, a source read or an inference.
@@ -119,7 +121,7 @@ Neither command deletes `floorplan/`, your notes, `descriptions/`, saved flows, 
 
 ## Remote viewing: a same-port tunnel, never a reverse proxy
 
-The server listens on `127.0.0.1` only and accepts only `127.0.0.1:<port>` or `localhost:<port>` with a matching `Origin`. That is deliberate; a preview domain is refused even with a valid token.
+The server listens on `127.0.0.1` only and accepts only the `Host` `127.0.0.1:<port>` or `localhost:<port>`; a request that carries an `Origin` must match that host, and one without an `Origin` is accepted. That is deliberate; a preview domain is refused even with a valid token.
 
 From the laptop, tunnel the same port:
 

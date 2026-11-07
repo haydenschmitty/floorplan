@@ -204,6 +204,8 @@ hermes --profile <profile> plugins doctor <installed plugin folder> --ci
 hermes --profile <profile> plugins enable floorplan
 ```
 
+Hermes scans every plugin from outside its catalog as it installs it. Floorplan's scan comes back **CAUTION**, mostly because the vendored layout engine reads as obfuscated and the skill's status line reads as a command, so the install stops with `BLOCKED … Use --force to override`. Read the findings it prints, then run the same install command again with `--force`.
+
 Restart that profile's session, then type `/floorplan:floorplan` in the project folder. The map's Ask bar runs through the same Hermes profile and model. Upgrade, rollback, disable/uninstall, the exact source-read limits and the support matrix are in [Floorplan in Hermes](docs/hermes.md).
 
 ## Quick start

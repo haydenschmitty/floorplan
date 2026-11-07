@@ -147,6 +147,9 @@ class FakeLlm:
         decision = self.decisions.pop(0)
         if isinstance(decision, BaseException):
             raise decision
+        if isinstance(decision, str):  # a reply the host could not parse as a whole: it leaves parsed empty
+            return types.SimpleNamespace(parsed=None, text=decision, provider="test-prov", model="test-model",
+                                         agent_id="a", usage=None, audit={})
         return types.SimpleNamespace(parsed=decision, text=json.dumps(decision), provider="test-prov",
                                      model="test-model", agent_id="a", usage=None, audit={})
 
@@ -282,6 +285,21 @@ class AskTest(unittest.TestCase):
                     {"kind": "lookup", "lookup": {"kind": "read"}}, {"kind": "final", "payload": "nope"}]:
             code, out, _ = self.run_ask([start()], [bad])
             self.assertEqual((code, out[-1]["code"]), (1, "cli_error"), bad)
+
+    def test_a_decision_with_stray_text_after_it_still_counts(self):
+        # a route that can't enforce the schema (the host then leaves parsed empty) lets the model trail text
+        # after a valid decision; seen live as `...}</index>` and `...}\n\n<system_warning>...`
+        self.write("a.js", "const one = 1;\nconst two = 2;")
+        code, out, _ = self.run_ask([start(), *self.frames("a.js")],
+                                    [json.dumps(READ) + "</index>", json.dumps(FINAL) + "\n\n<system_warning>x</system_warning>"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.kinds(out), ["ready", "lookup", "source_bytes", "lookup_result", "progress", "result"])
+        self.assertEqual(out[-1]["payload"]["title"], "t")
+
+    def test_a_reply_without_a_valid_decision_is_still_refused(self):
+        for raw in ["I can't answer that.", "[1, 2]", '{"kind": "final", "payload": "nope"} and more']:
+            code, out, _ = self.run_ask([start()], [raw])
+            self.assertEqual((code, out[-1]["code"], out[-1].get("message")), (1, "cli_error", "invalid_decision"), raw)
 
     def test_a_profile_mismatch_is_typed(self):
         code, out, _ = self.run_ask([start(profile="someone-else")], [FINAL])

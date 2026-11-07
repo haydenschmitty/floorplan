@@ -357,6 +357,8 @@ class _Session:
     def decision(self, result):
         parsed = getattr(result, "parsed", None)
         if not isinstance(parsed, dict):
+            parsed = _leading_json(getattr(result, "text", None))
+        if not isinstance(parsed, dict):
             raise ProtocolError("invalid_decision")
         kind = parsed.get("kind")
         if kind == "final":
@@ -477,6 +479,19 @@ def _progress(kind: str, args: dict, outcome: dict) -> str:
              "read": f"Reading {where}", "search": f'Searching the code for "{where}"'}
     label = words.get(kind, "Looking something up")
     return label if outcome.get("ok") else f"{label}: not available"
+
+
+def _leading_json(text):
+    """The first JSON object in a reply, ignoring whatever follows it. When the host cannot enforce the schema
+    (it then sends the request without one), the model may trail text after a valid decision, which leaves
+    `parsed` empty. What this returns is still checked like any other decision."""
+    if not isinstance(text, str) or "{" not in text:
+        return None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(text, text.index("{"))
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _mapped(exc: Exception) -> Exception:
