@@ -105,9 +105,30 @@ const ENCRYPTED_VALUE = /^encrypted:[A-Za-z0-9+/=_-]{20,}|^ENC\[[A-Z0-9_]+,data:
 /** A value that's a password hash or ciphertext rather than the secret itself. */
 export const protectedValue = (v, name = '') => ENCRYPTED_VALUE.test(v) || HASHED_VALUE.test(v) || HASHED_NAME.test(snake(name));
 
+// A variable handed along, not a value: "$DB_PASSWORD" in a shell script or a PHP string, %DB_PASSWORD% on
+// Windows, $env:DB_PASSWORD in PowerShell. The secret itself lives wherever that variable is set.
+const VARIABLE_VALUE = /^\$[A-Za-z_]\w*$|^%[A-Za-z_]\w*%$|^\$env:[A-Za-z_]\w*$/i;
+// A path to one of the project's own files kept under a password-ish key, such as a map from page names to
+// page files: 'confirm_password' => 'resources/js/pages/auth/confirm-password.tsx'
+const FILE_PATH_VALUE = /^[\w@.-]+(?:\/[\w@.-]+)+\.(?:[cm]?[jt]sx?|vue|svelte|astro|php|py|rb|go|rs|java|kts?|swift|dart|html?|css|scss|less|md|txt|json|ya?ml|png|jpe?g|gif|svg|webp|ico)$/i;
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+/**
+ * A ULID: a sortable record id (26 characters) whose first ten encode when it was made. A random key of the
+ * same shape almost never decodes to a date between 2016 and a few years from now, so this tells them apart.
+ */
+export function isUlid(v) {
+  if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i.test(v)) return false;
+  let ms = 0;
+  for (const c of v.slice(0, 10).toUpperCase()) ms = ms * 32 + CROCKFORD.indexOf(c);
+  return ms >= Date.UTC(2016, 0, 1) && ms <= Date.now() + 5 * 365 * 864e5;
+}
+
 function valueLooksReal(v, name) {
   if (/\s/.test(v) || PLACEHOLDER.test(v)) return false;
   if (protectedValue(v, name)) return false;
+  if (VARIABLE_VALUE.test(v) || FILE_PATH_VALUE.test(v)) return false;
+  // a record id under a plain "…token" name (routeToken: '01J…'); access, auth, secret… tokens still count
+  if (/token$/i.test(name) && !NOT_SITE_TOKEN.test(name) && isUlid(v)) return false;
   if (/^(none|null|nil|undefined|true|false|string|number|text|required|optional|bearer|basic|secret|token|password|test|dev|development|local|admin)$/i.test(v)) return false;
   if (/^[A-Z][A-Z0-9_]+$/.test(v)) return false;                 // the NAME of an env var
   if (/^env\([A-Za-z_][\w]*\)$/.test(v)) return false;           // Supabase config.toml reading one: "env(S3_SECRET_KEY)"

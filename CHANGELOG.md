@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fewer false "secret key" alarms in Health:** a variable handed along (`MYSQL_PWD="$DB_PASSWORD"` in a shell script, `"$password"` in PHP, `%DB_PASSWORD%` on Windows), a path to one of the project's own files under a password-ish key (`'confirm_password' => 'resources/js/pages/auth/confirm-password.tsx'`), and a ULID record id under a plain `…Token` name are no longer reported as secrets written into the code. Access, auth and secret tokens are still checked whatever their value looks like. Fixed by @Basel-Alsemsam.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.
