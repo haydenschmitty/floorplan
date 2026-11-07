@@ -154,6 +154,7 @@ export function matchCalls(files, routes) {
     for (const call of f.calls || []) {
       const cs = routeSegments(call.path);
       let best = -Infinity, hits = [];
+      const all = [];
       for (const r of rs) {
         if (r.file === f.path) continue;
         // a Firebase callable (CALL) is only ever reached through httpsCallable, and only reaches callables
@@ -161,20 +162,31 @@ export function matchCalls(files, routes) {
         if (call.method && r.method !== 'ANY' && r.method !== call.method) continue;
         const sc = score(cs, r.segs);
         if (!sc) continue;
+        all.push({ r, ...sc });
         if (sc.s > best) { best = sc.s; hits = [{ r, ...sc }]; } else if (sc.s === best) hits.push({ r, ...sc });
       }
       if (!hits.length) continue;
-      pending.push({ f, call, hits });
-      if (!hits[0].weak && new Set(hits.map((h) => h.r.file)).size === 1) { learn(f.path, hits[0].prefix); learn(dir(f.path), hits[0].prefix); }
+      // as much evidence as the best match, whatever the length: /tasks/:id could be /tasks/{task} or /api/v2/tasks/{task}
+      const alts = hits[0].weak ? [] : all.filter((h) => h.literal === hits[0].literal);
+      pending.push({ f, call, hits, alts });
+      // learn a caller's base only from calls nothing else could answer: every equally good match agrees on it
+      if (!hits[0].weak && new Set(hits.map((h) => h.r.file)).size === 1 && new Set(alts.map((h) => h.prefix)).size === 1) for (const k of [f.path, dir(f.path), app(f.path)]) learn(k, hits[0].prefix);
     }
   }
   const top = (key) => { const m = learned.get(key); return m ? [...m.entries()].sort((a, b) => b[1] - a[1])[0][0] : null; };
   const out = [];
-  for (const { f, call, hits } of pending) {
+  for (const { f, call, hits, alts } of pending) {
     let keep = hits;
     const pref = top(f.path) ?? top(dir(f.path));
+    // a client whose other calls go under one base (its base URL holds /api/v2) means that base here too,
+    // even when a shorter address elsewhere fits this call more closely (thin evidence still needs the file's own record)
+    const own = top(f.path), base = pref ?? top(app(f.path));
+    if (base != null && !hits[0].weak) {
+      const viaBase = [...new Set([...keep, ...alts])].filter((h) => h.prefix === base && (!h.weak || own === base));
+      if (viaBase.length) keep = viaBase;
+    }
     // weak matches need the caller's own track record, not a neighbour's
-    if (hits[0].weak) { const own = top(f.path); keep = own == null ? [] : hits.filter((h) => h.prefix === own); if (!keep.length) continue; }
+    if (hits[0].weak) { keep = own == null ? [] : hits.filter((h) => h.prefix === own); if (!keep.length) continue; }
     // no method visible at the call site: fetch's default is GET
     if (!call.method && keep.some((h) => h.r.method === 'GET') && new Set(keep.map((h) => h.r.method)).size > 1) keep = keep.filter((h) => h.r.method === 'GET' || h.r.method === 'ANY');
     if (new Set(keep.map((h) => h.r.file)).size > 1) {
@@ -187,3 +199,5 @@ export function matchCalls(files, routes) {
   return dedupe(out, (e) => `${e.from}|${e.to}|${e.method}|${e.path}`);
 }
 const dir = (p) => p.split('/').slice(0, -1).join('/');
+/** The top folder a file sits in (its app, in a folder holding several), or '' at the root. */
+const app = (p) => (p.includes('/') ? p.split('/')[0] + '/' : '');
