@@ -44,12 +44,17 @@ DECISION_SCHEMA = {
             "type": "object",
             "properties": {
                 "kind": {"type": "string", "enum": ["overview", "find", "show", "path", "read", "search"]},
-                "args": {"type": "object"},
+                # the boundary's own argument names (hermes-boundary.mjs), which also checks their bounds
+                "args": {"type": "object", "properties": {
+                    "words": {"type": "string"}, "kind": {"type": "string", "enum": ["module", "file", "endpoint", "symbol"]},
+                    "limit": {"type": "integer"}, "id": {"type": "string"}, "from": {"type": "string"},
+                    "to": {"type": "string"}, "path": {"type": "string"}, "start": {"type": "integer"},
+                    "end": {"type": "integer"}, "text": {"type": "string"}}, "additionalProperties": False},
             },
             "required": ["kind", "args"],
             "additionalProperties": False,
         },
-        "payload": {"type": "object"},
+        "payload": {"type": "object"},  # replaced per request by the payload schema the server sent
     },
     "required": ["kind"],
     "additionalProperties": False,
@@ -223,6 +228,7 @@ class _Session:
         self.req_id = ""
         self.mode = "ask"
         self.payload_keys = ()
+        self.decision_schema = DECISION_SCHEMA
         self.reader = None
 
     # -- framing --
@@ -316,11 +322,11 @@ class _Session:
         history = start.get("history") or []
         # the payload's own required keys: a reply that is just the payload still counts as the final decision
         self.payload_keys = tuple(k for k in start["schema"].get("required") or () if isinstance(k, str))
+        self.decision_schema = _decision_schema(start["schema"])
         base = [start["instructions"],
                 "Answer with one JSON decision: {\"kind\":\"lookup\",\"lookup\":{\"kind\",\"args\"}} to look "
                 "something up, or {\"kind\":\"final\",\"payload\":{…}} when you can answer. Look up only what "
                 "you need; you have at most 7 lookups.",
-                "The decision's JSON schema:\n" + json.dumps(DECISION_SCHEMA, sort_keys=True),
                 "The map overview:\n" + overview]
         if history:
             earlier = "\n\n".join(f"Q: {str(t.get('q', ''))[:500]}\nA: {str(t.get('a', ''))[:1500]}" for t in history[-4:])
@@ -352,11 +358,11 @@ class _Session:
         except Exception:  # the host package is absent outside Hermes; a dict block is the same shape
             inputs = [{"type": "text", "text": text}]
         try:
-            # JSON mode, not the schema: a route that can't take a schema (the host then drops it) still
-            # returns one JSON object, and the host can't refuse a reply this worker would accept. The
-            # schema rides in the prompt; decision() checks every reply and the server checks the payload.
+            # the schema, not bare JSON mode: providers that enforce or project a schema (OpenAI, the Claude
+            # subscription provider) take it, and some refuse JSON-object-only mode. A route that can't take
+            # it gets the request without one; decision() then digs the decision out of the reply text.
             return self.ctx.llm.complete_structured(instructions="Floorplan map assistant.", input=inputs,
-                                                    json_mode=True, timeout=timeout,
+                                                    json_schema=self.decision_schema, timeout=timeout,
                                                     purpose="floorplan-ask")
         except Exception as exc:
             raise _mapped(exc)
@@ -477,6 +483,28 @@ def _progress(kind: str, args: dict, outcome: dict) -> str:
              "read": f"Reading {where}", "search": f'Searching the code for "{where}"'}
     label = words.get(kind, "Looking something up")
     return label if outcome.get("ok") else f"{label}: not available"
+
+
+def _closed(node):
+    """A copy of a JSON schema in which every object says `additionalProperties: false`: Anthropic's structured
+    output (the Claude subscription provider projects the schema onto it) refuses an object that doesn't."""
+    if not isinstance(node, dict):
+        return node
+    out = dict(node)
+    if isinstance(out.get("properties"), dict):
+        out["properties"] = {name: _closed(sub) for name, sub in out["properties"].items()}
+    if isinstance(out.get("items"), dict):
+        out["items"] = _closed(out["items"])
+    if out.get("type") == "object":
+        out.setdefault("additionalProperties", False)
+    return out
+
+
+def _decision_schema(payload_schema: dict) -> dict:
+    """The schema sent with each decision: DECISION_SCHEMA with this request's payload schema in place, closed."""
+    schema = json.loads(json.dumps(DECISION_SCHEMA))
+    schema["properties"]["payload"] = payload_schema if payload_schema else {"type": "object"}
+    return _closed(schema)
 
 
 def _json_objects(text) -> list:

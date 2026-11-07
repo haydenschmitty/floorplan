@@ -319,10 +319,27 @@ class AskTest(unittest.TestCase):
             code, out, _ = self.run_ask([frame], [reply])
             self.assertEqual((code, out[-1].get("message")), (1, "invalid_decision"), reply)
 
-    def test_the_worker_asks_for_json_mode_and_puts_the_decision_schema_in_the_prompt(self):
-        _, _, llm = self.run_ask([start()], [FINAL])
-        self.assertEqual((llm.calls[0]["json_mode"], llm.calls[0]["json_schema"]), (True, None))
-        self.assertIn("The decision's JSON schema", llm.calls[0]["text"])
+    def test_the_decision_schema_carries_the_payload_schema_and_closes_every_object(self):
+        # Anthropic's structured output refuses an object schema without additionalProperties: false
+        payload = {"type": "object", "required": ["title"], "properties": {
+            "title": {"type": "string"},
+            "items": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}}}}}
+        _, _, llm = self.run_ask([start(schema=payload)], [FINAL])
+        sent = llm.calls[0]["json_schema"]
+        self.assertEqual((sent["properties"]["payload"]["required"], llm.calls[0]["json_mode"]), (["title"], None))
+
+        def objects(node):
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "object":
+                yield node
+            for sub in (node.get("properties") or {}).values():
+                yield from objects(sub)
+            yield from objects(node.get("items"))
+
+        found = list(objects(sent))  # the decision, lookup, args, payload and a payload item
+        self.assertEqual(len(found), 5)
+        self.assertTrue(all(o.get("additionalProperties") is False for o in found))
 
     def test_a_profile_mismatch_is_typed(self):
         code, out, _ = self.run_ask([start(profile="someone-else")], [FINAL])
