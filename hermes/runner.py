@@ -222,6 +222,7 @@ class _Session:
         self.used = set()
         self.req_id = ""
         self.mode = "ask"
+        self.payload_keys = ()
         self.reader = None
 
     # -- framing --
@@ -313,10 +314,13 @@ class _Session:
         question = start["question"]
         overview = json.dumps(start.get("overview"), sort_keys=True)[:20000]
         history = start.get("history") or []
+        # the payload's own required keys: a reply that is just the payload still counts as the final decision
+        self.payload_keys = tuple(k for k in start["schema"].get("required") or () if isinstance(k, str))
         base = [start["instructions"],
                 "Answer with one JSON decision: {\"kind\":\"lookup\",\"lookup\":{\"kind\",\"args\"}} to look "
                 "something up, or {\"kind\":\"final\",\"payload\":{…}} when you can answer. Look up only what "
                 "you need; you have at most 7 lookups.",
+                "The decision's JSON schema:\n" + json.dumps(DECISION_SCHEMA, sort_keys=True),
                 "The map overview:\n" + overview]
         if history:
             earlier = "\n\n".join(f"Q: {str(t.get('q', ''))[:500]}\nA: {str(t.get('a', ''))[:1500]}" for t in history[-4:])
@@ -348,29 +352,23 @@ class _Session:
         except Exception:  # the host package is absent outside Hermes; a dict block is the same shape
             inputs = [{"type": "text", "text": text}]
         try:
+            # JSON mode, not the schema: a route that can't take a schema (the host then drops it) still
+            # returns one JSON object, and the host can't refuse a reply this worker would accept. The
+            # schema rides in the prompt; decision() checks every reply and the server checks the payload.
             return self.ctx.llm.complete_structured(instructions="Floorplan map assistant.", input=inputs,
-                                                    json_schema=DECISION_SCHEMA, timeout=timeout,
+                                                    json_mode=True, timeout=timeout,
                                                     purpose="floorplan-ask")
         except Exception as exc:
             raise _mapped(exc)
 
     def decision(self, result):
         parsed = getattr(result, "parsed", None)
-        if not isinstance(parsed, dict):
-            parsed = _leading_json(getattr(result, "text", None))
-        if not isinstance(parsed, dict):
-            raise ProtocolError("invalid_decision")
-        kind = parsed.get("kind")
-        if kind == "final":
-            if not isinstance(parsed.get("payload"), dict):
-                raise ProtocolError("invalid_decision")
-            return ("final", parsed["payload"])
-        if kind != "lookup":
-            raise ProtocolError("invalid_decision")
-        lookup = parsed.get("lookup")
-        if not isinstance(lookup, dict) or lookup.get("kind") not in LOOKUP_KINDS or not isinstance(lookup.get("args"), dict):
-            raise ProtocolError("invalid_decision")
-        return ("lookup", lookup["kind"], lookup["args"])
+        candidates = [parsed] if isinstance(parsed, dict) else _json_objects(getattr(result, "text", None))
+        for candidate in candidates:
+            found = _as_decision(candidate, self.payload_keys)
+            if found:
+                return found
+        raise ProtocolError("invalid_decision")
 
     def send_lookup(self, kind: str, args: dict) -> str:
         self.lookups += 1
@@ -481,17 +479,39 @@ def _progress(kind: str, args: dict, outcome: dict) -> str:
     return label if outcome.get("ok") else f"{label}: not available"
 
 
-def _leading_json(text):
-    """The first JSON object in a reply, ignoring whatever follows it. When the host cannot enforce the schema
-    (it then sends the request without one), the model may trail text after a valid decision, which leaves
-    `parsed` empty. What this returns is still checked like any other decision."""
-    if not isinstance(text, str) or "{" not in text:
+def _json_objects(text) -> list:
+    """Every top-level JSON object in a reply, in order. A route that can't enforce JSON lets the model wrap
+    a valid decision in other text (`...}</index>`, an echoed result first, raw newlines inside a string);
+    each object found is still checked like any other decision."""
+    if not isinstance(text, str):
+        return []
+    decoder, found, i = json.JSONDecoder(strict=False), [], text.find("{")
+    while i != -1:
+        try:
+            value, end = decoder.raw_decode(text, i)
+        except ValueError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(value, dict):
+            found.append(value)
+        i = text.find("{", end)
+    return found
+
+
+def _as_decision(d: dict, payload_keys: tuple):
+    """("final", payload) or ("lookup", kind, args) when `d` is a decision, else None."""
+    kind = d.get("kind")
+    if kind == "final":
+        return ("final", d["payload"]) if isinstance(d.get("payload"), dict) else None
+    if kind == "lookup":
+        lookup = d.get("lookup")
+        if isinstance(lookup, dict) and lookup.get("kind") in LOOKUP_KINDS and isinstance(lookup.get("args"), dict):
+            return ("lookup", lookup["kind"], lookup["args"])
         return None
-    try:
-        value, _ = json.JSONDecoder().raw_decode(text, text.index("{"))
-    except ValueError:
-        return None
-    return value if isinstance(value, dict) else None
+    # no wrapper at all, just the payload: the final answer, if it has every key the payload requires
+    if kind is None and payload_keys and all(k in d for k in payload_keys):
+        return ("final", d)
+    return None
 
 
 def _mapped(exc: Exception) -> Exception:

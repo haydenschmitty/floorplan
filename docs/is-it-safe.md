@@ -10,7 +10,7 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **Never downloads anything, and never runs code from the internet.** No `eval`, no encoded payloads. It loads two local files and nothing else: the map's lookup code from `floorplan/query.mjs` (which the build wrote) and, for Hermes Ask, the installed skill's own `health.mjs` from the folder the install's model-free probe names.
 - **Never changes your code.** It writes only its own `floorplan/` folder and, in Claude Code and only if you say yes, a marked section of `CLAUDE.local.md`. See [What's in your project](project-files.md).
 - **No analytics or tracking.**
-- **Hermes adds a small native plugin, still nothing that runs on its own.** Three native files are executable surfaces: `plugin.yaml` (the manifest: `provides_hooks: []`, no MCP servers, no tools, no pip dependencies), `__init__.py` (registers one skill and one on-demand command), and `hermes/runner.py` (the model-free probe and the bounded Ask worker). They are fingerprinted in `CHECKSUMS.txt` like the rest of the release, and the same supply-chain test covers them.
+- **Hermes adds a small native plugin, still nothing that runs on its own.** Three native files are executable surfaces: `plugin.yaml` (the manifest: `provides_hooks: []`, no MCP servers, no tools, no pip dependencies), `__init__.py` (registers one skill and one on-demand command), and `hermes/runner.py` (the model-free probe and the bounded Ask worker). `tools/checksums.mjs` lists them with the rest of the plugin, so each release's `CHECKSUMS.txt` fingerprints them, and the same supply-chain test covers them.
 
 ## Everything it does
 

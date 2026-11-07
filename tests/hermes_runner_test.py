@@ -143,7 +143,8 @@ class FakeLlm:
     def complete_structured(self, *, instructions=None, input=None, json_schema=None, timeout=None,
                             purpose=None, **kw):
         text = "".join(b.get("text", "") if isinstance(b, dict) else getattr(b, "text", "") for b in input or [])
-        self.calls.append({"text": text, "json_schema": json_schema, "timeout": timeout, "purpose": purpose})
+        self.calls.append({"text": text, "json_schema": json_schema, "json_mode": kw.get("json_mode"),
+                           "timeout": timeout, "purpose": purpose})
         decision = self.decisions.pop(0)
         if isinstance(decision, BaseException):
             raise decision
@@ -300,6 +301,28 @@ class AskTest(unittest.TestCase):
         for raw in ["I can't answer that.", "[1, 2]", '{"kind": "final", "payload": "nope"} and more']:
             code, out, _ = self.run_ask([start()], [raw])
             self.assertEqual((code, out[-1]["code"], out[-1].get("message")), (1, "cli_error", "invalid_decision"), raw)
+
+    def test_an_echoed_object_or_a_raw_newline_does_not_hide_the_decision(self):
+        echoed = '<result>{"hits": []}</result>\n' + json.dumps(FINAL)
+        newline = '{"kind": "final", "payload": {"title": "t", "answer": "line one\nline two", "items": []}}'
+        for raw in [echoed, newline]:
+            code, out, _ = self.run_ask([start()], [raw])
+            self.assertEqual((code, self.kinds(out)), (0, ["ready", "result"]), raw)
+        self.assertEqual(out[-1]["payload"]["answer"], "line one\nline two")
+
+    def test_a_bare_payload_with_every_required_key_is_the_final_decision(self):
+        schema = {"required": ["title", "answer", "items"]}
+        bare = {"title": "t", "answer": "a", "items": []}
+        code, out, _ = self.run_ask([start(schema=schema)], [bare])
+        self.assertEqual((code, self.kinds(out), out[-1]["payload"]), (0, ["ready", "result"], bare))
+        for frame, reply in [(start(schema=schema), {"title": "t"}), (start(), bare)]:
+            code, out, _ = self.run_ask([frame], [reply])
+            self.assertEqual((code, out[-1].get("message")), (1, "invalid_decision"), reply)
+
+    def test_the_worker_asks_for_json_mode_and_puts_the_decision_schema_in_the_prompt(self):
+        _, _, llm = self.run_ask([start()], [FINAL])
+        self.assertEqual((llm.calls[0]["json_mode"], llm.calls[0]["json_schema"]), (True, None))
+        self.assertIn("The decision's JSON schema", llm.calls[0]["text"])
 
     def test_a_profile_mismatch_is_typed(self):
         code, out, _ = self.run_ask([start(profile="someone-else")], [FINAL])

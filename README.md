@@ -195,7 +195,7 @@ Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask ba
 
 ### Hermes
 
-Install one profile from a pinned commit SHA, verify the checksums, then enable it:
+Install one profile from a release's commit SHA, verify the checksums, then enable it:
 
 ```bash
 hermes --profile <profile> plugins install haydenschmitty/floorplan --ref <40-character-sha> --no-enable

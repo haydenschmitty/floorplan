@@ -13,11 +13,11 @@ The plugin is the whole repository. Its runtime is three native files plus the s
 | `hermes/runner.py` | the model-free `probe`, and the bounded `ask` worker |
 | `skills/floorplan/` | the shared skill, its scripts and assets (the same files Claude Code and Codex use) |
 
-`CHECKSUMS.txt` fingerprints all of them. `tests/supply-chain.test.mjs` fails if the plugin grows a hook, an MCP server, a tool, a pip dependency, a network import, a subprocess, or a file read that follows a symlink.
+`tools/checksums.mjs` lists all of them, so each release's `CHECKSUMS.txt` fingerprints them. `tests/supply-chain.test.mjs` fails if the plugin grows a hook, an MCP server, a tool, a pip dependency, a network import, a subprocess, or a file read that follows a symlink.
 
 ## Install one profile from an immutable SHA
 
-Use a 40-character commit SHA, never a branch:
+Use the 40-character commit SHA of a release (its `floorplan--v<version>` tag), never a branch:
 
 ```bash
 hermes --profile <profile> plugins install haydenschmitty/floorplan --ref <40-character-sha> --no-enable
@@ -30,7 +30,7 @@ hermes --profile <profile> plugins enable floorplan
 
 Hermes scans every plugin from outside its catalog as it installs it, and blocks a community plugin whose verdict is CAUTION. Floorplan's verdict is CAUTION: the findings are the vendored layout engine (`skills/floorplan/assets/vendor/elk.bundled.js`, minified code that reads as obfuscated), the skill's `!`-prefixed status line (it reads as a command to run), the plugin icon's size, and words in the docs and tests. So the first install stops with `BLOCKED … Use --force to override`. Read the findings, then run the same install command again with `--force`. Nothing in the plugin runs at install: it has no hooks and no dependencies.
 
-Run the checksum check from a clone of that same release: its `CHECKSUMS.txt` and `tools/checksums.mjs` are the reference. The installed folder is `<HERMES_HOME>/plugins/floorplan`; each profile has its own `HERMES_HOME`, its own enabled list and its own installed bytes. Installing or enabling in one profile does not change another.
+Run the checksum check from a clone of that same release: its `CHECKSUMS.txt` and `tools/checksums.mjs` are the reference. Between releases `CHECKSUMS.txt` still describes the last release, so a commit that isn't a release (a pull request's, say) fails the check. The installed folder is `<HERMES_HOME>/plugins/floorplan`; each profile has its own `HERMES_HOME`, its own enabled list and its own installed bytes. Installing or enabling in one profile does not change another.
 
 `plugins doctor --ci` is necessary, not sufficient: it parses the manifest, imports the plugin, runs its registration and reports its hook/tool/MCP counts (none here). It does not prove a provider route, a source read or an inference.
 
@@ -102,7 +102,7 @@ Preservation entries (a history folder with a `manifest.json`) are recovery and 
 
 Before upgrading: record the installed SHA and checksums, stop that map's workers and server, and back up the user-owned `plan.json`, `architecture.json`, `descriptions/`, `custom-flows.json`, `recent-work.json` and `health-dismissed.json`.
 
-Then install the new pinned SHA, run `plugins doctor --ci` and `checksums.mjs --check` again, rebuild the map with an explicit `--agent hermes` (which regenerates `serve.mjs` and `hermes-boundary.mjs`), reopen it and repeat the smoke.
+Then install the new release's SHA with the same install command plus `--force`, which replaces the installed copy and leaves the plugin enabled or disabled as it was. Run `plugins doctor --ci` and `checksums.mjs --check` again, rebuild the map with an explicit `--agent hermes` (which regenerates `serve.mjs` and `hermes-boundary.mjs`), reopen it and repeat the smoke.
 
 An older generated server that meets a newer installed plugin protocol reports **`protocol_mismatch`** and refuses to run Ask; rebuild the map. A generated map never embeds a path to the Python runtime, so a map can be reopened after a plugin upgrade.
 
