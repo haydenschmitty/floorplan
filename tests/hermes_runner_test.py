@@ -13,6 +13,8 @@ import io
 import json
 import os
 import platform
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -315,9 +317,24 @@ class AskTest(unittest.TestCase):
         bare = {"title": "t", "answer": "a", "items": []}
         code, out, _ = self.run_ask([start(schema=schema)], [bare])
         self.assertEqual((code, self.kinds(out), out[-1]["payload"]), (0, ["ready", "result"], bare))
-        for frame, reply in [(start(schema=schema), {"title": "t"}), (start(), bare)]:
+        for frame, reply in [(start(schema=schema), {"title": "t"}), (start(), bare),
+                             (start(schema=schema), {"kind": None, **bare})]:
             code, out, _ = self.run_ask([frame], [reply])
             self.assertEqual((code, out[-1].get("message")), (1, "invalid_decision"), reply)
+
+    def test_the_args_sent_to_the_provider_are_the_boundarys_own(self):
+        # the worker sends this closed list to the provider; the server's boundary is what checks the args
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        script = ("import('./skills/floorplan/assets/hermes-boundary.mjs').then((m) => console.log(JSON.stringify("
+                  "m.DECISION_SCHEMA.properties.lookup.properties.args.properties)))")
+        out = subprocess.run([node, "--input-type=module", "-e", script], cwd=REPO, capture_output=True, text=True,
+                             check=True)
+        boundary = json.loads(out.stdout)
+        mine = self.runner.DECISION_SCHEMA["properties"]["lookup"]["properties"]["args"]["properties"]
+        self.assertEqual({k: v["type"] for k, v in mine.items()}, {k: v["type"] for k, v in boundary.items()})
+        self.assertEqual(mine["kind"]["enum"], boundary["kind"]["enum"])
 
     def test_the_decision_schema_carries_the_payload_schema_and_closes_every_object(self):
         # Anthropic's structured output refuses an object schema without additionalProperties: false

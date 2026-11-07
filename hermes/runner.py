@@ -537,7 +537,7 @@ def _as_decision(d: dict, payload_keys: tuple):
             return ("lookup", lookup["kind"], lookup["args"])
         return None
     # no wrapper at all, just the payload: the final answer, if it has every key the payload requires
-    if kind is None and payload_keys and all(k in d for k in payload_keys):
+    if "kind" not in d and payload_keys and all(k in d for k in payload_keys):
         return ("final", d)
     return None
 

@@ -42,7 +42,7 @@ test('the README version badge matches plugin.json', () => {
 });
 
 test('the changelog has an entry for this version', () => {
-  assert.match(read('CHANGELOG.md'), new RegExp(`^## ${versionPattern} `, 'm'));
+  assert.match(read('CHANGELOG.md'), new RegExp(`^## ${versionPattern} \\(\\d{4}-\\d{2}-\\d{2}\\)$`, 'm'));
 });
 
 test('the skill has a name and description, and every file it points to exists', () => {
