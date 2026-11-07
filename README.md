@@ -9,7 +9,7 @@
 
 **See how your app actually fits together.**
 
-Claude or Codex reads your codebase and draws an interactive map of it. Every part, file and web request gets a plain-English name, and every connection between them is shown.
+Claude, Codex or Hermes reads your codebase and draws an interactive map of it. Every part, file and web request gets a plain-English name, and every connection between them is shown.
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
@@ -39,7 +39,7 @@ Floorplan gives you the diagram nobody drew. Ask Claude Code or Codex for a floo
 
 - **For builders:** understand the app you made, in your own words, without reading the code.
 - **For teams:** onboard someone in minutes, from the big picture down to the exact file.
-- **For working with AI:** after every change Claude or Codex makes, see exactly which parts it touched and why.
+- **For working with AI:** after every change Claude, Codex or Hermes makes, see exactly which parts it touched and why.
 
 ## Floorplan, Archify or Understand Anything?
 
@@ -51,7 +51,7 @@ All three turn code into something you can see, and all three are worth knowing.
 | **Made for** | People who build with AI and don't read the code | Anyone explaining a system, a process or an idea | Developers getting to know a large codebase |
 | **What you get** | A zoomable map of your whole app: parts, files and endpoints, the screens, the requests between frontend and backend (even across repos), and outside services | A polished diagram in one of 10 types (architecture, sequence, ERD…) or a one-page explainer, from a repo or just a description | A knowledge graph of every file, function and class, with layers, a business-domain view and guided tours |
 | **Only here** | **Health check** (keys in code, open Supabase tables and Firebase rules, fakeable Stripe webhooks, endpoints anyone can use), **Recent work** (what your AI just changed, and why), blueprints from a PRD | 10 diagram types, image and video exports, diagrams of things that aren't code | Diff impact, a dashboard that adapts to your role, knowledge-base graphs |
-| **Runs in** | Claude Code, Codex | Claude Code, Codex, Cursor, OpenCode and more | Claude Code, Codex, Cursor, Copilot, Gemini CLI and more |
+| **Runs in** | Claude Code, Codex, Hermes | Claude Code, Codex, Cursor, OpenCode and more | Claude Code, Codex, Cursor, Copilot, Gemini CLI and more |
 
 **Pick Floorplan** to understand and check an app you own. **Pick Archify** to draw a diagram for a doc, a talk or a decision. **Pick Understand Anything** to study a large codebase function by function.
 
@@ -163,7 +163,7 @@ Want to click around yourself? Open the [live demo](https://haydenschmitty.githu
 
 ## Install
 
-You need [Node.js 18+](https://nodejs.org) and either Claude Code or Codex. Floorplan runs on the plan you already have, with no API keys.
+You need [Node.js 18+](https://nodejs.org) and either Claude Code, Codex or Hermes. Floorplan runs on the plan you already have, with no API keys.
 
 ### Claude Code
 
@@ -193,13 +193,26 @@ codex plugin add floorplan@floorplan
 
 Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask bar runs on your own Codex sign-in, with no API key. More in [Floorplan in Codex](docs/codex.md).
 
+### Hermes
+
+Install one profile from a pinned commit SHA, verify the checksums, then enable it:
+
+```bash
+hermes --profile <profile> plugins install haydenschmitty/floorplan --ref <40-character-sha> --no-enable
+node <release clone>/tools/checksums.mjs --check <installed plugin folder>
+hermes --profile <profile> plugins doctor <installed plugin folder> --ci
+hermes --profile <profile> plugins enable floorplan
+```
+
+Restart that profile's session, then type `/floorplan:floorplan` in the project folder. The map's Ask bar runs through the same Hermes profile and model. Upgrade, rollback, disable/uninstall, the exact source-read limits and the support matrix are in [Floorplan in Hermes](docs/hermes.md).
+
 ## Quick start
 
-1. Open your project in Claude Code or Codex. For a frontend and backend in separate repos, open the folder that holds both.
+1. Open your project in Claude Code, Codex or Hermes. For a frontend and backend in separate repos, open the folder that holds both.
 2. Ask:
    > Make me a floorplan of this app.
 
-   (In Codex you can also type `$floorplan`.)
+   (In Codex you can also type `$floorplan`; in Hermes, `/floorplan:floorplan`.)
 3. Explore. The map opens on its own, starting with a short tour.
 
 When you've done more work, ask:
@@ -230,13 +243,13 @@ You get a [blueprint](#also-blueprints-for-apps-you-havent-built-yet) of the pla
 ```mermaid
 flowchart LR
     code["Your codebase<br/>one repo or several"] --> scan["Scan<br/>files, imports, routes, requests"]
-    scan --> agent["Claude or Codex<br/>names the parts, describes every file"]
+    scan --> agent["Claude, Codex or Hermes<br/>names the parts, describes every file"]
     agent --> build["Build<br/>map, health, screens, recent work"]
     build --> map["floorplan/index.html<br/>opens in your browser"]
     map -. "update the floorplan" .-> scan
 ```
 
-Scripts do the mechanical work: finding repos, parsing code in a dozen languages, matching web requests to endpoints, laying out the map. They're plain Node with no dependencies. Claude or Codex does the part only a reader can: deciding what the parts of your app *are*, and saying so plainly. Details in [How it works](docs/how-it-works.md).
+Scripts do the mechanical work: finding repos, parsing code in a dozen languages, matching web requests to endpoints, laying out the map. They're plain Node with no dependencies. Claude, Codex or Hermes does the part only a reader can: deciding what the parts of your app *are*, and saying so plainly. Details in [How it works](docs/how-it-works.md).
 
 **Languages:** TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, plus Vue, Svelte and Astro files, with lighter support for others.<br>
 **Endpoints:** Express, Fastify, Koa, Hono, Next.js, Firebase Cloud Functions, Flask, FastAPI, Django, Go's net/http, Gin, Echo and chi, Actix, Axum, Spring, and route tables keyed by method and path (`"GET /api/orders": listOrders`) in JavaScript and Python.<br>
@@ -281,7 +294,7 @@ Floorplan has no hooks, no MCP servers and no dependencies, downloads nothing, a
 <details>
 <summary><b>Does my code leave my computer?</b></summary>
 
-Only the way Claude Code and Codex always work: the AI reads the files it needs to describe your app, through your own account. The map itself is a local file and its server only listens on your machine. If you choose to open the map in the Claude app instead, Claude uploads the map (names, descriptions and structure, not your source code) to your private claude.ai account, and asks first. The one thing Floorplan itself ever sends is your email, and only if you sign up for the [Floorplan Cloud waitlist](docs/privacy-and-security.md#floorplan-cloud-waitlist).
+Only the way Claude Code, Codex and Hermes always work: the AI reads the files it needs to describe your app, through your own account. The map itself is a local file and its server only listens on your machine. With Hermes, the map's server decides which scanned files the browser Ask may read (and, on a blueprint, only the three plan inputs) and sends the question and permitted text to your configured provider. If you choose to open the map in the Claude app instead, Claude uploads the map (names, descriptions and structure, not your source code) to your private claude.ai account, and asks first. The one thing Floorplan itself ever sends is your email, and only if you sign up for the [Floorplan Cloud waitlist](docs/privacy-and-security.md#floorplan-cloud-waitlist).
 </details>
 
 <details>

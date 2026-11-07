@@ -18,7 +18,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `query.mjs` | Looks things up in the map from the command line; Claude and Codex use it too | No |
 | `artifact.html` | A copy for opening in the Claude app, only if you asked for one | No |
 | `<project>-map.html` | An exported copy to share, only if you exported one from Claude or Codex (the map's Export button downloads it instead) | No |
-| `.cache/` | The scan, the description worksheets, the last update's changes, the running server's address, and, for a blueprint, the last 20 versions of the plan that **Undo** goes back to | No. Safe to delete, though Undo then has nothing to go back to |
+| `.cache/` | The scan, the description worksheets, the last update's changes, the running server's address, and, for a blueprint, the last 20 versions of the plan that **Undo** goes back to. A Hermes Change also keeps its held and displaced files, with a `manifest.json` naming each one, in `.cache/history/<id>/`; those preservation entries are never pruned automatically. No. Safe to delete, though Undo then has nothing to go back to. Delete old history folders yourself, after every writer has stopped. |
 | `.gitignore` | Keeps this whole folder out of git | No |
 
 ### Editing names and structure

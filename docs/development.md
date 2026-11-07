@@ -12,6 +12,10 @@
   icon.png
 .agents/plugins/
   marketplace.json     this repo as a Codex marketplace
+plugin.yaml            the native Hermes manifest (same version, no hooks, MCP servers, tools or pip dependencies)
+__init__.py            registers one skill and one `hermes floorplan` command
+hermes/
+  runner.py            the model-free probe and the bounded Ask/Change worker (stdlib Python only)
 skills/floorplan/
   SKILL.md             the workflow Claude and Codex follow
   agents/openai.yaml   how Codex lists the skill
@@ -73,7 +77,7 @@ node skills/floorplan/scripts/open.mjs /path/to/project
 npm test
 ```
 
-The tests use Node's built-in test runner, so there's nothing to install (`npm test` is the same as `node --test`). GitHub runs them on every push and pull request on Linux and Windows with Node 18, 20 and 22, and on macOS weekly and on demand (Actions → macOS → Run workflow), since its macOS machines are often all busy.
+The tests use Node's built-in test runner, so there's nothing to install (`npm test` is the same as `node --test`). GitHub runs them on every push and pull request on Linux and Windows with Node 18, 20 and 22, on Linux with Node 24, and on macOS weekly and on demand (Actions → macOS → Run workflow), since its macOS machines are often all busy. A POSIX job also runs the Python worker tests: `python3 -m unittest discover -s tests -p 'hermes_runner_test.py'`.
 
 | File | What it checks |
 |---|---|
@@ -96,8 +100,10 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
-| `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
-| `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
+| `release.test.mjs` | the version agrees across all three plugin manifests, the README badge, the changelog and `CHECKSUMS.txt`; the safety/privacy pages carry the Hermes limits; Hermes never offers the Claude email button |
+| `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, the Hermes manifest declares none either, the Python worker imports no network module and starts no subprocess, `os.open` always uses `O_NOFOLLOW`, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged, and a changed/extra/missing Python or YAML file fails `checksums.mjs --check` |
+| `hermes-lifecycle.test.mjs` | two disposable Hermes homes: install/enable in one leaves the other unchanged, restart on a profile or CLI or helper change, `protocol_mismatch` for a newer plugin, disable/remove leaving the map and its held/displaced history byte- and inode-identical, and a rollback that re-checks every fingerprint |
+| `hermes-live.test.mjs` | opt-in (`FLOORPLAN_LIVE=1`): a real Hermes install answers source-aware Ask and prints the candidate SHA, runtime version, installed file hashes, profile and the provider/model the host returned |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |
 
 Sample projects are written to a temp folder by `helpers.mjs` (`shopApp()`) or copied from `tests/fixtures/`. Anything secret-looking is assembled at runtime, so no real-looking key is ever committed.

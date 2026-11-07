@@ -1,0 +1,10 @@
+# Hermes Agent's native manifest: this repository is the plugin (see __init__.py).
+# One shared skill and one CLI command; nothing that runs on its own.
+name: floorplan
+version: 0.6.3
+description: "Draw a map of a codebase (one repo or several) and keep it up to date, from Hermes."
+author: "Hayden Smith"
+homepage: "https://github.com/haydenschmitty/floorplan"
+license: MIT
+kind: standalone
+provides_hooks: []

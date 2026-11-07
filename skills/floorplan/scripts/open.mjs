@@ -2,7 +2,7 @@
 // Show the map to the user after a build or refresh. Reuses this map's server if it's running (open tabs
 // have already reloaded themselves), restarts it if serve.mjs changed, otherwise starts it in the
 // background and opens a browser tab. Prints the URL and how to stop it.
-// usage: node open.mjs [root] [--no-open] [--port N] [--engine claude|codex] [--model M] [--claude PATH] [--codex PATH]
+// usage: node open.mjs [root] [--no-open] [--port N] [--engine claude|codex|hermes] [--model M] [--claude PATH] [--codex PATH] [--hermes PATH] [--profile P]
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -35,15 +35,23 @@ function openBrowser(u) {
   const [cmd, a] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', u]] : process.platform === 'darwin' ? ['open', [u]] : ['xdg-open', [u]];
   try { spawn(cmd, a, { stdio: 'ignore', detached: true, windowsHide: true }).unref(); return true; } catch { return false; }
 }
-const hash = crypto.createHash('sha1').update(fs.readFileSync(serveFile)).digest('hex').slice(0, 12);
+// the helper beside it is part of the same revision: a new boundary must restart the server too
+const helperFile = path.join(dir, 'hermes-boundary.mjs');
+const hash = crypto.createHash('sha1').update(fs.readFileSync(serveFile))
+  .update(fs.existsSync(helperFile) ? fs.readFileSync(helperFile) : '').digest('hex').slice(0, 12);
 
 let s = readState();
 let status = s?.pid && alive(s.pid) ? await api(s, '/api/status') : null;
 let restarted = false;
 const hadTabs = status?.tabs > 0;
 
-if (status && status.hash !== hash) {
-  // a newer serve.mjs came with this build: restart so the map gets it; open tabs reconnect and reload
+// a different engine, model, profile or CLI path is a different server: restart it rather than reuse it
+const ASKED = ['engine', 'model', 'profile', 'claude', 'codex', 'hermes'];
+const askedChanged = !!s && (ASKED.some((k) => args[k] && String(args[k]) !== String(s.opts?.[k] ?? ''))
+  || (args.port && String(args.port) !== String(s.port)));
+if (status && (status.hash !== hash || askedChanged)) {
+  // a newer serve.mjs or helper came with this build, or the caller changed what the server answers with:
+  // restart so the map gets it; open tabs reconnect and reload
   try { process.kill(s.pid); } catch {}
   for (let i = 0; i < 20 && alive(s.pid); i++) await sleep(150);
   status = null;
@@ -51,7 +59,7 @@ if (status && status.hash !== hash) {
 }
 
 if (!status) {
-  const pass = ['port', 'engine', 'model', 'claude', 'codex'].flatMap((k) => (args[k] ? ['--' + k, String(args[k])] : []));
+  const pass = ['port', 'engine', 'model', 'claude', 'codex', 'hermes', 'profile'].flatMap((k) => (args[k] ? ['--' + k, String(args[k])] : []));
   if (!args.port && s?.port) pass.push('--port', String(s.port)); // keep the address people have open
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   const log = fs.openSync(path.join(dir, '.cache', 'server.log'), 'w');
@@ -83,6 +91,7 @@ console.log(`FLOORPLAN  ${s.url}  (${shown})`);
 const CLI = {
   claude: { name: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code' },
   codex: { name: 'Codex', docs: 'https://developers.openai.com/codex' },
+  hermes: { name: 'Hermes', docs: 'https://hermes-agent.nousresearch.com/docs' },
 };
 console.log(health?.cli
   ? `ASK  works: questions run through ${CLI[health.engine]?.name || 'the Claude Code CLI'}${health.version ? ' (' + health.version + ')' : ''}`

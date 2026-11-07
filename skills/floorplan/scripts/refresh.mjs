@@ -15,6 +15,11 @@ import { compileGlob, parseArgs, mapDir } from './lib/common.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
+// what build needs to know, values included: a refresh must not reset what the map records (the agent that
+// built it above all). --from-code stays here: it is this script's own switch.
+const forwarded = Object.entries(args)
+  .filter(([k]) => k !== '_' && k !== 'from-code')
+  .flatMap(([k, v]) => (v === true ? [`--${k}`] : [`--${k}`, String(v)]));
 const outDir = mapDir(root);
 const graphFile = path.join(outDir, 'graph.json');
 const archFile = path.join(outDir, 'architecture.json');
@@ -30,7 +35,7 @@ const arch = JSON.parse(fs.readFileSync(archFile, 'utf8'));
 if (old.meta?.blueprint && !args['from-code']) {
   const run = (script, ...rest) => execFileSync(process.execPath, [path.join(HERE, script), root, ...rest], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
   try {
-    process.stdout.write(run('plan.mjs') + '\n' + run('build.mjs', ...process.argv.slice(2).filter((a) => a.startsWith('--'))));
+    process.stdout.write(run('plan.mjs') + '\n' + run('build.mjs', ...forwarded));
   } catch (e) { process.stdout.write(String(e.stdout || '')); process.exit(1); }
   console.log('\nNEXT  This map is a blueprint, redrawn from floorplan/plan.json. Edit plan.json and architecture.json to change the plan. Once the code exists, run refresh.mjs --from-code for a map of the real code; plan.json stays.');
   process.exit(0);
@@ -144,7 +149,7 @@ fs.writeFileSync(path.join(outDir, '.cache', 'changes.json'), JSON.stringify({
 // ---------- 5. rebuild (no tokens) ----------
 let buildOut = '';
 let buildOk = true;
-try { buildOut = execFileSync(node, [path.join(HERE, 'build.mjs'), root], { encoding: 'utf8' }); }
+try { buildOut = execFileSync(node, [path.join(HERE, 'build.mjs'), root, ...forwarded], { encoding: 'utf8' }); }
 catch (e) { buildOut = (e.stdout || '') + (e.stderr || ''); buildOk = false; }
 
 // ---------- 6. report ----------
@@ -154,6 +159,10 @@ L.push(`Floorplan refresh — last map ${since.toLocaleString()}`);
 L.push(`  files   +${created.length} new · −${deleted.length} deleted · ${renames.size} moved/renamed (descriptions carried over) · ${edited.length} edited, ${digestChanged.length} with changed exports/routes`);
 L.push(`  routes  +${newRoutes.size} new · −${goneRoutes.length - routeMoves.size} removed · ${routeMoves.size} re-pathed (descriptions carried over)`);
 L.push(`  descriptions: ${carried + routeCarried} carried over, ${pruned + routePruned} removed, ${flagged} flagged for review`);
+// A body-only edit changes the code but not the exports or routes, so nothing above flags it. Say so: the
+// prose written for that file describes a body nobody re-read.
+const bodyOnly = edited.filter((p) => !digestSet.has(p)).length;
+if (bodyOnly) L.push(`  ${bodyOnly} edited file(s) changed only inside a body or a docstring: their descriptions may now be stale prose, and a refresh cannot see that; re-read them if behaviour changed`);
 if (!before.values().next().value?.h) L.push('  (the previous map predates content fingerprints, so edits since then could not be detected; future refreshes will)');
 const byDir = new Map();
 for (const p of created) { const d = p.split('/').slice(0, -1).join('/'); byDir.set(d, (byDir.get(d) || 0) + 1); }
@@ -163,7 +172,7 @@ if (byDir.size) {
 }
 L.push('');
 L.push('BUILD');
-L.push(buildOut.split('\n').filter((l) => /^(✗|!|  - |ASSIGNMENT|  unassigned|    |DESCRIPTIONS|  Run describe|✓)/.test(l)).slice(0, 40).join('\n'));
+L.push(buildOut.split('\n').filter((l) => /^(✗|!|  - |ASSIGNMENT|  unassigned|    |DESCRIPTIONS|AGENT|  Run describe|✓)/.test(l)).slice(0, 40).join('\n'));
 L.push('');
 const todo = [];
 if (!buildOk) todo.push('Fix the build errors above in architecture.json (usually a flow step or annotation pointing at a deleted file), then run build.mjs.');

@@ -20,9 +20,20 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         node: [18, 20, 22]
+        include:
+          - os: ubuntu-latest
+            node: 24
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: node --test
+
+  hermes-runner:
+    name: Hermes Python worker on POSIX
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 -m unittest discover -s tests -p 'hermes_runner_test.py'

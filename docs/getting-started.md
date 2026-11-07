@@ -2,7 +2,7 @@
 
 Prefer to watch? The [walkthrough video](https://youtu.be/NTUUzC7L_NQ) covers installing Floorplan and touring a finished map.
 
-Floorplan works in **Claude Code** and in **Codex**. Making and using a map is the same in both; only installing differs. This guide shows Claude Code, and [Floorplan in Codex](codex.md) has the Codex steps.
+Floorplan works in **Claude Code** and in **Codex**. Making and using a map is the same in both; only installing differs. This guide shows Claude Code, and [Floorplan in Codex](codex.md) has the Codex steps. It also runs as a native **Hermes** plugin: [Floorplan in Hermes](hermes.md) has the pinned-SHA install, the profile/model flags and the support matrix.
 
 ## What you need
 

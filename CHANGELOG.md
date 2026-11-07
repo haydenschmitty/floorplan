@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Hermes: a native plugin with a documented lifecycle.** Floorplan now installs as a native Hermes plugin: root `plugin.yaml`, root `__init__.py`, `hermes/runner.py`, and the same shared skill. `CHECKSUMS.txt` fingerprints all three native files, `checksums.mjs --check` fails on a changed, extra or missing Python/YAML file, and the supply-chain tests fail if the root manifest declares a hook, an MCP server, a tool or a pip dependency, or if the Python worker imports a network module or starts a subprocess. Every `os.open` in the confined reader uses `O_NOFOLLOW`.
+- **Install, upgrade, rollback and uninstall tell the truth.** [Floorplan in Hermes](docs/hermes.md) documents installing one profile from a pinned commit SHA with `--ref` and `--no-enable`, verifying with `checksums.mjs --check` and `plugins doctor --ci`, enabling, rebuilding helpers after an upgrade, and disabling or removing without deleting maps, notes, saved flows, dismissals, history or `~/.floorplan/settings.json`. A stale generated server reports `protocol_mismatch`; native Windows Ask reports `unsupported_runtime`.
+- **A two-profile lifecycle harness.** `tests/hermes-lifecycle.test.mjs` uses two disposable Hermes homes: install/enable in one leaves the other byte-identical, a running server restarts when its profile, Hermes CLI or generated helper changes, disable/remove leaves every map file and held/displaced history inode untouched, and rolling back to the recorded release re-checks identical.
+- **Remote viewing stays local.** A same-port SSH tunnel works; `Host: preview.invalid:<port>` and a mismatched `Origin` get 403 even with a valid token. No reverse proxy, no relaxed guards.
+- **Hermes never offers "Use my Claude email".** The waitlist card shows that button only when the map's engine is Claude Code.
+- **CI and the live harness.** Linux Node 24 and a POSIX `python3 -m unittest` step join the matrix. `tests/hermes-live.test.mjs` is opt-in (`FLOORPLAN_LIVE=1`) and fails rather than skips when a prerequisite is missing.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

@@ -48,10 +48,22 @@ Ask Claude or Codex to "update the floorplan". If a tab was already open, it rel
 Maps made before version 0.1.3 load their layout engine from the internet, so check your connection or any content blocker, or ask Claude to "update the floorplan". Newer maps have everything built in and work offline.
 
 ### The Ask bar has no Change switch
-**Change** appears only on a [blueprint](getting-started.md#plan-something-you-havent-built-yet), opened through its server (`node floorplan/serve.mjs`) with the Claude Code CLI or Codex available. A map of real code doesn't have it: ask Claude Code or Codex to change the code, then update the floorplan.
+**Change** appears only on a [blueprint](getting-started.md#plan-something-you-havent-built-yet), opened through its server (`node floorplan/serve.mjs`) with the Claude Code CLI, Codex or Hermes available. A map of real code doesn't have it: ask Claude Code or Codex to change the code, then update the floorplan.
 
 ### A change to a blueprint failed, or I don't like it
-If the updated plan doesn't pass Floorplan's checks after a second try, nothing is saved and the map stays as it was; try asking more specifically. If a change went through but isn't what you wanted, press **Undo** in its summary, or ask for another change. The previous versions are kept in `floorplan/.cache/history/`.
+If the updated plan doesn't pass Floorplan's checks after a second try, nothing is saved and the map stays as it was; try asking more specifically. If a change went through but isn't what you wanted, press **Undo** in its summary, or ask for another change. With Hermes, the held and displaced versions, named by a `manifest.json`, stay in `floorplan/.cache/history/<id>/` and are never pruned automatically; delete old folders yourself after every writer has stopped. With Claude Code and Codex the previous plan versions are kept in `floorplan/.cache/history/`.
+
+### Hermes: the Ask bar says `unsupported_runtime`
+Source-aware Ask needs a POSIX runtime (Linux or macOS, or Hermes running entirely inside WSL). Native Windows Hermes is not supported: the map works offline, but asking is unavailable. See [Floorplan in Hermes](hermes.md).
+
+### Hermes: the Ask bar says `protocol_mismatch`
+The generated `floorplan/serve.mjs` speaks an older protocol than the installed plugin. Rebuild the map with the current plugin (`--agent hermes`), then reload. Your map content and history are untouched.
+
+### Hermes: the Ask bar says `profile_mismatch`
+The running server and the worker disagree about the profile. Restart `serve.mjs` with the same `--profile`, or rebuild and reopen the map with that profile.
+
+### Hermes: view the map from another computer
+Use a same-port SSH tunnel, never a reverse proxy: `ssh -N -L 127.0.0.1:<P>:127.0.0.1:<P> <host>`, then open `http://127.0.0.1:<P>`. A preview domain gets 403 even with a valid token, by design.
 
 ### A connection is missing
 Floorplan finds most web requests and imports by reading the code, but not all of them, for example requests to an address that only exists in settings. Ask Claude to add the missing connection to the floorplan; it records it in `architecture.json` and it stays on every update.
@@ -81,4 +93,4 @@ node floorplan/serve.mjs --stop
 It also stops by itself two hours after the last tab closes.
 
 ### Still stuck?
-[Open an issue](https://github.com/haydenschmitty/floorplan/issues/new/choose) with what you asked, what happened, whether you used Claude Code or Codex, and the output it showed. Please leave out anything private from your code.
+[Open an issue](https://github.com/haydenschmitty/floorplan/issues/new/choose) with what you asked, what happened, whether you used Claude Code, Codex or Hermes, and the output it showed. Please leave out anything private from your code.

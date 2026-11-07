@@ -67,6 +67,20 @@ test('requests under any other host name are refused, page included (DNS rebindi
   assert.equal(await asHost(`127.0.0.1:${port}`, '/api/flows'), 200);
 });
 
+test('a preview domain is refused even with a valid token', async () => {
+  const port = new URL(base).port;
+  assert.equal(await asHost(`preview.invalid:${port}`, '/'), 403);
+  assert.equal(await asHost(`preview.invalid:${port}`, '/api/flows'), 403);
+});
+
+test('a mismatched Origin is refused even with a valid token', async () => {
+  const port = new URL(base).port;
+  for (const origin of ['http://preview.invalid', `http://127.0.0.1:${Number(port) + 1}`, 'null']) {
+    const r = await api('/api/ask', { method: 'POST', body: '{"question":"hi"}', headers: { 'x-floorplan-token': token, origin } });
+    assert.equal(r.status, 403, origin);
+  }
+});
+
 test('API calls with the token from the map itself work', async () => {
   const r = await api('/api/flows', { headers: { 'x-floorplan-token': token } });
   assert.equal(r.status, 200);
