@@ -81,7 +81,10 @@ function keyedRouteTable(code, at) {
 
 // ---------- HTTP call literals ----------
 
-const HTTP_CONTEXT = /\b(fetch|axios|ky|got|request|requests|httpx|aiohttp|session|client|http|https|api|Api|API|endpoint|Endpoint|url|Url|URL|BASE|base)\b|\.(get|post|put|patch|delete|head)\s*(<[^>]*>)?\s*\(|(?<![.\w$])(get|post|put|patch|delete)\s*\(\s*[rf]?["'`]\//;
+const HTTP_CONTEXT = /\b(fetch|axios|ky|got|request|requests|httpx|aiohttp|session|client|http|https|api|Api|API|endpoint|Endpoint|url|Url|URL|BASE|base)\b|\.(get|post|put|patch|delete|head)\s*(<[^>]*>)?\s*\(|(?<![.\w$])(get|post|put|patch|delete)\s*\(\s*[rf]?["'`]\/|\b(?:api[A-Z]\w*|(?:http|fetch|request)(?:Get|Post|Put|Patch|Delete|Send|Json|Data|Api)\w*)\s*(?:<[^()]*>)?\s*\(/;
+// An app's own API helpers: apiGet('/tasks'), httpPost('/orders', body), apiSend('PATCH', `/tasks/${id}`, body)
+const HELPER_VERB = /\b(?:api|http|fetch|request)(Get|Post|Put|Patch|Delete)\w*\s*(?:<[^()]*>)?\s*\(/;
+const HELPER_ARG_VERB = /\b(?:api|http|fetch|request)[A-Z]\w*\s*(?:<[^()]*>)?\s*\(\s*["'`](GET|POST|PUT|PATCH|DELETE)["'`]\s*,/i;
 const NAV_CONTEXT = /\b(router\.(push|replace|prefetch)|navigate|redirect|href|revalidatePath|pathname|Link|to=|location\.)\b|window\.location/;
 const STR_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
 const IGNORED_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$|\.(test|example|invalid|local|localhost|internal)(:\d+)?$|(^|\.)example\.(com|org|net)$/;
@@ -160,7 +163,7 @@ function extractCalls(src, at, { skip } = {}) {
     const assigned = ASSIGN.exec(line)?.[1];
     const use = assigned ? variableUse(lines, i, assigned) : null;
     if (!HTTP_CONTEXT.test(line) && !use) continue;
-    const method = (METHOD_CALL.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || '').toUpperCase() || null;
+    const method = (METHOD_CALL.exec(line)?.[1] || HELPER_ARG_VERB.exec(line)?.[1] || HELPER_VERB.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || '').toUpperCase() || null;
     for (const m of line.matchAll(STR_LITERAL)) {
       const n = normalizeCallLiteral(m[2]);
       if (!n) continue;

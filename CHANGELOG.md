@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Requests through an app's own helpers are found:** calls like `apiGet('/tasks')`, `apiSend('PATCH', `/tasks/${id}`, body)` or `httpPost('/orders')` are now web requests, with the method taken from the helper's name or its first argument. A phone app that made all its calls this way showed almost none. Fixed by @Basel-Alsemsam.
+- **A client's base address wins over a closer-looking match:** when a client's other calls all go under one base (its base URL holds `/api/v2`), an address like `/tasks/${id}` now reaches `/api/v2/tasks/:id` rather than a website page at `/tasks/:id`, even when both live in the same server file. A base is only learned from calls that every equally good match agrees on, so one ambiguous call can't teach the wrong one. Fixed by @Basel-Alsemsam.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.
