@@ -241,8 +241,15 @@ function extractJs(src, filePath) {
   // Express / Koa / Hono style routes and mounts
   const routes = [];
   const mounts = [];
+  // Routers under any variable name (#98): `const frentes = new Hono<Amb>()`,
+  // `express.Router()`, bare `Router()`, `express()`, `new Koa()` — the name
+  // allowlist alone missed modules that export their own router.
+  const routerVars = new Set();
+  for (const m of all(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:new\s+)?(?:[A-Za-z_$][\w$.]*\.)?(?:Hono|Koa|express|Router)(?:<[^>()]*>)?\s*\(/g, code)) {
+    routerVars.add(m[1]);
+  }
   for (const m of all(/\b([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|all|options|head)\(\s*["'`](\/[^"'`]*)["'`]/g, code)) {
-    if (!/^(app|server|fastify|hono|routes?|[a-z]*Router|router)$/.test(m[1])) continue;
+    if (!/^(app|server|fastify|hono|routes?|[a-z]*Router|router)$/.test(m[1]) && !routerVars.has(m[1])) continue;
     routes.push({ method: m[2].toUpperCase(), path: m[3], var: m[1], line: at(m.index) });
   }
   for (const m of all(/\b([A-Za-z_$][\w$]*)\.(use|route)\(\s*["'`](\/[^"'`]*)["'`]\s*,([^\n;]*)/g, code)) {
@@ -282,7 +289,7 @@ function extractJs(src, filePath) {
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
   calls.push(...callables.calls);
-  return { imports, symbols, routes, mounts, calls, hosts, ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
+  return { imports, symbols, routes, mounts, calls, hosts, ...(routerVars.size ? { routerVars: [...routerVars] } : {}), ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
 }
 
 // ---------- Firebase Cloud Functions ----------
