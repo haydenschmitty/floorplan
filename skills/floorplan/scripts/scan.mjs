@@ -13,7 +13,7 @@ import { extract, callableCallsVia } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
 import { createResolver } from './lib/resolve.mjs';
-import { resolveRoutes, matchCalls } from './lib/routes.mjs';
+import { resolveRoutes, matchCalls, matchWayfinder, inertiaLinks } from './lib/routes.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
@@ -130,7 +130,8 @@ for (const f of files) {
       e.count++;
       e.files.add(f.path);
       extEdges.push({ from: f.path, pkg: key });
-    } else if (res.unresolved) unresolved++;
+    } else if (res.wayfinder) imp.wayfinder = res.wayfinder; // a generated Laravel route helper: matched to endpoints below
+    else if (res.unresolved) unresolved++;
   }
 }
 // merge duplicate edges (same from/to)
@@ -156,6 +157,12 @@ if (wrappers.size) for (const f of files) {
 // ---------- 4. routes and HTTP calls ----------
 const routes = resolveRoutes(files);
 const http = matchCalls(files, routes);
+// Laravel: Wayfinder's named routes and controller actions, and the Inertia page each endpoint opens
+const wayfinderLinks = matchWayfinder(files, routes, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
+const inertia = inertiaLinks(files, routes);
+http.push(...wayfinderLinks, ...inertia.http);
+const fileAt = new Map(files.map((f) => [f.path, f]));
+for (const { file, hint } of inertia.hints) { const f = fileAt.get(file); if (f) f.screens = [...(f.screens || []), hint]; }
 const hosts = [];
 for (const f of files) for (const h of f.hosts || []) hosts.push({ from: f.path, host: h.host, line: h.line });
 
@@ -278,6 +285,17 @@ for (const h of http) {
 }
 for (const [k, v] of [...httpDir.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)) line(`  ${String(v).padStart(5)}  ${k}`);
 line();
+
+const laravel = routes.filter((r) => r.framework === 'laravel');
+if (laravel.length) {
+  const routeFiles = new Set(laravel.map((r) => r.defFile || r.file));
+  line(`LARAVEL  ${laravel.length} endpoints from ${routeFiles.size} route file(s), ${laravel.filter((r) => r.defFile).length} answered by controller methods (their endpoints sit in the controller's file)`);
+  line(`  ${wayfinderLinks.length} Wayfinder call(s) matched to endpoints · ${inertia.hints.length} Inertia page(s) linked to the endpoint that opens them`);
+  const loaded = new Set(files.flatMap((f) => (f.mounts || []).flatMap((m) => (f.imports || []).filter((i) => i.spec === m.spec).flatMap((i) => i.files || []))));
+  const loose = [...routeFiles].filter((p) => !loaded.has(p) && !/(^|\/)bootstrap\/app\.php$|(^|\/)Providers\//.test(p));
+  if (loose.length) line(`  route files nothing loads (their addresses may be missing a prefix): ${loose.slice(0, 6).join(', ')}${loose.length > 6 ? ' …' : ''}`);
+  line();
+}
 
 // Firebase Cloud Functions: endpoints are already in the HTTP line; background ones need a place on the map
 const fbRoutes = files.flatMap((f) => (f.routes || []).filter((r) => r.framework === 'firebase'));

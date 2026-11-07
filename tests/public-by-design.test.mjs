@@ -37,6 +37,15 @@ test('that address only excuses reading it, and a social "feed" is not a public 
   assert.deepEqual(open({ [route('blog/rss.xml')]: `export async function POST(req: Request) { return Response.json(await req.json()); }\n` }), ['POST /blog/rss.xml']);
 });
 
+// ---------- pages every site shows to everyone ----------
+test('privacy, terms and legal pages are public on purpose; a privacy request is not', () => {
+  const dbRead = `import { db } from '@/lib/db';\nexport async function GET() { return Response.json(await db.page.findFirst()); }\n`;
+  const pages = ['privacy', 'privacy-policy', 'terms', 'terms-of-service', 'legal'];
+  assert.deepEqual(open(Object.fromEntries(pages.map((a) => [route(a), dbRead]))), []);
+  // someone's data export or deletion request only shares a word with those pages
+  assert.deepEqual(open({ [route('api/privacy-requests')]: dbRead }), ['GET /api/privacy-requests']);
+});
+
 // ---------- the project itself says it's public (#44, #47, #48, #51, #52) ----------
 const dataFeed = `import { db } from '@/lib/db';\nexport async function GET() { return Response.json(await db.plan.findMany()); }\n`;
 
