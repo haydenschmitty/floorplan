@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob } from './common.mjs';
+import { stripPhp, phpClose, phpSplit, phpStr, phpArrayBody, phpNamed, phpPairs } from './extract.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -434,6 +435,116 @@ function jsRoutes(src, f, out) {
   });
 }
 
+// ---------- Laravel: who may call each endpoint ----------
+// Laravel's routes come from routes.mjs with the middleware of the route, its groups and the route files around
+// it. Here, per PHP file: the app's middleware aliases and groups (bootstrap/app.php, or app/Http/Kernel.php
+// before Laravel 11), a controller's own middleware, the checks inside each controller method and the form
+// requests it takes. buildHealth puts them together for each endpoint (laravelFinding).
+
+const LARAVEL_MW_CONFIG = /->\s*withMiddleware\s*\(|\$(?:middlewareGroups|middlewareAliases|routeMiddleware)\s*=/;
+// a method that checks the caller itself: a policy or gate, a permission test, an abort with 401/403
+const PHP_INLINE_CHECK = /\$this\s*->\s*authorize\w*\s*\(|\bGate\s*::\s*(?:authorize|allows|denies|check|any|none|inspect|forUser)\s*\(|\babort_(?:if|unless)\s*\([^;]*(?:->\s*(?:can|cannot|cant|user)\s*\(|auth\(\)|Auth\s*::|\b40[13]\b)|\babort\s*\(\s*40[13]\b|->\s*(?:can|cannot|cant)\s*\(|\bAuth\s*::\s*(?:check|guest|authenticate)\s*\(|\bauth\(\)\s*->\s*(?:check|guest|authenticate)\s*\(|\bpolicy\s*\(|\bthrow\s+new\s+\\?(?:[\w\\]*\\)?(?:AuthorizationException|AuthenticationException|AccessDeniedHttpException|UnauthorizedHttpException)\b/;
+// a form request's authorize() that looks at the user, rather than `return true;`
+const PHP_REQUEST_CHECK = /->\s*user\s*\(|->\s*(?:can|cannot|cant)\s*\(|\bGate\s*::|\bauth\(\)|\bAuth\s*::|->\s*authorize\w*\s*\(/;
+
+/** A middleware entry as a name: 'auth:sanctum' stays, EnsureStaff::class and Authenticate::using('x') become the class name. */
+const phpMwName = (t) => {
+  const s = phpStr(t);
+  if (s != null) return s;
+  const m = /^\\?((?:[\w]+\\)*)(\w+)\s*::\s*(?:class\b|using\s*\()/.exec((t || '').trim());
+  return m ? m[2] : null;
+};
+const phpMwItems = (t) => { const b = phpArrayBody(t); return (b != null ? phpSplit(b) : t ? [t] : []).map(phpMwName).filter(Boolean); };
+const phpStrList = (t) => { const s = phpStr(t); if (s != null) return [s]; const b = phpArrayBody(t); return b == null ? [] : phpSplit(b).map(phpStr).filter((x) => x != null); };
+
+/** The middleware aliases and groups an app defines: { aliases: { name: ClassName }, groups: { name: [entries] } }. */
+function laravelMiddlewareConfig(code) {
+  const aliases = {}, groups = {};
+  const add = (g, list, front) => { groups[g] = front ? [...list, ...(groups[g] || [])] : [...(groups[g] || []), ...list]; };
+  // Laravel 11+: $middleware->alias([...]), ->group('x', [...]), ->appendToGroup('x', [...]), ->web(append: [...])
+  for (const m of code.matchAll(/->\s*(alias|group|appendToGroup|prependToGroup|web|api)\s*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    const args = phpSplit(code.slice(open + 1, phpClose(code, open) - 1));
+    if (m[1] === 'alias') { for (const [k, v] of phpPairs(args[0])) if (k) aliases[k] = phpMwName(v); }
+    else if (m[1] === 'web' || m[1] === 'api') { for (const a of args) { const [name, val] = phpNamed(a); if (name === 'append' || name === 'prepend') add(m[1], phpMwItems(val), name === 'prepend'); } }
+    else { const g = phpStr(args[0]); if (g) add(g, phpMwItems(args[1]), m[1] === 'prependToGroup'); }
+  }
+  // Laravel 10 and older: properties of app/Http/Kernel.php
+  for (const m of code.matchAll(/\$(middlewareGroups|middlewareAliases|routeMiddleware)\s*=\s*(?=\[|array\s*\()/g)) {
+    const start = m.index + m[0].length;
+    const open = code[start] === '[' ? start : code.indexOf('(', start);
+    const pairs = phpPairs(code.slice(start, phpClose(code, open)));
+    for (const [k, v] of pairs) if (k) { if (m[1] === 'middlewareGroups') add(k, phpMwItems(v)); else aliases[k] = phpMwName(v); }
+  }
+  return { aliases, groups };
+}
+
+/** A controller's own middleware: HasMiddleware's static middleware() (Laravel 11+), or $this->middleware(…) in its constructor. */
+function controllerMiddleware(code) {
+  const out = [];
+  const m = /\bfunction\s+middleware\s*\(\s*\)\s*(?::\s*\??[\w\\]+\s*)?\{/.exec(code);
+  if (m) {
+    const open = m.index + m[0].length - 1;
+    const ret = /\breturn\s+([\s\S]*?)\s*;\s*$/.exec(code.slice(open + 1, phpClose(code, open) - 1).trim());
+    for (const item of phpSplit(phpArrayBody(ret?.[1] || '') ?? '')) {
+      const nm = /^new\s+\\?(?:[\w\\]*\\)?Middleware\s*\(([\s\S]*)\)$/.exec(item.trim());
+      if (!nm) { const name = phpMwName(item); if (name) out.push({ name }); continue; }
+      const args = phpSplit(nm[1]).map(phpNamed);
+      const named = Object.fromEntries(args.filter(([k]) => k));
+      const first = args.find(([k]) => !k)?.[1] ?? named.middleware;
+      for (const name of phpMwItems(first)) out.push({ name, ...(named.only ? { only: phpStrList(named.only) } : {}), ...(named.except ? { except: phpStrList(named.except) } : {}) });
+    }
+  }
+  for (const mm of code.matchAll(/\$this\s*->\s*middleware\s*\(/g)) {
+    const open = mm.index + mm[0].length - 1, close = phpClose(code, open);
+    const tail = /^\s*->\s*(only|except)\s*\(/.exec(code.slice(close));
+    const limit = tail ? phpStrList(phpSplit(code.slice(close + tail[0].length, phpClose(code, close + tail[0].length - 1) - 1))[0]) : null;
+    for (const name of phpSplit(code.slice(open + 1, close - 1)).flatMap(phpMwItems)) out.push({ name, ...(tail ? { [tail[1]]: limit } : {}) });
+  }
+  return out;
+}
+
+function phpChecks(src, f, out) {
+  if (TEST_FILE.test(f.path)) return;
+  const code = stripPhp(src);
+  if (LARAVEL_MW_CONFIG.test(code)) out.push({ k: 'laravel-mw', ...laravelMiddlewareConfig(code) });
+  const mw = controllerMiddleware(code);
+  if (mw.length) out.push({ k: 'php-ctrl-mw', items: mw });
+  // each public method: does it check the caller itself, and which classes does it take (a form request may check)
+  const starts = [0];
+  for (let i = 0; i < code.length; i++) if (code.charCodeAt(i) === 10) starts.push(i + 1);
+  for (const m of f.methods || []) {
+    if (m.hidden) continue;
+    const from = code.indexOf('(', starts[m.line - 1] ?? 0);
+    if (from < 0) continue;
+    const after = phpClose(code, from);
+    const brace = /^\s*(?::\s*[^{;]+)?\{/.exec(code.slice(after));
+    const body = brace ? code.slice(after + brace[0].length, phpClose(code, after + brace[0].length - 1) - 1) : '';
+    const checked = PHP_INLINE_CHECK.test(body);
+    if (checked || m.types?.length) out.push({ k: 'php-fn', fn: m.name, ...(checked ? { checked: true } : {}), ...(m.types?.length ? { takes: m.types } : {}) });
+  }
+  // a form request whose authorize() looks at the user
+  if (/\bextends\s+\\?(?:[\w\\]*\\)?FormRequest\b/.test(code) && f.classes?.length) {
+    const a = /\bfunction\s+authorize\s*\(\s*\)\s*(?::\s*\??\w+\s*)?\{/.exec(code);
+    const body = a ? code.slice(a.index + a[0].length, phpClose(code, a.index + a[0].length - 1) - 1) : '';
+    if (PHP_REQUEST_CHECK.test(body)) out.push({ k: 'php-form-request', cls: f.classes[0] });
+  }
+}
+
+// Laravel's own middleware that let only signed-in (or permitted) callers through
+const LARAVEL_GUARD = /^(auth|auth\.basic|auth\.session|can|verified|signed|password\.confirm|abilities|ability|role|permission|role_or_permission|subscribed)$/;
+// middleware classes that check the caller, by name (EnsurePortalAccess, RequireTwoFactor, BindDevice…)…
+const LARAVEL_GUARD_CLASS = /(^|_)(authenticate|authenticated|authenticates|auth|authorize|authorized|login|permissions?|roles?|admins?|staff|access|two_?factor|2fa|tokens?|signature|signed|abilities|ability|owner|members?|verified|device|account)(_|$)/;
+// …unless the name says it does something else
+const NOT_LARAVEL_GUARD = /header|version|locale|json|log|throttle|cors|cache|store|request_?id|idempot|deprecat|https|body|trim|encrypt|cookie|csrf|binding|precognit|maintenance|trust|appearance|inertia|preload|observe|security_?header/;
+const laravelGuard = (entry, aliases) => {
+  const base = entry.split(':')[0];
+  if (LARAVEL_GUARD.test(base)) return true;
+  const cls = aliases[base] || (/^[A-Z]/.test(base) ? base : null);
+  const n = cls && snake(cls);
+  return !!n && LARAVEL_GUARD_CLASS.test(n) && !NOT_LARAVEL_GUARD.test(n);
+};
+
 /**
  * FastAPI dependency aliases that check the caller, per repo: Map(repo -> Map(alias -> file)).
  * An alias checks the caller when its dependency function does: by its name (admin_user), by taking a
@@ -605,6 +716,7 @@ export function findIssues(src, f) {
   if (['typescript', 'javascript', 'python'].includes(f.lang) && USES_SUPABASE.test(src)) out.push({ k: 'uses-supabase' });
   if (f.lang === 'python') pyRoutes(src, f, out);
   else if (['typescript', 'javascript'].includes(f.lang)) jsRoutes(src, f, out);
+  else if (f.lang === 'php') phpChecks(src, f, out);
   // run directly or registered by name (so "nothing imports it" doesn't mean unused)
   if (/^#!|if\s+__name__\s*==\s*['"]__main__['"]|@(?:\w+\.)*(?:task|shared_task|command|group|receiver|scheduled_job|on_event|listener|hookimpl|periodic_task|cli\.command)\b|require\.main\s*===\s*module|import\.meta\.main/m.test(src)) out.push({ k: 'runnable' });
   // a frontend calling a fixed localhost address (breaks once deployed)
@@ -620,7 +732,7 @@ export function findIssues(src, f) {
 // ======================= build: turn findings into issues =======================
 
 const SEV_ORDER = { high: 0, medium: 1, low: 2 };
-const PUBLIC_PATH = /(^|\/)(health|healthz|healthcheck|ping|status|ready|readyz|readiness|live|livez|liveness|version|metrics|robots\.txt|sitemap[\w.]*|favicon[\w.]*|\.well-known|login|logout|signin|pair|sign-in|signout|signup|sign-up|register|forgot[\w-]*|reset[\w-]*|verify[\w-]*|oauth\w*|callback|auth|token|refresh|static|assets|public|newsletter|contact|waitlist|unsubscribe|openapi\.json|docs|swagger[\w.]*|i|images?)(\/|$)/i;
+const PUBLIC_PATH = /(^|\/)(health|healthz|healthcheck|ping|status|ready|readyz|readiness|live|livez|liveness|version|metrics|robots\.txt|sitemap[\w.]*|favicon[\w.]*|\.well-known|login|logout|signin|pair|sign-in|signout|signup|sign-up|register|forgot[\w-]*|reset[\w-]*|verify[\w-]*|oauth\w*|callback|auth|token|refresh|static|assets|public|newsletter|contact|waitlist|unsubscribe|privacy(?:-policy|-notice|-statement)?|terms(?:-of-(?:service|use)|-and-conditions|-conditions)?|tos|legal|imprint|impressum|openapi\.json|docs|swagger[\w.]*|i|images?)(\/|$)/i;
 // Files and feeds that exist to be read by crawlers, feed readers and AI tools. Only for reading: see publicByDesign.
 const PUBLIC_FILE_PATH = /(^|\/)(llms(-full)?\.txt|ai\.txt|humans\.txt|(app-)?ads\.txt|security\.txt|rss(\.xml)?|atom(\.xml)?|feed\.(xml|rss|atom|json)|index\.xml|opensearch\.xml|site\.webmanifest|manifest\.(json|webmanifest)|openapi\.ya?ml)$/i;
 const LISTING_FILE = /(^|\/)(llms(-full)?\.txt|robots\.txt)$/i;
@@ -1065,7 +1177,40 @@ export function buildHealth({ graph, scan, arch, root }) {
   }
   // a sign-in check applied where the route's router is mounted: app.use('/admin', requireStaff, adminRouter),
   // or app.include_router(admin.router, dependencies=[Depends(require_admin)]) (a database session isn't one)
-  const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isGuardDep)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardDep)]));
+  const mountGuard = new Map((scan.routes || []).filter((r) => r.framework !== 'laravel' && r.mountMw?.some(isGuardDep)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardDep)]));
+  // Laravel: the route's own middleware and its groups' (through the app's aliases and groups), then the
+  // controller's middleware, a form request that checks the user, or a check inside the method
+  const lvConfig = new Map(); // repo -> { aliases, groups }
+  const formRequests = new Set();
+  for (const f of scan.files) for (const x of findings(f.path)) {
+    if (x.k === 'php-form-request') formRequests.add(String(x.cls).toLowerCase());
+    if (x.k !== 'laravel-mw') continue;
+    const k = f.repo ?? '';
+    const c = lvConfig.get(k) || { aliases: {}, groups: {} };
+    Object.assign(c.aliases, x.aliases);
+    for (const [g, list] of Object.entries(x.groups || {})) c.groups[g] = [...(c.groups[g] || []), ...list];
+    lvConfig.set(k, c);
+  }
+  const laravelFinding = (r) => {
+    const { aliases, groups } = lvConfig.get(scanByPath.get(r.file)?.repo ?? '') || { aliases: {}, groups: {} };
+    const expand = (n, depth = 0) => { const g = groups[n.split(':')[0]]; return g && depth < 6 ? g.flatMap((x) => expand(x, depth + 1)) : [n]; };
+    const rec = { k: 'route', line: r.line, method: r.method, fn: r.action?.fn || null, ...(r.defFile ? { defFile: r.defFile, defLine: r.defLine } : {}) };
+    const names = [...(r.mw || []), ...(r.mountMw || [])].flatMap((n) => expand(n));
+    if (names.some((n) => n.split(':')[0] === 'guest')) return { ...rec, guest: true }; // for people who aren't signed in: sign-in pages
+    const mw = names.find((n) => laravelGuard(n, aliases));
+    if (mw) return { ...rec, guard: mw.split(':')[0], via: 'middleware' };
+    const fn = r.action?.fn;
+    const own = findings(r.file);
+    const ctrl = own.find((x) => x.k === 'php-ctrl-mw')?.items.filter((i) => (!i.only || i.only.includes(fn)) && !(i.except || []).includes(fn)).flatMap((i) => expand(i.name)).find((n) => laravelGuard(n, aliases));
+    if (ctrl) return { ...rec, guard: ctrl.split(':')[0], via: 'controller' };
+    const method = fn && own.find((x) => x.k === 'php-fn' && x.fn.toLowerCase() === fn.toLowerCase());
+    const request = method?.takes?.find((t) => formRequests.has(t.toLowerCase()));
+    if (request) return { ...rec, guard: request.split('\\').pop(), via: 'form request' };
+    if (method?.checked) return { ...rec, via: 'inline' };
+    // a closure that only redirects or answers something fixed, or a plain page: nothing to protect
+    return r.quiet ? { ...rec, quiet: true } : rec;
+  };
+  for (const r of scan.routes || []) if (r.framework === 'laravel') routeFinding.set(`${r.file}|${r.line}|${r.method}`, laravelFinding(r));
   const sourceOf = new Map();
   const readSource = (p) => {
     if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
@@ -1143,7 +1288,7 @@ export function buildHealth({ graph, scan, arch, root }) {
       }
       return;
     }
-    if (r.m === 'OPTIONS' || r.m === 'HEAD' || fnd.notAllowed) return;
+    if (r.m === 'OPTIONS' || r.m === 'HEAD' || fnd.notAllowed || fnd.guest || fnd.quiet) return;
     // webhook receivers: by URL, or a webhook-ish handler in a webhook file (not that file's admin endpoints)
     const webhook = (WEBHOOK_PATH.test(r.p) && !WEBHOOK_ADMIN.test(r.p)) || (/webhook|hooks?\//i.test(r.f) && /webhook|hook|notify|event|ingress|pubsub|callback|receive|inbound/i.test(r.h || '') && !/create|list|manage|register|delete|test|setup|sync/i.test((r.h || '') + r.p));
     if (webhook && fnd.signed) return;
@@ -1164,10 +1309,10 @@ export function buildHealth({ graph, scan, arch, root }) {
       if (!name) return `the project's existing login check (find how other protected endpoints verify the user; if there is none, ask me before adding one)`;
       const defs = guardDefs.get(name) || [];
       const where = defs.find((g) => g.file === file) ? 'defined in this file' : defs.length ? `defined in ${defs[0].file}` : '';
-      const how = defs.some((g) => g.alias) ? `a parameter typed ${name}` : `${lang === 'python' ? '@' : ''}${name}`;
+      const how = defs.some((g) => g.alias) ? `a parameter typed ${name}` : lang === 'php' && /^[a-z]/.test(name) ? `the '${name}' middleware` : `${lang === 'python' ? '@' : ''}${name}`;
       return `the same check ${local ? 'the other endpoints in this file' : 'the protected endpoints'} already use (${how}${where ? ', ' + where : ''})`;
     };
-    const routeLine = (e) => `- ${e.r.m} ${e.r.p} — ${e.r.f}:${e.r.l}${e.fnd.fn && !/^[A-Z]+$/.test(e.fnd.fn) ? ` (${e.fnd.fn})` : ''}`;
+    const routeLine = (e) => `- ${e.r.m} ${e.r.p} — ${e.r.f}:${e.r.l}${e.fnd.fn && !/^[A-Z]+$/.test(e.fnd.fn) ? ` (${e.fnd.fn})` : ''}${e.fnd.defFile ? `, route registered in ${e.fnd.defFile}:${e.fnd.defLine}` : ''}`;
     if (pr.misplaced.length) {
       const list = pr.misplaced;
       issues.push({

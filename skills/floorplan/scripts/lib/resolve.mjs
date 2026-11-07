@@ -71,6 +71,7 @@ export function createResolver(root, files) {
       return hit ? { file: hit } : { unresolved: true };
     }
     const cfg = nearestTsconfig(P.dirname(from));
+    const mapped = []; // where a path alias points, when nothing is there
     if (cfg) {
       for (const [pattern, targets] of cfg.paths) {
         const star = pattern.indexOf('*');
@@ -78,12 +79,16 @@ export function createResolver(root, files) {
           : (spec.startsWith(pattern.slice(0, star)) && spec.endsWith(pattern.slice(star + 1)) ? spec.slice(star, spec.length - (pattern.length - star - 1)) : null);
         if (matched === null) continue;
         for (const t of targets) {
-          const hit = tryJsFile(P.join(cfg.baseDir, t.split('*').join(matched)));
+          const cand = P.join(cfg.baseDir, t.split('*').join(matched));
+          const hit = tryJsFile(cand);
           if (hit) return { file: hit };
+          mapped.push(P.normalize(cand));
         }
       }
       if (cfg.hasBaseUrl) { const hit = tryJsFile(P.join(cfg.baseDir, spec)); if (hit) return { file: hit }; }
     }
+    const wf = wayfinder(from, mapped.length ? mapped : /^[@~#]\/(actions|routes|wayfinder)(\/|$)/.test(spec) ? [spec.slice(2)] : []);
+    if (wf) return wf;
     if (spec.startsWith('node:')) return { builtin: true };
     const parts = spec.split('/');
     const pkgName = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
@@ -237,6 +242,62 @@ export function createResolver(root, files) {
     return { unresolved: true };
   };
 
+  // ---- PHP: classes by full name (namespace + class), then composer's PSR-4 folders; files by path ----
+  const phpIndex = new Map();
+  for (const f of files) if (f.lang === 'php') for (const c of f.classes || []) if (!phpIndex.has(c.toLowerCase())) phpIndex.set(c.toLowerCase(), f.path);
+  const composerRoots = dirsWith('composer.json').map((dir) => {
+    const j = readJsonLoose(path.join(root, dir, 'composer.json')) || {};
+    const psr4 = [...Object.entries(j.autoload?.['psr-4'] || {}), ...Object.entries(j['autoload-dev']?.['psr-4'] || {})]
+      .flatMap(([ns, d]) => [].concat(d).map((x) => [ns.replace(/\\+$/, ''), x]))
+      .sort((a, b) => b[0].length - a[0].length);
+    return { dir, psr4, laravel: !!(j.require?.['laravel/framework'] || j['require-dev']?.['laravel/framework']) };
+  }).sort((a, b) => b.dir.length - a.dir.length);
+  const composerFor = (p) => composerRoots.find((c) => c.dir === '.' || p.startsWith(c.dir + '/'));
+  const resolvePhp = (from, imp, repoPath) => {
+    const spec = imp.spec;
+    if (imp.kind === 'class') {
+      const hit = phpIndex.get(spec.toLowerCase());
+      if (hit) return { file: hit };
+      const c = composerFor(from);
+      for (const [ns, d] of c?.psr4 || []) {
+        if (ns && !spec.startsWith(ns + '\\')) continue;
+        const p = P.normalize(P.join(c.dir, d, (ns ? spec.slice(ns.length + 1) : spec).replace(/\\/g, '/') + '.php'));
+        if (fileSet.has(p)) return { file: p };
+      }
+      // under one of the project's own namespaces but nowhere to be found: a same-namespace name PHP's
+      // built-ins answer (or a typo); not worth counting as a missed import
+      if (!spec.includes('\\') || c?.psr4.some(([ns]) => ns && spec.startsWith(ns + '\\'))) return { builtin: true };
+      const segs = spec.split('\\');
+      // vendor namespaces: Illuminate\…, Inertia\…, and Laravel\Sanctum, Spatie\Permission… (vendors with many packages)
+      return { external: segs.slice(0, /^(Laravel|Spatie|League|Symfony)$/.test(segs[0]) && segs.length > 2 ? 2 : 1).join('\\'), eco: 'composer' };
+    }
+    if (spec.startsWith('@base/')) {
+      const base = composerFor(from)?.dir ?? (repoPath && repoPath !== '.' ? repoPath : '.');
+      const p = P.normalize(P.join(base, spec.slice(6)));
+      return fileSet.has(p) ? { file: p } : { unresolved: true };
+    }
+    return resolveRelative(from, spec, ['.php']);
+  };
+
+  /**
+   * Laravel Wayfinder: `import { show } from '@/routes/posts'` and `import PostController from
+   * '@/actions/App/Http/Controllers/PostController'` point at files Wayfinder generates and git usually
+   * ignores. They stand for named routes and controller actions, which routes.mjs matches to endpoints.
+   */
+  function wayfinder(from, mapped) {
+    const app = composerRoots.find((c) => c.laravel && (c.dir === '.' || from.startsWith(c.dir + '/')));
+    if (!app) return null;
+    for (const m of mapped) {
+      const w = /(?:^|\/)(actions|routes|wayfinder)(?:\/(.*))?$/.exec(m);
+      if (!w) continue;
+      const rest = (w[2] || '').replace(/(^|\/)index$/, '');
+      if (w[1] === 'wayfinder') return { builtin: true };
+      if (w[1] === 'actions' && rest) return { wayfinder: { kind: 'action', cls: rest.split('/').join('\\') } };
+      if (w[1] === 'routes') return { wayfinder: { kind: 'route', prefix: rest ? rest.split('/').join('.') : '' } };
+    }
+    return null;
+  }
+
   return function resolve(file, imp) {
     const lang = file.lang;
     switch (lang) {
@@ -246,7 +307,7 @@ export function createResolver(root, files) {
       case 'rust': return resolveRust(file.path, imp);
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file.path, imp.spec);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
-      case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
+      case 'php': return resolvePhp(file.path, imp, file.repo);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
       default: return resolveRelative(file.path, imp.spec, []);
     }

@@ -24,7 +24,7 @@ flowchart TD
 - **web requests** the code makes;
 - content **fingerprints**, so later updates can tell what changed.
 
-Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro files), Python, Go, Rust, Java, Kotlin, Scala and Groovy, with lighter support for others.
+Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro files), Python, Go, Rust, Java, Kotlin, Scala, Groovy and PHP, with lighter support for others. PHP files link to the classes they use: `use` statements, and the classes a file names without one (`new Order`, `Order::class`, parameter types), found by namespace and through the PSR-4 folders in `composer.json`. PHP is read, never run.
 
 ## 2. Connecting requests to endpoints
 
@@ -36,6 +36,9 @@ The most useful lines on the map connect a screen's web requests to the server c
   - addresses built in a variable first: `const url = …; api.get(url)`;
   - template strings with nested parts;
   - small helpers in the same file that add a prefix, like `call('/definitions')`.
+- **Laravel** routes come from `Route::get(…)`, `match`, `resource` and `apiResource` (with `only` and `except`), `Route::view` and `Route::inertia`, under prefix, name, middleware and controller groups, in the chained form or the older `Route::group([...])` one. A route file loaded inside a group (`require __DIR__.'/admin.php'`, `->group(base_path('routes/admin.php'))`, files required in a loop over a fixed list, and `withRouting` in `bootstrap/app.php`) gets that group's prefix, name and middleware. An endpoint answered by a controller method sits in the controller's file, at that method; a closure stays where it's written. Routes only running the app would reveal (built in a loop from data, or registered by a package) aren't found.
+  - **Wayfinder** calls (`import { show } from '@/routes/orders'`, `OrderController.update.form(…)` from `@/actions/…`) reach their endpoints by route name or controller method, though the files Wayfinder generates aren't in git.
+  - **Inertia** pages: a controller method that renders a page (`Inertia::render('orders/show')`) makes that page a screen at the endpoint's address, linked to the controller that serves it.
 - **Firebase Cloud Functions** are called by name rather than by address. A callable function (`onCall`) shows up as `CALL /approveItem` under the name your functions entry file exports it as, and the website's `httpsCallable(functions, 'approveItem')` calls reach it, including through a helper of your own that wraps `httpsCallable`. An `onRequest` function is an ordinary endpoint at `/<name>`, and an Express app passed to it keeps its own routes under that name. Scheduled and other background functions (Firestore, Storage, Pub/Sub) are listed for the AI to place on the map.
 - **Matches** the two. When a request only spells out part of the address, because the base URL lives in settings, Floorplan learns each client's base path and prefers matches that fit it.
 
