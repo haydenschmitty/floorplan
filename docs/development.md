@@ -101,6 +101,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |
+| `sandboxed.test.mjs` | a map whose browser refuses storage, the clipboard or new windows (a sandboxed frame, strict settings): settings kept in memory for the visit, no tour on its own, `#tour=0`, "Copied" only when it was, the address shown when a window is blocked, and nothing changed where storage works (the page's own code run against a pretend browser, not a real frame) |
 
 Sample projects are written to a temp folder by `helpers.mjs` (`shopApp()`) or copied from `tests/fixtures/`. Anything secret-looking is assembled at runtime, so no real-looking key is ever committed.
 
@@ -112,7 +113,8 @@ Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order
 - the graph and lookups;
 - navigation (`go`, `open`, `reveal`, `showBoard`, `playFlow`);
 - `addHeaderButton` and `addPanelSection('overview' | 'item', fn)`;
-- `modal`, `toast`, `store`;
+- `modal`, `toast`, `store` (settings for this browser; `store.persistent` is false when the browser won't keep them past this visit, and they're held in memory instead);
+- `copy(text)`, which resolves true only when the text was really copied and otherwise shows it to copy by hand, and `openWindow(url)`, which shows the address when the browser blocks a new window. Use these rather than `navigator.clipboard` or `window.open`, so the map behaves in a sandboxed frame too;
 - events (`on('ready' | 'render' | 'panel' | 'technical')`);
 - `exported`, set in an exported copy: leave out anything there that needs Claude, Codex or the map's server.
 
