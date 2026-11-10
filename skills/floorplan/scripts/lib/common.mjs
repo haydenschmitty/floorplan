@@ -360,6 +360,67 @@ export function blankBlockComments(src) {
   return out + src.slice(from);
 }
 
+/**
+ * s.indexOf(ch, from) for searches that start further along the text each time, as a scan from top to bottom
+ * does: an answer still ahead of the next start is the answer again, so all the searches together read the text
+ * once. (Searching afresh from every start would read a file of a thousand "{" and no "}" a thousand times;
+ * capping each search instead loses anything longer than the cap.) A start behind the last one searches afresh.
+ */
+export function forwardIndexOf(s, ch) {
+  let from0 = Infinity, found = -1;
+  return (from) => {
+    if (from >= from0 && (found < 0 || found >= from)) return found;
+    from0 = from;
+    return (found = s.indexOf(ch, from));
+  };
+}
+
+const SPACE = /\s/;
+/**
+ * `import … from '…'` statements, as [{ index, clause, spec, end }], in time linear in the text's length however
+ * long their lists of names are. One starts where `head` (a global pattern) matches, and the word import must end
+ * the match. Its clause runs from there to the first ' " or ; and must end in `from` right before a quote; the
+ * quoted module name follows. `spaced`: `from` has whitespace on both sides and the name stays on one line, as in
+ * /import\s+(clause)\s+from\s+["']([^"'\n]+)["']/; otherwise /import\s+(clause)\s*from\s*["']([^"']+)["']/.
+ * A statement that starts inside the one before it is skipped, as a regular expression's matches would be.
+ */
+export function importStatements(code, head, { spaced = true } = {}) {
+  const out = [];
+  const next = ["'", '"', ';'].map((ch) => forwardIndexOf(code, ch));
+  const n = code.length;
+  // what follows the clause that ends at `stop` (statements that start further back but end at the same
+  // place share it, so it's worked out once)
+  const tail = (stop) => {
+    if (code[stop] === ';') return null;
+    let e = stop + 1;
+    while (e < n && code[e] !== '"' && code[e] !== "'" && (!spaced || code[e] !== '\n')) e++;
+    if (e === stop + 1 || e >= n || code[e] === '\n') return null;
+    let s = stop;
+    while (s > 0 && SPACE.test(code[s - 1])) s--;
+    if ((spaced && s === stop) || s < 4 || code.slice(s - 4, s) !== 'from') return null;
+    let t = s - 4;
+    while (t > 0 && SPACE.test(code[t - 1])) t--;
+    if (spaced && t === s - 4) return null;
+    return { clauseEnd: t, spec: code.slice(stop + 1, e), end: e + 1 };
+  };
+  let end = 0, memoAt = -1, memo = null;
+  for (const h of code.matchAll(head)) {
+    if (h.index < end) continue;
+    let p = h.index + h[0].length;
+    if (!SPACE.test(code[p] ?? '')) continue;
+    while (p < n && SPACE.test(code[p])) p++;
+    if (code[p] === '(') continue; // a dynamic import, which loads a module when it runs
+    let stop = -1;
+    for (const f of next) { const i = f(p); if (i >= 0 && (stop < 0 || i < stop)) stop = i; }
+    if (stop < 0) break;
+    if (stop !== memoAt) { memoAt = stop; memo = tail(stop); }
+    if (!memo || memo.clauseEnd <= p) continue;
+    out.push({ index: h.index, clause: code.slice(p, memo.clauseEnd), spec: memo.spec, end: memo.end });
+    end = memo.end;
+  }
+  return out;
+}
+
 /** Config files bigger than this aren't read: no real tsconfig.json or package.json comes close. */
 export const MAX_CONFIG_BYTES = 1024 * 1024;
 /** Config files readJsonLoose left unread because of their size, as { path, bytes } (the scan reports them). */

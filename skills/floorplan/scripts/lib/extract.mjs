@@ -1,5 +1,6 @@
 // Per-language, regex-based extraction of imports, exported symbols, HTTP routes and HTTP calls.
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
+import { forwardIndexOf, importStatements } from './common.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -194,26 +195,91 @@ function parseImportClause(clause) {
   return { names, locals };
 }
 
+/**
+ * `export * from '…'`, `export * as ns from '…'` and `export { … } from '…'` (also `export type`), as
+ * { index, what, spec }: what /\bexport\s+(?:type\s+)?(\*(?:\s+as\s+\w+)?|\{[^}]*\})\s+from\s+["']([^"'\n]+)["']/g
+ * matches, with the "}" that ends each list found by reading forward once.
+ */
+function reexports(code) {
+  const out = [];
+  const nextClose = forwardIndexOf(code, '}');
+  const star = /(\*(?:\s+as\s+\w+)?)\s+from\s+["']([^"'\n]+)["']/y;
+  const from = /\s+from\s+["']([^"'\n]+)["']/y;
+  let end = 0, memoAt = -1, memo = null;
+  for (const h of code.matchAll(/\bexport\s+(?:type\s+)?(?=[*{])/g)) {
+    if (h.index < end) continue;
+    const p = h.index + h[0].length;
+    if (code[p] === '*') {
+      star.lastIndex = p;
+      const m = star.exec(code);
+      if (m) { out.push({ index: h.index, what: m[1], spec: m[2] }); end = star.lastIndex; }
+      continue;
+    }
+    const close = nextClose(p);
+    if (close < 0) break;
+    // lists that start further back but end at the same "}" share what follows it
+    if (close !== memoAt) { memoAt = close; from.lastIndex = close + 1; const m = from.exec(code); memo = m && { spec: m[1], end: from.lastIndex }; }
+    if (!memo) continue;
+    out.push({ index: h.index, what: code.slice(p, close + 1), spec: memo.spec, end: memo.end });
+    end = memo.end;
+  }
+  return out;
+}
+
+/**
+ * The name or { … } a require() at `i` is assigned to, as in /(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?$/
+ * on the text from `floor` up to it, or null. Read backwards from the require, so its cost is the length of
+ * what it reads, however long the list.
+ */
+function requireBinding(code, i, floor) {
+  const space = (k) => k > floor && /\s/.test(code[k - 1]);
+  const keywordBefore = (k) => { // `const`, `let` or `var`, then whitespace, end at k
+    let v = k;
+    while (space(v)) v--;
+    return v < k && ((v - 5 >= floor && code.slice(v - 5, v) === 'const') || (v - 3 >= floor && /^(?:let|var)$/.test(code.slice(v - 3, v))));
+  };
+  let k = i;
+  while (space(k)) k--;
+  if (k < i && k - 5 >= floor && code.slice(k - 5, k) === 'await') { k -= 5; while (space(k)) k--; }
+  if (k <= floor || code[k - 1] !== '=') return null;
+  let b = k - 1;
+  while (space(b)) b--;
+  if (b > floor && code[b - 1] === '}') {
+    // the first "{" after the "}" before this one that follows const, let or var
+    const opens = [];
+    for (let j = b - 2; j >= floor && code[j] !== '}'; j--) if (code[j] === '{') opens.push(j);
+    for (let o = opens.length - 1; o >= 0; o--) if (keywordBefore(opens[o])) return code.slice(opens[o], b);
+    return null;
+  }
+  let w = b;
+  while (w > floor && /[\w$]/.test(code[w - 1])) w--;
+  return w < b && /[A-Za-z_$]/.test(code[w]) && keywordBefore(w) ? code.slice(w, b) : null;
+}
+
 function extractJs(src, filePath) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
   const imports = [];
   // (patterns here start at a line, ; or } and keep their gaps bounded: an unbounded \s* or [^…]* tried from
-  // every blank line or every "{" of a large file takes quadratic time)
-  for (const m of all(/(?:^|[;\n}])[ \t]*import\s+(?!\()((?:type\s+)?[^'";]{0,2000}?)\s+from\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[2], ...parseImportClause(m[1]), line: at(m.index) });
+  // every blank line or every "{" of a large file takes quadratic time. A list of names has no length limit:
+  // generated API clients import and re-export thousands of characters of them, so the end of a list is found
+  // by reading forward once, never by a pattern tried from every "import" or "{")
+  for (const s of importStatements(code, /(?:^|[;\n}])[ \t]*import\b(?=\s)/g)) imports.push({ spec: s.spec, ...parseImportClause(s.clause), line: at(s.index) });
   for (const m of all(/(?:^|[;\n])[ \t]*import\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[1], names: [], line: at(m.index) });
-  for (const m of all(/\bexport\s+(?:type\s+)?(\*(?:\s+as\s+\w+)?|\{[^}]{0,2000}\})\s+from\s+["']([^"'\n]+)["']/g, code)) {
+  for (const m of reexports(code)) {
     // `export { a as b } from` → exported { b: 'a' }, the names this file passes on
-    const clause = m[1].startsWith('{') ? parseImportClause(m[1]) : null;
-    imports.push({ spec: m[2], names: clause ? clause.names : [], ...(clause ? { exported: clause.locals } : {}), line: at(m.index), reexport: true });
+    const clause = m.what.startsWith('{') ? parseImportClause(m.what) : null;
+    imports.push({ spec: m.spec, names: clause ? clause.names : [], ...(clause ? { exported: clause.locals } : {}), line: at(m.index), reexport: true });
   }
+  let lineStart = 0, read = 0, prevEnd = 0;
   for (const m of all(/\brequire\(\s*["']([^"'\n]+)["']\s*\)/g, code)) {
     // `const usersRouter = require('./users')` / `const { a, b: c } = require(…)` bind local names
-    const before = code.slice(Math.max(code.lastIndexOf('\n', m.index) + 1, m.index - 300), m.index);
-    const bind = /(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?$/.exec(before);
+    for (; read < m.index; read++) if (code.charCodeAt(read) === 10) lineStart = read + 1;
+    const bind = requireBinding(code, m.index, Math.max(lineStart, prevEnd));
+    prevEnd = m.index + m[0].length;
     const locals = {};
-    if (bind?.[1].startsWith('{')) for (const part of bind[1].slice(1, -1).split(',')) { const [orig, alias] = part.trim().split(/\s*:\s*/); if (orig) locals[(alias || orig).trim()] = orig.trim(); }
-    else if (bind) locals[bind[1]] = 'default';
+    if (bind?.startsWith('{')) for (const part of bind.slice(1, -1).split(',')) { const [orig, alias] = part.trim().split(/\s*:\s*/); if (orig) locals[(alias || orig).trim()] = orig.trim(); }
+    else if (bind) locals[bind] = 'default';
     imports.push({ spec: m[1], names: Object.values(locals), locals, line: at(m.index) });
   }
   for (const m of all(/\bimport\(\s*["']([^"'\n]+)["']\s*\)/g, code)) imports.push({ spec: m[1], names: [], line: at(m.index), dynamic: true });
@@ -427,7 +493,21 @@ function extractPy(src) {
       if (mod) imports.push({ spec: mod.trim(), names: [], alias: alias?.trim(), line: at(m.index) });
     }
   }
-  for (const m of all(/^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([^)]{0,5000}\)|[^\n]+)/gm, code)) {
+  // `from x import (a, b, …)` may list any number of names over many lines; the ")" is found by reading forward
+  // once (as /^[ \t]*from[ \t]+([\w.]*)[ \t]+import[ \t]+(\([^)]*\)|[^\n]+)/gm would match). The module is
+  // ([\w.]*), the same text as (\.*[\w.]*), which tried every way of splitting a long run of dots between its parts.
+  const nextParen = forwardIndexOf(code, ')');
+  let fromEnd = 0;
+  for (const h of all(/^[ \t]*from[ \t]+([\w.]*)[ \t]+import\b([ \t]+)/gm, code)) {
+    if (h.index < fromEnd) continue;
+    const p = h.index + h[0].length;
+    const close = code[p] === '(' ? nextParen(p) : -1;
+    let what;
+    if (close >= 0) { what = code.slice(p, close + 1); fromEnd = close + 1; }
+    else if (p < code.length && code[p] !== '\n') { const e = code.indexOf('\n', p); what = code.slice(p, e < 0 ? code.length : e); }
+    else if (h[2].length > 1) what = h[2].slice(-1); // nothing after `import ` but spaces
+    else continue;
+    const m = Object.assign([h[0], h[1], what], { index: h.index });
     const names = [];
     const aliases = {};
     for (const part of m[2].replace(/[()\\]/g, ' ').split(',')) {
@@ -491,8 +571,15 @@ function extractGo(src) {
   const at = lineIndex(code);
   const imports = [];
   for (const m of all(/^import\s+(?:[\w.]+\s+)?"([^"]+)"/gm, code)) imports.push({ spec: m[1], names: [], line: at(m.index) });
-  for (const block of all(/^import\s*\(([^)]{0,20000})\)/gm, code)) {
-    for (const m of all(/(?:[\w.]+\s+)?"([^"]+)"/g, block[1])) imports.push({ spec: m[1], names: [], line: at(block.index) });
+  // import ( … ) blocks of any length, each ")" found by reading forward once
+  const nextParen = forwardIndexOf(code, ')');
+  let blockEnd = 0;
+  for (const block of all(/^import\s*\(/gm, code)) {
+    if (block.index < blockEnd) continue;
+    const close = nextParen(block.index + block[0].length);
+    if (close < 0) break;
+    blockEnd = close + 1;
+    for (const m of all(/(?:(?<![\w.])[\w.]+\s+)?"([^"]+)"/g, code.slice(block.index + block[0].length, close))) imports.push({ spec: m[1], names: [], line: at(block.index) });
   }
   const symbols = [];
   for (const m of all(/^func\s+(?:\([^)\n]{0,300}\)\s*)?([A-Z]\w*)/gm, code)) symbols.push({ name: m[1], kind: 'function', line: at(m.index) });

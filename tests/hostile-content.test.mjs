@@ -411,6 +411,114 @@ test('files built to make pattern matching slow are scanned quickly', () => {
     assert.ok(Date.now() - t < 30000, `scan and check took ${Date.now() - t} ms`);
   } finally { cleanup(root); }
 });
+// Reading quickly mustn't mean reading less: a cap on how far a pattern looks would drop a long list of names,
+// and generated API clients import and re-export thousands of characters of them at once.
+describe('long lists of names keep their links, however long', () => {
+  const names = (n, prefix) => Array.from({ length: n }, (_, i) => `${prefix}${i}Response`);
+  const list = (n, prefix, sep = ', ') => names(n, prefix).join(sep);
+  let root, edges;
+  before(() => {
+    root = makeProject({
+      'src/client/types.gen.ts': names(5000, 'Type').map((n) => `export type ${n} = { id: string };`).join('\n') + '\n',
+      'src/client/sdk.gen.ts': names(5000, 'call').map((n) => `export const ${n} = () => 1;`).join('\n') + '\n',
+      'src/client/schemas.gen.ts': names(300, 'Schema').map((n) => `export const ${n} = {};`).join('\n') + '\n',
+      'src/client/index.ts': `export type { ${list(300, 'Type')} } from './types.gen';\nexport { ${list(300, 'call')} } from './sdk.gen';\n`,
+      'src/app.ts': `import { ${list(300, 'Schema')} } from './client/schemas.gen';\n`,
+      'src/everything.ts': `import {\n  ${list(5000, 'call', ',\n  ')},\n} from './client/sdk.gen';\nexport type { ${list(5000, 'Type')} } from './client/types.gen';\n`,
+      'server/handlers.js': names(300, 'handle').map((n) => `exports.${n} = () => 1;`).join('\n') + '\n',
+      'server/index.js': `const { ${list(300, 'handle')} } = require('./handlers');\n`,
+      'api/models.py': names(300, 'Model').map((n) => `class ${n}:\n    pass\n`).join('\n'),
+      'api/main.py': `from api.models import (\n    ${list(300, 'Model', ',\n    ')},\n)\n`,
+    });
+    run('scan.mjs', root);
+    edges = readJson(path.join(root, 'floorplan', '.cache', 'scan.json')).edges;
+  });
+  after(() => cleanup(root));
+  const edge = (from, to) => edges.find((e) => e.from === from && e.to === to);
+
+  test('a 300-name import, re-export and export type each keep their link and every name', () => {
+    assert.ok(list(300, 'Type').length > 2000, 'each list is longer than 2,000 characters');
+    assert.equal(edge('src/app.ts', 'src/client/schemas.gen.ts')?.names.length, 300, 'import { … } from');
+    assert.equal(edge('src/client/index.ts', 'src/client/sdk.gen.ts')?.names.length, 300, 'export { … } from');
+    assert.equal(edge('src/client/index.ts', 'src/client/types.gen.ts')?.names.length, 300, 'export type { … } from');
+  });
+
+  test('5,000 names, over many lines or on one, keep their link too', () => {
+    assert.equal(edge('src/everything.ts', 'src/client/sdk.gen.ts')?.names.length, 5000, 'a 5,000-name import over 5,000 lines');
+    assert.equal(edge('src/everything.ts', 'src/client/types.gen.ts')?.names.length, 5000, 'a 5,000-name export type on one line');
+  });
+
+  test('a long require() destructuring and a long Python import list keep every name', () => {
+    assert.equal(edge('server/index.js', 'server/handlers.js')?.names.length, 300, 'const { … } = require()');
+    assert.equal(edge('api/main.py', 'api/models.py')?.names.length, 300, 'from x import ( … )');
+  });
+
+  test('a long Go import block, and a route table longer than 20,000 characters, are read in full', async () => {
+    const { extract } = await lib('extract.mjs');
+    const { findScreens } = await lib('screens.mjs');
+    const pkgs = Array.from({ length: 1000 }, (_, i) => `example.com/shop/internal/services/package${i}`);
+    const go = `package main\n\nimport (\n${pkgs.map((p) => `\t"${p}"`).join('\n')}\n)\n`;
+    assert.ok(go.length > 20000);
+    assert.deepEqual(extract(go, 'go', 'cmd/main.go').imports.map((i) => i.spec), pkgs);
+
+    const pages = names(300, 'Page');
+    const table = [
+      `import { createBrowserRouter } from 'react-router-dom';`,
+      `import { ${pages.join(', ')} } from './pages';`,
+      `export const router = createBrowserRouter([`,
+      `  {`,
+      `    path: '/account',`,
+      `    element: <Shell />,`,
+      `    children: [`,
+      ...pages.map((p, i) => `      { path: 'settings/section-${i}', element: <${p} /> },`),
+      `    ],`,
+      `  },`,
+      `]);`,
+    ].join('\n');
+    assert.ok(table.length > 20000);
+    const screens = findScreens(table, { path: 'src/router.tsx', category: 'code', lang: 'typescript' });
+    assert.equal(screens.length, 300);
+    const last = screens.find((s) => s.comp === 'Page299Response');
+    assert.equal(last?.url, '/account/settings/section-299', 'the last route keeps the prefix of the route around it');
+    assert.equal(last?.spec, './pages', 'and its page is found in the long import');
+  });
+
+  test('Health reads a long list of public settings to its end', async () => {
+    const { findIssues } = await lib('health.mjs');
+    const settings = [...names(200, 'PUBLIC_FEATURE_FLAG_'), 'PUBLIC_OPENAI_KEY'].join(', ');
+    assert.ok(settings.length > 3000);
+    const found = findIssues(`import { ${settings} } from '$env/static/public';\n`, { path: 'src/routes/+page.svelte', category: 'code', lang: 'svelte' });
+    assert.deepEqual(found.filter((x) => x.k === 'public-env').map((x) => x.name), ['PUBLIC_OPENAI_KEY']);
+  });
+});
+
+test('files of unclosed lists and brackets are still read quickly', async () => {
+  const { extract } = await lib('extract.mjs');
+  const { findScreens } = await lib('screens.mjs');
+  const mb = (unit, n = 2) => unit.repeat(Math.ceil((n * 1024 * 1024) / unit.length));
+  const cases = {
+    'import { with no }': ['typescript', mb('import {')],
+    '{ repeated': ['typescript', mb('{')],
+    'export type { with no }': ['typescript', mb('export type {')],
+    'import lists with no from': ['typescript', mb('import { a, b }\n') + "'"],
+    'require() after an unclosed {': ['javascript', mb("const { a = require('x') ")],
+    'require() after long spaces': ['javascript', mb(`const { a } =${' '.repeat(60)}require('x')`)],
+    'from x import ( with no )': ['python', mb('from x import (\n')],
+    'from followed by dots': ['python', `from ${'.'.repeat(200000)}\n`],
+    'import ( with no )': ['go', mb('import (\n')],
+    'route( inside an unclosed string': ['typescript', `route("${mb('route(')}`],
+    'route( nested a million deep': ['typescript', mb('route("a", ', 1) + mb(')', 1)],
+    'route objects nested deep': ['typescript', `createBrowserRouter\n${mb("{path:'a',", 0.5)}${mb('}', 0.5)}`],
+  };
+  for (const [name, [lang, src]] of Object.entries(cases)) {
+    const t = performance.now();
+    extract(src, lang, lang === 'python' ? 'app/routes.py' : lang === 'go' ? 'app/routes.go' : 'app/routes.ts');
+    if (lang === 'typescript' || lang === 'javascript') findScreens(src, { path: 'app/routes.ts', category: 'code', lang });
+    const ms = performance.now() - t;
+    assert.ok(ms < 2000, `${name} (${(src.length / 1048576).toFixed(1)} MB) took ${Math.round(ms)} ms`);
+  }
+});
+
 function writeArch(root) {
   const f = path.join(root, 'arch.json');
   writeJson(f, { project: { name: 'Slow' }, include: ['code', 'config', 'docs'], nodes: [{ id: 'all', label: 'Everything', kind: 'service', paths: ['**'] }] });

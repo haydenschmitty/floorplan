@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, compileGlob, blockComments, blankBlockComments } from './common.mjs';
+import { git, compileGlob, blockComments, blankBlockComments, forwardIndexOf } from './common.mjs';
 
 export const lineIndex = (src) => {
   const starts = [0];
@@ -557,7 +557,19 @@ function findPublicEnv(src, f, out) {
     if (/^PUBLIC_/.test(m[2]) && m[1].startsWith('process')) continue; // PUBLIC_ means nothing to Node
     add(m[2], m.index);
   }
-  for (const m of src.matchAll(/import\s*\{([^}]{0,3000})\}\s*from\s*['"]\$env\/(?:static|dynamic)\/public['"]/g)) for (const n of m[1].match(/[A-Z][A-Z0-9_]*/g) || []) add(n, m.index);
+  // import { … } from '$env/static/public', however many names: each "}" is found by reading forward once
+  const nextClose = forwardIndexOf(src, '}');
+  const from = /\s*from\s*['"]\$env\/(?:static|dynamic)\/public['"]/y;
+  let end = 0, memoAt = -1, memo = false;
+  for (const m of src.matchAll(/import\s*\{/g)) {
+    if (m.index < end) continue;
+    const close = nextClose(m.index + m[0].length);
+    if (close < 0) break;
+    if (close !== memoAt) { memoAt = close; from.lastIndex = close + 1; memo = from.test(src) && from.lastIndex; }
+    if (!memo) continue;
+    end = memo;
+    for (const n of src.slice(m.index + m[0].length, close).match(/[A-Z][A-Z0-9_]*/g) || []) add(n, m.index);
+  }
 }
 
 // Stripe: code that acts on payment events. Without checking Stripe's signature first, anyone can send

@@ -16,7 +16,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { blankBlockComments } from './common.mjs';
+import { blankBlockComments, importStatements } from './common.mjs';
 
 const P = path.posix;
 const JS_LANGS = new Set(['typescript', 'javascript', 'vue', 'svelte', 'astro']);
@@ -129,10 +129,10 @@ const pickComponent = (names) => names.filter((n) => !WRAPPER.test(n)).pop() || 
 function importBindings(code) {
   const map = new Map();
   // the clause is found first and taken apart after: one pattern with several optional parts separated by \s*
-  // tries every way of splitting a long run of spaces between them
-  for (const c of code.matchAll(/\bimport\s+(?!["'])([^;'"]{1,2000}?)\s*from\s*["']([^"']+)["']/g)) {
-    const clause = c[1].trim().replace(/^type\s+/, '');
-    const m = [c[0], /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause)?.[1], /\{([^}]*)\}/.exec(clause)?.[1], /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause)?.[1], c[2]];
+  // tries every way of splitting a long run of spaces between them. Lists of names can be any length.
+  for (const c of importStatements(code, /\bimport\b(?=\s)/g, { spaced: false })) {
+    const clause = c.clause.trim().replace(/^type\s+/, '');
+    const m = [null, /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause)?.[1], /\{([^}]*)\}/.exec(clause)?.[1], /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause)?.[1], c.spec];
     if (m[1]) map.set(m[1], m[4]);
     if (m[3]) map.set(m[3], m[4]);
     for (const part of (m[2] || '').split(',')) {
@@ -165,10 +165,12 @@ function routerScreens(src, file) {
   // React Router v7 config: app/routes.ts with route("path", "routes/file.tsx") / index("routes/home.tsx")
   if (/(^|\/)routes\.(ts|js|mjs)$/.test(file.path) && /@react-router\/dev\/routes|\b(route|index)\(\s*["']/.test(code)) {
     const calls = [];
+    const closeParen = bracketCloser(code, '(', ')');
     for (const m of code.matchAll(/\b(route|index|layout|prefix)\(\s*/g)) {
-      const end = matchClose(code, m.index + m[0].length - 1, '(', ')');
+      const end = closeParen(m.index + m[0].length - 1);
       if (end < 0) continue;
-      const args = [...code.slice(m.index, end).matchAll(/["'`]([^"'`]*)["'`]/g)].map((x) => x[1]);
+      // the first two arguments (a path and a file) are all that's read; a layout's children may run on for pages
+      const args = [...code.slice(m.index, Math.min(end, m.index + 2000)).matchAll(/["'`]([^"'`]*)["'`]/g)].slice(0, 2).map((x) => x[1]);
       calls.push({ type: m[1], start: m.index, end, args });
       if (calls.length >= MAX_RECORDS) break;
     }
@@ -205,7 +207,7 @@ function routerScreens(src, file) {
       const url = pathAttr ? joinUrl(parent, pathAttr[1] ?? pathAttr[2]) : (parent || '/');
       const el = /\belement\s*=\s*\{/.exec(attrs);
       let comp = null;
-      if (el) { const close = matchClose(attrs, el.index + el[0].length - 1, '{', '}'); comp = pickComponent([...attrs.slice(el.index, close > 0 ? close : undefined).matchAll(/<([A-Z][\w.]*)/g)].map((x) => x[1])); }
+      if (el) { const close = bracketCloser(attrs, '{', '}')(el.index + el[0].length - 1); comp = pickComponent([...attrs.slice(el.index, close > 0 ? close : undefined).matchAll(/<([A-Z][\w.]*)/g)].map((x) => x[1])); }
       comp = comp || /\b[Cc]omponent\s*=\s*\{\s*([A-Z][\w$.]*)\s*\}/.exec(attrs)?.[1] || null;
       if (!comp) { const r = /\brender\s*=\s*\{/.exec(attrs); if (r) comp = pickComponent([...attrs.slice(r.index).matchAll(/<([A-Z][\w.]*)/g)].map((x) => x[1])); }
       const lazySpec = /\blazy\s*=\s*\{[^}]*import\(\s*["']([^"']+)["']/.exec(attrs)?.[1];
@@ -217,16 +219,21 @@ function routerScreens(src, file) {
   // Route objects: { path: 'x', element: <X/> | component: X | component: () => import('./X.vue'), children: [...] }
   if (ROUTER_SIGNAL.test(code)) {
     const recs = [];
+    const closeBrace = bracketCloser(code, '{', '}');
     for (const m of code.matchAll(/\bpath\s*:\s*(["'`])([^"'`]*)\1|\bindex\s*:\s*true\b/g)) {
       const open = enclosingBrace(code, m.index);
       if (open < 0) continue;
-      const close = matchClose(code, open, '{', '}');
+      const close = closeBrace(open);
       if (close < 0) continue;
       if (recs.some((r) => r.open === open)) { const r = recs.find((x) => x.open === open); if (m[2] != null) r.path = m[2]; continue; }
       recs.push({ open, close, path: m[2] ?? null, index: m[2] == null });
       if (recs.length >= MAX_RECORDS) break;
     }
+    // each record is read in full, and one holding the others holds all of their text too: a real table is read
+    // a few times over, a file of hundreds of records each wrapped around the next no more than this
+    let reading = 10 * code.length + 100000;
     for (const r of recs) {
+      if ((reading -= r.close - r.open) < 0) break;
       const own = maskNested(code.slice(r.open + 1, r.close));
       if (/\bredirect(To)?\s*:/.test(own) && !/\b(element|component|Component)\s*:/.test(own)) continue;
       const parents = recs.filter((o) => o !== r && o.open < r.open && o.close > r.close).sort((a, b) => a.open - b.open);
@@ -248,8 +255,9 @@ function routerScreens(src, file) {
 }
 
 /** Index of the '>' that closes a JSX opening tag starting at i (skips braces and strings). */
-// How far the brace and tag matchers below look: a real tag or route object is far shorter, and an unclosed one
-// in a large file would otherwise be scanned to the end from every place it's tried.
+// How far tagEnd looks for the end of a tag, and enclosingBrace back for the "{" a route object's path sits in: a
+// real tag, or the keys before a path, are far shorter, and an unclosed one in a large file would otherwise be
+// scanned to the end from every place it's tried. (Route tables themselves can be any length: see bracketCloser.)
 const REACH = 20000;
 const MAX_RECORDS = 500;
 function tagEnd(s, i) {
@@ -264,16 +272,43 @@ function tagEnd(s, i) {
   }
   return -1;
 }
-function matchClose(s, i, open, close) {
-  let depth = 0, q = null;
-  for (const stop = Math.min(s.length, i + REACH); i < stop; i++) {
-    const c = s[i];
-    if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
-    if (c === '"' || c === "'" || c === '`') q = c;
-    else if (c === open) depth++;
-    else if (c === close && --depth === 0) return i;
-  }
-  return -1;
+/**
+ * closer(i): the index of the `close` that matches the `open` at s[i] (skipping strings), or -1. Route tables can
+ * be any length: one reading finds the match of every bracket it passes, so the brackets nested inside are
+ * answered without reading again, and an unclosed one is read to the end once. Reading from places no earlier
+ * reading covered (a bracket inside a string it skipped) stops after ten times the text's length in all.
+ */
+function bracketCloser(s, open, close) {
+  const known = new Map();
+  let budget = 10 * s.length + 100000;
+  return (i) => {
+    if (known.has(i)) return known.get(i);
+    const opens = []; // brackets passed outside strings, not yet matched
+    let depth = 0, q = null;
+    for (let k = i; k < s.length; k++) {
+      if (--budget < 0) return -1;
+      const c = s[k];
+      if (q) { if (c === '\\') k++; else if (c === q) q = null; continue; }
+      if (c === '"' || c === "'" || c === '`') q = c;
+      else if (c === open) {
+        // a bracket matched by an earlier reading: what's inside reads the same way again, so skip it
+        if (depth > 0 && known.has(k)) {
+          const to = known.get(k);
+          if (to < 0) { for (const j of opens) known.set(j, -1); return -1; }
+          k = to;
+          continue;
+        }
+        depth++;
+        opens.push(k);
+      } else if (c === close) {
+        const j = opens.pop();
+        if (j !== undefined) known.set(j, k);
+        if (--depth === 0) return k;
+      }
+    }
+    for (const j of opens) known.set(j, -1);
+    return -1;
+  };
 }
 function enclosingBrace(s, i) {
   let depth = 0;
