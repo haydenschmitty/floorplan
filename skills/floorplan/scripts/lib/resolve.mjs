@@ -20,6 +20,9 @@ export function createResolver(root, files) {
   const tsconfigCache = new Map();
   const loadTsconfig = (file) => {
     if (tsconfigCache.has(file)) return tsconfigCache.get(file);
+    // Marked as "nothing" while it's being read, so a config whose "extends" leads back to itself (directly
+    // or through others) ends there instead of going round until the scan runs out of stack.
+    tsconfigCache.set(file, null);
     let cfg = null;
     const json = readJsonLoose(path.join(root, file));
     if (json) {

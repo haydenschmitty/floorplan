@@ -393,6 +393,25 @@ test('config files: comments stripped in one pass, and oversized ones skipped wi
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a tsconfig whose "extends" leads back to itself doesn\'t crash the scan', () => {
+  // one that names itself, and two that name each other; the imports below make the scan read both sets
+  const root = makeProject({
+    'tsconfig.json': JSON.stringify({ extends: './tsconfig.json' }),
+    'src/a.ts': `import b from './b';\n`,
+    'src/b.ts': 'export default 1;\n',
+    'pkg/tsconfig.json': JSON.stringify({ extends: './tsconfig.base.json' }),
+    'pkg/tsconfig.base.json': JSON.stringify({ extends: './tsconfig.json' }),
+    'pkg/c.ts': `import d from '@/d';\n`,
+    'pkg/d.ts': 'export default 2;\n',
+  });
+  try {
+    const out = run('scan.mjs', root);
+    assert.match(out, /Floorplan scan of/);
+    const scan = readJson(path.join(root, 'floorplan', '.cache', 'scan.json'));
+    assert.ok(scan.edges.some((e) => e.from === 'src/a.ts' && e.to === 'src/b.ts'), 'ordinary imports are still linked');
+  } finally { cleanup(root); }
+});
+
 test('files built to make pattern matching slow are scanned quickly', () => {
   const kb = (unit, n) => unit.repeat(Math.ceil((n * 1024) / unit.length)).slice(0, n * 1024);
   const mounts = {};
