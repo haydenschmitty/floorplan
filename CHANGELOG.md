@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **The map works when the browser blocks storage, copying or new windows:** embedded in a sandboxed iframe, in a private window, or with strict settings. Settings now hold while the page is open instead of resetting, the "Start here" tour no longer starts on every load (the button still starts it, and `#tour=0` in the address keeps it from starting on its own anywhere), copy buttons say "Copied" only when the text really was copied and otherwise select it for you, and links that would open a new window show their address instead of doing nothing. Links to a place on the map (`#v=…&s=…`) and embedding are now described in [Using the map](docs/using-the-map.md#links-to-a-place-on-the-map). Nothing changes where the browser allows these.
+- **Truer descriptions:** maps now say what the code does today, not what its names suggest, so a half-built feature reads as "replies that a note was saved, without keeping it anywhere yet" instead of "saves notes". The writing guide has a new "Say what it does today" section, the description worksheets quote the code of each endpoint and of very short files (secrets masked, `.env` files never quoted, a few lines each), and they list which files import, request or name each file, so nobody has to guess who runs a script. The build also warns, never fails, when a part's name or summary on a map for everyone uses developer words ("API client", "UI kit", a framework's name), and when a part holds many files that sit in folders of their own.
 
 ## 0.7.0 (2026-11-09)
 

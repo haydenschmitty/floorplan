@@ -328,6 +328,37 @@ test('a refresh gives a new file a home even when unassigned files stay under th
   } finally { cleanup(p); }
 });
 
+test('a first map hands developer words in labels back to the model once, and never fails over them', () => {
+  const JARGON_ARCH = { ...structuredClone(SHOP_ARCH), nodes: [
+    { id: 'api', label: 'Express backend', kind: 'service', summary: 'The REST API and its middleware.', paths: ['shop-api/**'] },
+    { id: 'web', label: 'React frontend', kind: 'ui', summary: 'The pages customers use.', paths: ['shop-web/**'] },
+  ] };
+  for (const rewords of [true, false]) {
+    const p = shopApp();
+    try {
+      fs.rmSync(path.join(p, 'floorplan'), { recursive: true });
+      const seen = [];
+      const m = {
+        ...model,
+        architecture: ({ inputs }) => {
+          seen.push(inputs['What the last build said about it'] || null);
+          return structuredClone(seen.length > 1 && rewords ? SHOP_ARCH : JARGON_ARCH);
+        },
+        recent_work: () => ({ tasks: [] }),
+      };
+      const { results, log } = drive(p, m);
+      assert.equal(seen.length, 2, `the model was asked once more, and only once (${rewords ? 'it rewords' : 'it doesn\'t'})`);
+      assert.equal(seen[0], null);
+      assert.match(seen[1], /plain language: node "api" uses developer words: "Express backend" in its label[\s\S]*plain language: node "web"/);
+      assert.ok(log.includes('run build.mjs → 0'));
+      assert.equal(results.build.ok, true);
+      assert.equal(results.build.descriptions.complete, true, 'the map was finished either way');
+      assert.equal(results.build.plainLanguage.count, rewords ? 0 : 2);
+      assert.equal(readJson(path.join(p, 'floorplan', 'architecture.json')).nodes[0].label, rewords ? 'Main server' : 'Express backend');
+    } finally { cleanup(p); }
+  }
+});
+
 // ---------- nothing outside the map folder ----------
 /** Every file under root except the map folder (git's own files included), with a hash of its contents. */
 function snapshot(dir) {
@@ -610,6 +641,18 @@ test('workflow.json handles every NEXT code refresh.mjs can print, and every sta
   const states = [...new Set([...status.matchAll(/'(none|unbuilt|blueprint-started|blueprint|map|unknown)'/g)].map((m) => m[1]))].sort();
   const covered = WORKFLOW.start.choose.flatMap((c) => c.when[0].value).sort();
   assert.deepEqual(covered, states);
+});
+
+test("workflow.json's answers keep their shape: the files a model writes are the ones existing drivers expect", () => {
+  const S = WORKFLOW.schemas;
+  assert.deepEqual(Object.keys(S).sort(), ['architecture', 'descriptions', 'recent_work']);
+  assert.deepEqual(Object.keys(S.architecture.properties).sort(), ['$schema', 'annotations', 'audience', 'edges', 'flows', 'ignore', 'include', 'nodes', 'project', 'tour']);
+  assert.deepEqual(Object.keys(S.architecture.properties.nodes.items.properties).sort(), ['details', 'exclude', 'hosts', 'id', 'kind', 'label', 'packages', 'parent', 'paths', 'summary', 'tags']);
+  for (const k of ['files', 'routes']) assert.deepEqual(S.descriptions.properties[k].additionalProperties, { type: 'object', required: ['name', 'description'], additionalProperties: false, properties: { name: { type: 'string', minLength: 1 }, description: { type: 'string', minLength: 1 }, review: { type: 'string' } } });
+  assert.deepEqual(S.recent_work.properties.tasks.items.required, ['title', 'request', 'summary', 'items']);
+  // the descriptions job is told to say what the code does today, and the build's words reach the architecture job
+  assert.match(WORKFLOW.jobs.descriptions.instructions.join('\n'), /Say what it does today/);
+  assert.match(WORKFLOW.jobs.architecture.instructions.join('\n'), /"plain language:" warning/);
 });
 
 test("workflow.json's answer schemas use only the keywords it promises, and accept real files", () => {

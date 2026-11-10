@@ -55,7 +55,7 @@
 
   "workflows": {
     "first_map": {
-      "about": "A first map: scan, have the model write architecture.json until the build is clean, describe every file and endpoint, then mark recent work.",
+      "about": "A first map: scan, have the model write architecture.json until the build is clean, give it one chance to reword any labels or summaries the build says use developer words (build.plainLanguage, a warning, never a failure), describe every file and endpoint, then mark recent work.",
       "steps": [
         { "id": "scan", "run": "scan.mjs", "args": ["--json"], "save": "scan" },
         {
@@ -70,6 +70,21 @@
           ],
           "maxAttempts": 4,
           "failMessage": "The build still has errors, or more than 10% of files are unassigned, after the model's last attempt at architecture.json."
+        },
+        { "id": "plain-language", "job": "architecture", "when": [{ "path": "build.plainLanguage.count", "op": "greaterThan", "value": 0 }] },
+        { "id": "plain-language-build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true, "when": [{ "path": "build.plainLanguage.count", "op": "greaterThan", "value": 0 }] },
+        {
+          "id": "architecture-still-builds",
+          "repeat": [
+            { "id": "fix-architecture", "job": "architecture" },
+            { "id": "rebuild", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true }
+          ],
+          "until": [
+            { "path": "build.ok", "op": "equals", "value": true },
+            { "path": "build.files.unassignedPercent", "op": "lessThan", "value": 10 }
+          ],
+          "maxAttempts": 2,
+          "failMessage": "The build has errors, or more than 10% of files are unassigned, after the model reworded architecture.json."
         },
         { "id": "describe", "use": "describe" },
         { "id": "recent-work", "use": "recent_work" }
@@ -187,8 +202,9 @@
         "Don't invent. Add an external node, an edge or a flow step only for a connection you can point to: in the scan summary (imports, web requests, EXTERNAL PACKAGES, EXTERNAL HOSTS) or in code you read. A setting or a password that names a service is not evidence that the code talks to it; if you're unsure, leave it out and say so in a summary.",
         "Aim for: 3-9 top-level nodes; 3-12 children under each big one; `paths` globs covering more than 90% of code files; external nodes for the databases and outside services the code really talks to (with `packages` and `hosts` so the build connects them); edges only for what the scan can't see (queues, scheduled jobs, webhooks, calls through addresses kept in settings); 1-3 flows for the system's main jobs; and a `tour` of 3-8 stops in the order a newcomer should see them (what the app is, the apps people use, the main server, outside services, ending on an important screen's file). Every node needs a `summary`.",
         "Audience: leave `audience` unset (everyone) unless the code is plainly for engineers (a library, an SDK, infrastructure code). Write `project.summary`, every node `label` and `summary`, and the tour in plain language for the app's owner (\"Plain language\" in writing-descriptions.md). Use short labels like \"Main server\" rather than \"Shop API (Flask)\". For everyone, framework and tool names (Express, React, FastAPI, Docker…) may appear once, in `project.summary`; keep them out of node summaries, flow notes and the tour, which say what each part does instead.",
+        "Say what the code does today, not what its names suggest (\"Say what it does today\" in writing-descriptions.md): if a part, a flow step or a tour stop is a placeholder that only replies or stores nothing yet, say so.",
         "Paths are relative to the codebase root and use forward slashes. With several repos side by side, they start with the repo folder, e.g. `api-service/src/**`.",
-        "If you were given your last architecture.json and what the build said about it, fix every error the build names, and give each sizeable directory under \"unassigned, by directory\" a home (or an `ignore` entry for things that aren't the system: generated code, vendored copies, fixtures). Keep the rest as it was.",
+        "If you were given your last architecture.json and what the build said about it, fix every error the build names, and give each sizeable directory under \"unassigned, by directory\" a home (or an `ignore` entry for things that aren't the system: generated code, vendored copies, fixtures). Reword every label and summary a \"plain language:\" warning names, using the plain phrase it suggests, and split a part the build says holds many files in folders of their own into children by feature area. Keep the rest as it was.",
         "Submit the complete architecture.json."
       ],
       "writes": "floorplan/architecture.json",
@@ -209,7 +225,7 @@
         "You keep a map of a codebase up to date after its code changed. Its structure is in architecture.json (format: schema.md). You can't ask anyone anything, so decide.",
         "Do only what you were asked to do (and if the last build reported errors, fix those too): fix the build errors it names (usually a flow step, tour stop or annotation pointing at a file that was deleted or moved); or give the new directories listed under \"unassigned, by directory\" a home, with globs on the right node or a new node (or an `ignore` entry for things that aren't the system); or, after a large change, re-read the summaries of the parts that gained or lost many files and check the flows still hold.",
         "Look at the code with your tools where you need to. Keep every node id, and every label and summary that's still right, exactly as it is: other files refer to the ids.",
-        "Write anything new in the same style as the rest: plain language unless `audience` is \"developers\" (writing-descriptions.md).",
+        "Write anything new in the same style as the rest: plain language unless `audience` is \"developers\" (writing-descriptions.md), saying what the code does today. If the last build gave \"plain language:\" warnings for parts you add or change, reword those.",
         "Submit the complete updated architecture.json."
       ],
       "writes": "floorplan/architecture.json",
@@ -227,7 +243,8 @@
       ],
       "instructions": [
         "You name and describe the files and endpoints of a codebase for its map. Read writing-descriptions.md first and follow it.",
-        "The worksheet is a digest of each file (what it defines, its doc comments, what it uses and what uses it) and each endpoint (its handler), which is enough to describe most of them. Open a file with read_file (its first ~80 lines, or the handler) only when the digest leaves its purpose unclear: generic names (utils, index, common) and big files usually need a look.",
+        "The worksheet is a digest of each file (what it defines, its doc comments, what it uses, and the files that import it, send it web requests or name it) and each endpoint (its handler), and it quotes the code of each endpoint and the whole of very short files. That's enough to describe most of them. Open a file with read_file (its first ~80 lines, or the handler) when the digest leaves its purpose unclear, or before you claim anything it doesn't show: generic names (utils, index, common) and big files usually need a look.",
+        "Say what the code does today, not what its name suggests (\"Say what it does today\" in writing-descriptions.md). When quoted code only replies, stores nothing or is otherwise a placeholder, say so plainly (\"…without keeping it anywhere yet\"). Don't say who or what runs or uses something (by hand, on a schedule, by a tool) unless the worksheet's imported by / sent web requests by / named in lines or code you read show it, and never invent example values.",
         "The file to fill in already has an entry for everything the worksheet lists. Fill in every empty description and improve every name. Don't change, add or remove keys: they're how the build matches entries to files and endpoints. Endpoint keys are \"METHOD /path\" exactly as the worksheet prints them.",
         "Entries the worksheet marks REVIEW already have a description, but their code changed: update the name and description if the change matters, then drop the `review` field. Leave entries the worksheet doesn't list exactly as they are.",
         "Be consistent within the file: sibling files should read as a set, and two siblings should never get nearly the same description.",
@@ -249,7 +266,7 @@
         "There's no conversation to go on, so the facts you were given are your only source: what changed since the previous map, uncommitted changes, and recent commits, each with the card it shows up as. Use what is clearly in flight. If nothing is, submit { \"tasks\": [] } so old highlights clear.",
         "One task per piece of work the commits and changes show (a feature, a fix): `title` (2-5 words); `request`: leave it empty (\"\"), because the map shows it as \"You asked: ...\" and nobody asked for this work here, so a commit message there would put words in the reader's mouth; `summary` (1-2 sentences: what the work set out to do, in plain words, then what was done and where it stands, including anything deleted, since deleted files aren't on the map).",
         "`items`: the cards whose behaviour changed for that task, usually 3-15, each a file path, node id or \"METHOD /path\" exactly as the facts list them, with `change` (\"new\" or \"changed\") and a `note`: one or two plain sentences on what changed on this card and how it serves the task. Skip tests and drive-by edits unless they're the point. A file with a changed endpoint can list both.",
-        "Keep the code's words out unless the map's audience is developers. Never put secrets in notes.",
+        "Keep the code's words out unless the map's audience is developers. Never put secrets in notes. Say what the change does today, including when it's a placeholder, and never invent example values: use only values you can see in the facts or the code.",
         "Submit recent-work.json."
       ],
       "writes": "floorplan/recent-work.json",
