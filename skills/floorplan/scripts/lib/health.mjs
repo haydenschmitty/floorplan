@@ -11,9 +11,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, compileGlob } from './common.mjs';
+import { git, compileGlob, blockComments, blankBlockComments } from './common.mjs';
 
-const lineIndex = (src) => {
+export const lineIndex = (src) => {
   const starts = [0];
   for (let i = 0; i < src.length; i++) if (src.charCodeAt(i) === 10) starts.push(i + 1);
   return (offset) => {
@@ -70,8 +70,11 @@ const FORMATS = [
   { re: /\bdop_v1_[a-f0-9]{64}\b/g, what: 'a DigitalOcean token', svc: 'DigitalOcean', live: true },
   { re: /\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b/g, what: 'an Airtable token', svc: 'Airtable', live: true },
 ];
-const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}/g;
-const DB_URL = /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?)(?:\+\w+)?:\/\/([^:\s\/'"@]+):([^@\s'"]+)@([^\/\s'":?,]+)/g;
+// A key starts where a run of key characters starts: "\b" alone would also try from inside "sk-sk-sk-…" or
+// "xoxb-xoxb-…" at every repeat, and each try scans to the end of the run (quadratic on a hostile file).
+for (const fm of FORMATS) if (fm.re.source.startsWith('\\b')) fm.re = new RegExp(`(?<![A-Za-z0-9_\\-.])${fm.re.source.slice(2)}`, fm.re.flags);
+const JWT = /(?<![A-Za-z0-9_\-.])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}/g;
+const DB_URL = /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?)(?:\+\w+)?:\/\/([^:\s\/'"@]{1,200}):([^@\s'"]{1,200})@([^\/\s'":?,]+)/g;
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|db|postgres|mysql|redis|mongo|database|host\.docker\.internal)$/i;
 
 // Names that hold secrets (after camelCase → snake_case). Public-by-design keys are excluded below.
@@ -144,9 +147,9 @@ function trackerToken(name, value, src, file) {
 function docLines(src, lang) {
   const set = new Set();
   if (!['python', 'typescript', 'javascript', 'java', 'kotlin', 'go', 'csharp', 'php', 'rust', 'swift'].includes(lang)) return set;
-  const re = lang === 'python' ? /("""|''')[\s\S]*?\1/g : /\/\*[\s\S]*?\*\//g;
   const at = lineIndex(src);
-  for (const m of src.matchAll(re)) { const a = at(m.index), b = at(m.index + m[0].length); for (let l = a; l <= b; l++) set.add(l); }
+  const spans = lang === 'python' ? [...src.matchAll(/("""|''')[\s\S]*?\1/g)].map((m) => [m.index, m.index + m[0].length]) : blockComments(src);
+  for (const [s, e] of spans) { const a = at(s), b = at(e); for (let l = a; l <= b; l++) set.add(l); }
   return set;
 }
 
@@ -208,25 +211,41 @@ function findSecrets(src, f, out) {
 }
 
 /**
- * Code that is safe to quote, e.g. in the worksheets describe.mjs writes: every value the check above would
- * report, plus anything that only might be a secret, replaced with «hidden». Here recall beats precision:
- * hiding a harmless value costs a reader nothing. Every well-known key format and private key block (in test
- * files too), database passwords in connection addresses, any quoted value given to a name that sounds
- * secret, and long random-looking strings.
+ * maskSecrets(text, file?): text that is safe to show or store, with every value that is or might be a secret
+ * replaced with «hidden». A stable export: describe.mjs uses it on the code it quotes in worksheets, build.mjs on
+ * every description, label and note before it goes into the map, and a driver can call it on text before
+ * writing it (docs/unattended.md). Text without secrets comes back unchanged, so `maskSecrets(t) !== t` says
+ * something was hidden.
+ *
+ * Here recall beats precision: hiding a harmless value costs a reader nothing. It hides every well-known key
+ * format and private key block (in test files too), database passwords in connection addresses, any quoted
+ * value given to a name that sounds secret, long random-looking quoted strings, and the lines Health itself
+ * would flag. `file` ({ path, lang, category }) says the text is a file's source. Without it the text is
+ * treated as prose written by a person or an agent: NAME=value lines count as settings, and long random-looking
+ * strings are hidden even unquoted when they mix upper and lower case letters and digits the way generated keys
+ * do (so commit hashes, UUIDs, file paths and ordinary words stay as they are).
  */
 const HIDDEN = '«hidden»';
-const QUOTED_ASSIGN = /(["']?)([A-Za-z_][\w.-]*)\1(\s*(?::=|=>|=|:)\s*(?:[rbuRBU]{1,2})?)(["'`])([^"'`\n]*)\4/g;
-const RANDOM_LOOKING = /(["'`])([A-Za-z0-9+/=_\-]{32,})\1/g;
-export function maskSecrets(src, file = {}) {
+const QUOTED_ASSIGN = /(["']?)(?<![\w.-])([A-Za-z_][\w.-]{0,100})\1(\s*(?::=|=>|=|:)\s*(?:[rbuRBU]{1,2})?)(["'`])([^"'`\n]{0,2000})\4/g;
+const RANDOM_LOOKING = /(["'`])([A-Za-z0-9+/=_\-]{32,1000})\1/g;
+const BARE_RANDOM = /(?<![A-Za-z0-9+/=_\-])[A-Za-z0-9+/_\-]{32,1000}={0,2}(?![A-Za-z0-9+/=_\-])/g;
+const count = (s, re) => (s.match(re) || []).length;
+// generated: upper and lower case letters and digits all through it, not words (CamelCase names, paths) or a year
+const looksGenerated = (v) => count(v, /\d+/g) >= 3 && count(v, /\d/g) >= 4 && count(v, /[A-Z]/g) >= 4 && count(v, /[a-z]/g) >= 4
+  && count(v, /[A-Z][a-z]{3,}/g) < 3 && entropy(v) >= 4;
+export function maskSecrets(src, file) {
+  const prose = !file || typeof file !== 'object';
+  const where = prose ? { path: '', lang: 'env', category: 'config' } : file;
   let out = String(src)
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)/g, `${HIDDEN} (a private key)`);
   for (const fm of FORMATS) out = out.replace(fm.re, HIDDEN);
   out = out.replace(JWT, HIDDEN).replace(DB_URL, (m, user, pw) => m.replace(`:${pw}@`, `:${HIDDEN}@`));
   out = out.replace(QUOTED_ASSIGN, (m, q, name, op, q2, value) => value && SECRET_NAME.test(snake(name.split('.').pop())) ? `${q}${name}${q}${op}${q2}${HIDDEN}${q2}` : m);
   out = out.replace(RANDOM_LOOKING, (m, q, v) => /\d/.test(v) && /[A-Za-z]/.test(v) && entropy(v) >= 4 ? `${q}${HIDDEN}${q}` : m);
+  if (prose) out = out.replace(BARE_RANDOM, (v) => looksGenerated(v) ? HIDDEN : v);
   // and the lines Health itself flags (config files may leave values unquoted)
   const flagged = [];
-  try { findSecrets(out, { path: file.path || '', lang: file.lang, category: file.category }, flagged); } catch {}
+  try { findSecrets(out, { path: where.path || '', lang: where.lang, category: where.category }, flagged); } catch {}
   if (!flagged.length) return out;
   const lines = out.split('\n');
   for (const { line } of flagged) {
@@ -239,6 +258,14 @@ export function maskSecrets(src, file = {}) {
 
 // ---------- 2. who may call each endpoint ----------
 
+/**
+ * The same pattern with every open-ended \w* and [\w-]* capped at 60 characters. Patterns tested against whole
+ * handler bodies (or whole files) otherwise retry an unbounded run from every position in a long identifier.
+ */
+function bounded(re) {
+  return new RegExp(re.source.replaceAll('\\w*', '\\w{0,60}').replaceAll('[\\w-]*', '[\\w-]{0,60}'), re.flags);
+}
+
 // Decorators / middleware / dependencies whose names say "check who is calling".
 const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^guard(?:_|$)|_guard$|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
@@ -249,7 +276,7 @@ const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_ses
 const isDbDep = (name) => DB_DEPENDENCY.test(snake(name));
 const isGuardDep = (name) => isGuardName(name) && !isDbDep(name);
 // A handler body that inspects the caller itself.
-const INLINE_CHECK = /request\.headers(?:\.get)?\(?\s*\[?\s*['"](authorization|x-api-key|x-[\w-]*(token|key|secret|signature)[\w-]*)['"]|req\.headers(?:\.|\[\s*['"])(authorization|x-api-key)|\b(verify|check|require|validate|authenticate|authorize)_?\w*(auth|token|session|user|key|signature|webhook|hmac|jwt|device|staff|admin|permission|role|request|caller)\w*\s*\(|\bcurrent_user\b|get_jwt_identity|verify_jwt_in_request|compare_digest|abort\(\s*40[13]\b|,\s*40[13]\s*\)?\s*$|status(?:Code)?\s*[:=(]\s*40[13]\b|\.status\(\s*40[13]\s*\)|req\.user\b|req\.session\.user|req\.auth\b|jwt\.verify|jwtVerify|getServerSession|auth\(\)|currentUser\(|getAuth\(|auth\.getUser|getSession\(|verifyIdToken|getToken\(|\b(?:verify|check|require|validate|authenticate|authorize)\w*(?:Auth|Token|Session|Signature|Webhook|Hmac|Jwt|Secret|Permission|Role)\w*\s*\(|\bis_?(?:[Vv]alid_?)?(?:[Aa]uthorized|[Aa]uthenticated|[Ss]ignature|[Tt]oken|[Ss]ecret|[Aa]pi_?[Kk]ey)\w*\s*\(|timingSafeEqual|safeCompare|[!=]==?\s*(?:[`'"]Bearer\s+\$\{\s*)?process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)|process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)\w*\s*[!=]==?/m;
+const INLINE_CHECK = bounded(/request\.headers(?:\.get)?\(?\s*\[?\s*['"](authorization|x-api-key|x-[\w-]*(token|key|secret|signature)[\w-]*)['"]|req\.headers(?:\.|\[\s*['"])(authorization|x-api-key)|\b(verify|check|require|validate|authenticate|authorize)_?\w*(auth|token|session|user|key|signature|webhook|hmac|jwt|device|staff|admin|permission|role|request|caller)\w*\s*\(|\bcurrent_user\b|get_jwt_identity|verify_jwt_in_request|compare_digest|abort\(\s*40[13]\b|,\s*40[13]\s*\)?\s*$|status(?:Code)?\s*[:=(]\s*40[13]\b|\.status\(\s*40[13]\s*\)|req\.user\b|req\.session\.user|req\.auth\b|jwt\.verify|jwtVerify|getServerSession|auth\(\)|currentUser\(|getAuth\(|auth\.getUser|getSession\(|verifyIdToken|getToken\(|\b(?:verify|check|require|validate|authenticate|authorize)\w*(?:Auth|Token|Session|Signature|Webhook|Hmac|Jwt|Secret|Permission|Role)\w*\s*\(|\bis_?(?:[Vv]alid_?)?(?:[Aa]uthorized|[Aa]uthenticated|[Ss]ignature|[Tt]oken|[Ss]ecret|[Aa]pi_?[Kk]ey)\w*\s*\(|timingSafeEqual|safeCompare|[!=]==?\s*(?:[`'"]Bearer\s+\$\{\s*)?process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)|process\.env\.\w*(?:SECRET|TOKEN|KEY|PASSWORD)\w*\s*[!=]==?/m);
 // A Header parameter alone is NOT authentication. Count it only when the
 // handler checks that token and rejects a bad value with HTTP 401/403.
 function pyValidatedHeader(sig, body) {
@@ -260,11 +287,11 @@ function pyValidatedHeader(sig, body) {
 }
 
 const FIREBASE_CHECK = /\b\w+\.auth\b(?!\s*\()|HttpsError\(\s*["'](unauthenticated|permission-denied)["']|enforceAppCheck\s*:\s*true|\b\w+\.app\b\s*(==|!=|===|!==)\s*(undefined|null)|!\s*\w+\.app\b/;
-const SIGNATURE_CHECK =/hmac|signature|verify_?webhook|construct_?event|x-hub-signature|compare_digest|svix|webhooks?\.verify|jwt\.decode|oidc|id_token|authenticated|verify_\w*(token|request|push)/i;
+const SIGNATURE_CHECK = bounded(/hmac|signature|verify_?webhook|construct_?event|x-hub-signature|compare_digest|svix|webhooks?\.verify|jwt\.decode|oidc|id_token|authenticated|verify_\w*(token|request|push)/i);
 const NEXT_GUARD = /getServerSession|\bauth\(\)|currentUser\(|getAuth\(|auth\.getUser|supabase\.auth\.get(User|Session)|getSession\(|verifyIdToken|jwt\.verify|jwtVerify|getToken\(|clerkClient|requireAuth|requireUser|withAuth|validateRequest|headers\(\)\.get\(\s*['"]authorization|status:\s*40[13]\b/;
 // A response marked to be stored and served to everyone can't hold one caller's data.
-const PUBLIC_RESPONSE = /cache-control['"]?\]?\s*[:,=]\s*[`'"f]*[^`'"\n]*\b(?:public|s-maxage)\b/i;
-const PRIVATE_RESPONSE = /cache-control['"]?\]?\s*[:,=]\s*[`'"f]*[^`'"\n]*\b(?:private|no-store)\b/i;
+const PUBLIC_RESPONSE = /cache-control['"]?\]?\s*[:,=]\s*[`'"f]*[^`'"\n]{0,200}\b(?:public|s-maxage)\b/i;
+const PRIVATE_RESPONSE = /cache-control['"]?\]?\s*[:,=]\s*[`'"f]*[^`'"\n]{0,200}\b(?:private|no-store)\b/i;
 const NEXT_STATIC = /\bdynamic\s*=\s*['"]force-static['"]|export\s+const\s+revalidate\s*=\s*[1-9]/;
 // API routes from a library that checks access itself: Payload CMS generates these and applies its collections' access rules
 const SELF_CHECKING_ROUTES = /from\s+['"]@payloadcms\/next\/routes['"]/;
@@ -294,23 +321,23 @@ function blockAfter(lines, defIdx) {
 
 function pyRoutes(src, f, out) {
   const lines = src.split('\n');
+  const lineAt = (() => { const at = lineIndex(src); return (i) => at(i) - 1; })(); // 0-based line of an offset
   // Blueprint / app-wide before_request hooks and router-level dependencies that check the caller.
   const guardedVars = new Map();
   for (const m of src.matchAll(/^@(\w+)\.before_(?:app_)?request\s*\n(?:@.*\n)*\s*def\s+(\w+)/gm)) {
-    const defIdx = src.slice(0, m.index + m[0].length).split('\n').length - 1;
+    const defIdx = lineAt(m.index + m[0].length);
     const body = blockAfter(lines, defIdx);
     if (!/\b40[13]\b|Unauthorized|Forbidden|verify_jwt_in_request|login_required|is_authenticated|current_user/.test(body)) continue;
     guardedVars.set(m[1], m[2]);
     if (m[1] === 'app') out.push({ k: 'global-guard', framework: 'flask', name: m[2], line: defIdx + 1 });
   }
-  for (const m of src.matchAll(/^\s*(\w+)\s*=\s*(?:\w+\.)?APIRouter\(([^)]*(?:\([^)]*\)[^)]*)*)\)/gm)) {
+  for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\(((?:[^()]|\([^()]{0,500}\)){0,3000})\)/gm)) {
     const dep = /dependencies\s*=\s*\[[^\]]*Depends\(\s*([\w.]+)/.exec(m[2]);
     if (dep && isGuardDep(dep[1].split('.').pop())) guardedVars.set(m[1], dep[1]);
   }
   // FastAPI dependency aliases, `AdminUser = Annotated[Session, Depends(admin_user)]`, and the dependency
   // functions behind them. They're usually imported from a shared deps.py, so build decides repo-wide
   // which ones check the caller (see pyAliasGuards).
-  const lineAt = (i) => src.slice(0, i).split('\n').length - 1;
   const sigAt = (idx) => lines.slice(idx, idx + 15).join('\n').split(/\)\s*(->[^:]*)?:\s*$/m)[0];
   const depsIn = (text) => [...text.matchAll(/\b(?:Depends|Security)\(\s*([\w.]+)/g)].map((m) => m[1].split('.').pop());
   const typesIn = (sig) => [...new Set([...sig.matchAll(/\b\w+\s*:\s*(?:[\w.]*Annotated\[\s*)?([A-Za-z_][\w.]*)/g)].map((m) => m[1].split('.').pop()))];
@@ -343,7 +370,7 @@ function pyRoutes(src, f, out) {
   // Decorators defined here: auth-named ones, and project wrappers like `@endpoint(write=True)` whose
   // body applies an auth decorator itself. Repeat once so a wrapper of a wrapper counts too.
   const localGuards = new Set();
-  const defs = [...src.matchAll(/^def\s+(\w+)\s*\(/gm)].map((m) => { const idx = src.slice(0, m.index).split('\n').length - 1; return { name: m[1], line: idx + 1, body: blockAfter(lines, idx) }; });
+  const defs = [...src.matchAll(/^def\s+(\w+)\s*\(/gm)].map((m) => { const idx = lineAt(m.index); return { name: m[1], line: idx + 1, body: blockAfter(lines, idx) }; });
   const decoratorish = (body) => /wraps|decorat|def\s+\w+\(\s*\*args|return\s+\w+\s*$/m.test(body);
   for (let pass = 0; pass < 2; pass++) for (const d of defs) {
     if (localGuards.has(d.name) || !decoratorish(d.body)) continue;
@@ -408,9 +435,10 @@ function jsRoutes(src, f, out) {
   }
   // app.use(auth) / router.use(requireAuth) without a path guards everything registered after it
   const uses = [];
-  for (const m of src.matchAll(/\b(\w+)\.use\(\s*([^'"`)][^)]*)\)/g)) {
+  const lineOf = lineIndex(src);
+  for (const m of src.matchAll(/(?<!\w)(\w+)\.use\(\s*([^'"`)][^)]{0,500})\)/g)) {
     const names = m[2].match(/[A-Za-z_$][\w$]*/g) || [];
-    if (names.some(isGuardName)) uses.push({ v: m[1], line: src.slice(0, m.index).split('\n').length, name: names.find(isGuardName) });
+    if (names.some(isGuardName)) uses.push({ v: m[1], line: lineOf(m.index), name: names.find(isGuardName) });
   }
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
 
@@ -529,7 +557,7 @@ function findPublicEnv(src, f, out) {
     if (/^PUBLIC_/.test(m[2]) && m[1].startsWith('process')) continue; // PUBLIC_ means nothing to Node
     add(m[2], m.index);
   }
-  for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"]\$env\/(?:static|dynamic)\/public['"]/g)) for (const n of m[1].match(/[A-Z][A-Z0-9_]*/g) || []) add(n, m.index);
+  for (const m of src.matchAll(/import\s*\{([^}]{0,3000})\}\s*from\s*['"]\$env\/(?:static|dynamic)\/public['"]/g)) for (const n of m[1].match(/[A-Z][A-Z0-9_]*/g) || []) add(n, m.index);
 }
 
 // Stripe: code that acts on payment events. Without checking Stripe's signature first, anyone can send
@@ -571,8 +599,8 @@ function findCors(src, f, out) {
       if (/\borigins["']?\s*[:=]\s*(?!(['"])\*\1)/.test(opts)) continue; // a list of allowed sites (origins=… or "origins": …)
       add(m.index, 'CORS(app) with every origin allowed', /supports_credentials\s*=\s*True/.test(opts));
     }
-    const all = /^\s*CORS_(?:ALLOW_ALL_ORIGINS|ORIGIN_ALLOW_ALL)\s*=\s*True\b/m.exec(src);
-    if (all) add(all.index, 'CORS_ALLOW_ALL_ORIGINS = True', /^\s*CORS_ALLOW_CREDENTIALS\s*=\s*True\b/m.test(src));
+    const all = /^[ \t]*CORS_(?:ALLOW_ALL_ORIGINS|ORIGIN_ALLOW_ALL)\s*=\s*True\b/m.exec(src);
+    if (all) add(all.index, 'CORS_ALLOW_ALL_ORIGINS = True', /^[ \t]*CORS_ALLOW_CREDENTIALS\s*=\s*True\b/m.test(src));
   }
 }
 
@@ -587,7 +615,7 @@ const sqlName = (raw) => {
 
 function findSql(src, f, out) {
   // blank out comments, keeping line breaks so line numbers stay right
-  const s = src.replace(/--[^\n]*/g, (m) => ' '.repeat(m.length)).replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+  const s = blankBlockComments(src.replace(/--[^\n]*/g, (m) => ' '.repeat(m.length)));
   const at = lineIndex(s);
   const found = [];
   for (const m of s.matchAll(new RegExp(String.raw`\bcreate\s+(?:(temp|temporary)\s+|unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?(${SQL_NAME})`, 'gi'))) {
@@ -604,12 +632,12 @@ function findSql(src, f, out) {
     for (const t of m[1].split(/\s*,\s*/)) found.push({ i: m.index, k: 'sql-drop', table: sqlName(t) });
   }
   // a permissive rule that lets signed-out visitors add, change or delete rows: `using (true)` / `with check (true)`
-  for (const m of s.matchAll(new RegExp(String.raw`\bcreate\s+policy\s+(${SQL_ID})\s+on\s+(${SQL_NAME})([^;]*)`, 'gi'))) {
+  for (const m of s.matchAll(new RegExp(String.raw`\bcreate\s+policy\s+(${SQL_ID})\s+on\s+(${SQL_NAME})([^;]{0,4000})`, 'gi'))) {
     const body = m[3];
     if (/\bas\s+restrictive\b/i.test(body)) continue;
     const cmd = (/\bfor\s+(all|select|insert|update|delete)\b/i.exec(body)?.[1] || 'all').toLowerCase();
     if (cmd === 'select') continue;
-    const to = /\bto\s+([\w\s,"]+?)(?=\s+(?:using|with)\b|\s*$)/i.exec(body)?.[1];
+    const to = /\bto\s+([\w\s,"]{1,300}?)(?=\s+(?:using|with)\b|\s*$)/i.exec(body)?.[1];
     const roles = to ? to.split(/\s*,\s*/).map((r) => r.replace(/"/g, '').trim().toLowerCase()) : ['public'];
     if (!roles.some((r) => r === 'anon' || r === 'public')) continue;
     const yes = (clause) => new RegExp(String.raw`\b${clause}\s*\(\s*\(?\s*true\s*\)?\s*\)`, 'i').test(body);
@@ -619,7 +647,7 @@ function findSql(src, f, out) {
   for (const x of found.sort((a, b) => a.i - b.i)) { const { i, ...rest } = x; out.push({ ...rest, line: at(i) }); }
 }
 
-const USES_SUPABASE = /@supabase\/(?:supabase-js|ssr|auth-helpers[\w-]*)|from\s+supabase\s+import|^\s*import\s+supabase\b/m;
+const USES_SUPABASE = /@supabase\/(?:supabase-js|ssr|auth-helpers[\w-]*)|from\s+supabase\s+import|^[ \t]*import\s+supabase\b/m;
 
 // ---------- per-file entry point ----------
 
@@ -773,7 +801,7 @@ export function buildHealth({ graph, scan, arch, root }) {
       if (!m || !m[2]) return;
       const n = snake(m[1]);
       const known = FORMATS.some((fm) => { fm.re.lastIndex = 0; const hit = fm.re.test(m[2]); fm.re.lastIndex = 0; return hit; });
-      if (known || (SECRET_NAME.test(n) && !PUBLIC_NAME.test(n) && valueLooksReal(m[2], n)) || (/url|uri|dsn/i.test(n) && /:\/\/[^:\s\/]+:[^@\s]+@/.test(m[2]))) secretVars.push({ name: m[1], line: i + 1 });
+      if (known || (SECRET_NAME.test(n) && !PUBLIC_NAME.test(n) && valueLooksReal(m[2], n)) || (/url|uri|dsn/i.test(n) && /:\/\/[^:\s\/]{1,200}:[^@\s]{1,200}@/.test(m[2]))) secretVars.push({ name: m[1], line: i + 1 });
     });
     if (!secretVars.length) continue;
     const repoAbs = f.repo ? path.join(root, f.repo) : root;
@@ -1287,7 +1315,7 @@ export function buildHealth({ graph, scan, arch, root }) {
       try { src = fs.readFileSync(path.join(root, f.path), 'utf8'); } catch { continue; }
       for (const tok of new Set(src.match(/[\w$-]+/g) || [])) { const p = want.get(tok); if (p && p !== f.path) mentioned.add(p); }
     }
-    const unused = candidates.filter((f) => !mentioned.has(f.p) && !LOADED_BY_NAME.test(readSource(f.p).split('\n', 20).join('\n')));
+    const unused = candidates.filter((f) => !mentioned.has(f.p) && !LOADED_BY_NAME.test(readSource(f.p).split('\n', 20).map((l) => l.slice(0, 300)).join('\n')));
     // A module where most files look unused is more likely loaded in a way we can't see; stay quiet.
     const byNode = new Map();
     for (const f of unused) { if (!byNode.has(f.n)) byNode.set(f.n, []); byNode.get(f.n).push(f); }
@@ -1384,7 +1412,7 @@ function firebaseRules(src, now) {
   const at = lineIndex(s);
   const matches = [...s.matchAll(/\bmatch\s+(\/\S*)\s*\{/g)].map((m) => ({ i: m.index, path: m[1] }));
   const out = [];
-  for (const m of s.matchAll(/\ballow\s+([a-z][a-z,\s]*?)\s*(?::\s*if\s+([^;]+?))?\s*;/g)) {
+  for (const m of s.matchAll(/\ballow\s+([a-z][a-z,\s]{0,200}?)\s*(?::\s*if\s+([^;]{1,4000}?))?\s*;/g)) {
     const ops = m[1].split(/[\s,]+/).filter(Boolean);
     const cond = (m[2] || 'true').trim().replace(/\s+/g, ' ');
     const end = cond === 'true' ? null : testModeEnd(cond);
@@ -1410,6 +1438,7 @@ function firebaseRtdbRules(src, now) {
     const cond = m[2] === 'true' ? 'true' : (m[3] || '').trim();
     const end = cond === 'true' ? null : testModeEnd(cond);
     if (cond !== 'true' && !end) continue;
+    if (out.length >= 100) break; // each one rereads the file up to it; real rules files have a handful
     // how deep it sits: { "rules": { ".read": … } } is the whole database
     let depth = 0;
     for (let i = 0; i < m.index; i++) { if (s[i] === '{') depth++; else if (s[i] === '}') depth--; }

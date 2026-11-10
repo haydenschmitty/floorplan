@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, parseArgs, mapDir, unattendedMode, printJson } from './lib/common.mjs';
+import { compileGlob, globProblem, parseArgs, mapDir, unattendedMode, printJson } from './lib/common.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
@@ -78,7 +78,8 @@ try {
 const scan = JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'scan.json'), 'utf8'));
 
 const include = Array.isArray(arch.include) ? arch.include : ['code'];
-const ignore = (arch.ignore || []).map(compileGlob);
+// a pattern that isn't valid is left out here; build.mjs (run below) reports it by name
+const ignore = (Array.isArray(arch.ignore) ? arch.ignore : []).filter((g) => !globProblem(g)).map(compileGlob);
 const now = new Map(scan.files.filter((f) => include.includes(f.category) && !ignore.some((g) => g.test(f.path))).map((f) => [f.path, f]));
 const before = new Map(old.files.map((f) => [f.p, f]));
 

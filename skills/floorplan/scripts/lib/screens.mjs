@@ -16,6 +16,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { blankBlockComments } from './common.mjs';
 
 const P = path.posix;
 const JS_LANGS = new Set(['typescript', 'javascript', 'vue', 'svelte', 'astro']);
@@ -127,7 +128,11 @@ const pickComponent = (names) => names.filter((n) => !WRAPPER.test(n)).pop() || 
 /** local name -> import spec, including default imports and lazy(() => import('...')) bindings. */
 function importBindings(code) {
   const map = new Map();
-  for (const m of code.matchAll(/\bimport\s+(?:type\s+)?([A-Za-z_$][\w$]*)?\s*,?\s*(?:\{([^}]*)\})?\s*(?:\*\s+as\s+([A-Za-z_$][\w$]*))?\s*from\s*["']([^"']+)["']/g)) {
+  // the clause is found first and taken apart after: one pattern with several optional parts separated by \s*
+  // tries every way of splitting a long run of spaces between them
+  for (const c of code.matchAll(/\bimport\s+(?!["'])([^;'"]{1,2000}?)\s*from\s*["']([^"']+)["']/g)) {
+    const clause = c[1].trim().replace(/^type\s+/, '');
+    const m = [c[0], /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause)?.[1], /\{([^}]*)\}/.exec(clause)?.[1], /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause)?.[1], c[2]];
     if (m[1]) map.set(m[1], m[4]);
     if (m[3]) map.set(m[3], m[4]);
     for (const part of (m[2] || '').split(',')) {
@@ -139,10 +144,10 @@ function importBindings(code) {
   return map;
 }
 
-const ROUTER_SIGNAL = /createBrowserRouter|createHashRouter|createMemoryRouter|createRoutesFromElements|useRoutes|RouterProvider|createRouter|new\s+(?:Vue)?Router\s*\(|RouteRecordRaw|RouteObject|provideRouter|RouterModule|Routes\s*=\s*\[|\broutes\s*(?::\s*[\w<>[\]\s]+)?=\s*\[/;
+const ROUTER_SIGNAL = /createBrowserRouter|createHashRouter|createMemoryRouter|createRoutesFromElements|useRoutes|RouterProvider|createRouter|new\s+(?:Vue)?Router\s*\(|RouteRecordRaw|RouteObject|provideRouter|RouterModule|Routes\s*=\s*\[|\broutes\s*(?::\s*[\w<>[\]][\w<>[\] \t]{0,200})?=\s*\[/;
 
 function routerScreens(src, file) {
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, pre) => pre + ' '.repeat(m.length - pre.length));
+  const code = blankBlockComments(src).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, pre) => pre + ' '.repeat(m.length - pre.length));
   const out = [];
   const bindings = importBindings(code);
   const nests = new Map(); // hint -> nesting depth; a layout and its index child share a URL, the child wins
@@ -165,6 +170,7 @@ function routerScreens(src, file) {
       if (end < 0) continue;
       const args = [...code.slice(m.index, end).matchAll(/["'`]([^"'`]*)["'`]/g)].map((x) => x[1]);
       calls.push({ type: m[1], start: m.index, end, args });
+      if (calls.length >= MAX_RECORDS) break;
     }
     for (const c of calls) {
       const parents = calls.filter((o) => o !== c && o.start < c.start && o.end > c.end && (o.type === 'route' || o.type === 'prefix')).sort((a, b) => a.start - b.start);
@@ -218,6 +224,7 @@ function routerScreens(src, file) {
       if (close < 0) continue;
       if (recs.some((r) => r.open === open)) { const r = recs.find((x) => x.open === open); if (m[2] != null) r.path = m[2]; continue; }
       recs.push({ open, close, path: m[2] ?? null, index: m[2] == null });
+      if (recs.length >= MAX_RECORDS) break;
     }
     for (const r of recs) {
       const own = maskNested(code.slice(r.open + 1, r.close));
@@ -241,9 +248,13 @@ function routerScreens(src, file) {
 }
 
 /** Index of the '>' that closes a JSX opening tag starting at i (skips braces and strings). */
+// How far the brace and tag matchers below look: a real tag or route object is far shorter, and an unclosed one
+// in a large file would otherwise be scanned to the end from every place it's tried.
+const REACH = 20000;
+const MAX_RECORDS = 500;
 function tagEnd(s, i) {
   let depth = 0, q = null;
-  for (; i < s.length; i++) {
+  for (const stop = Math.min(s.length, i + REACH); i < stop; i++) {
     const c = s[i];
     if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
     if (c === '"' || c === "'" || c === '`') q = c;
@@ -255,7 +266,7 @@ function tagEnd(s, i) {
 }
 function matchClose(s, i, open, close) {
   let depth = 0, q = null;
-  for (; i < s.length; i++) {
+  for (const stop = Math.min(s.length, i + REACH); i < stop; i++) {
     const c = s[i];
     if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
     if (c === '"' || c === "'" || c === '`') q = c;
@@ -266,7 +277,7 @@ function matchClose(s, i, open, close) {
 }
 function enclosingBrace(s, i) {
   let depth = 0;
-  for (let j = i - 1; j >= 0; j--) {
+  for (let j = i - 1; j >= 0 && j > i - REACH; j--) {
     const c = s[j];
     if (c === '}' || c === ']') depth++;
     else if (c === '{' || c === '[') { if (depth === 0) return c === '{' ? j : -1; depth--; }

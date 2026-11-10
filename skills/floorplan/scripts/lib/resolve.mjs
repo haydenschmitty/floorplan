@@ -152,7 +152,7 @@ export function createResolver(root, files) {
       const hit = tryPyModule(base);
       if (hit) return { file: hit };
       // `import a.b.c` where only a/b exists
-      const parts = modPath.split('/');
+      const parts = modPath.split('/').slice(0, 20); // no real module path is deeper; each try joins them again
       for (let k = parts.length - 1; k >= 1; k--) {
         const h = tryPyModule((r ? r + '/' : '') + parts.slice(0, k).join('/'));
         if (h && targets.length === 0) { targets.push(h); break; }
@@ -204,7 +204,7 @@ export function createResolver(root, files) {
     if (segs[0] === 'crate') {
       const cr = crateRoots.find((r) => from.startsWith(r + '/'));
       if (!cr) return { unresolved: true };
-      const rest = segs.slice(1);
+      const rest = segs.slice(1, 21);
       for (let k = rest.length; k >= 1; k--) {
         const b = `${cr}/${rest.slice(0, k).join('/')}`;
         for (const c of [b + '.rs', b + '/mod.rs']) if (fileSet.has(c)) return { file: c };
@@ -221,7 +221,7 @@ export function createResolver(root, files) {
   const resolveJvm = (from, spec) => {
     if (jvmIndex.has(spec)) return { file: jvmIndex.get(spec) };
     if (/^(java|javax|kotlin|scala|jdk|sun)\./.test(spec)) return { builtin: true };
-    const parts = spec.split('.');
+    const parts = spec.split('.').slice(0, 20);
     for (let k = parts.length - 1; k >= 2; k--) if (jvmIndex.has(parts.slice(0, k).join('.'))) return { file: jvmIndex.get(parts.slice(0, k).join('.')) };
     return { external: parts.slice(0, Math.min(3, parts.length - 1)).join('.'), eco: 'maven' };
   };

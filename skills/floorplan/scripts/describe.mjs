@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs, fmtNum, mapDir, toPosix, unattendedMode, printJson } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
-import { maskSecrets } from './lib/health.mjs';
+import { maskSecrets, lineIndex } from './lib/health.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 unattendedMode(args);
@@ -191,18 +191,21 @@ if (listed.size && !g.meta?.blueprint) {
     if (tail.includes('/')) { const m = cands.filter((c) => c === tail || c.endsWith('/' + tail)); return m.length === 1 ? m[0] : null; }
     return cands.length === 1 ? cands[0] : null; // a bare file name counts only when no other file has it
   };
-  const FILE_TOKEN = /[\w@.\-/]*[\w-]\.(?:py|js|mjs|cjs|ts|tsx|jsx|sh|bash|rb|go|php|ps1|pl|java|kt|rs|sql|swift|dart|cs)\b/g;
+  // (starts where a run of path characters starts, and is at most 300 long: unanchored, it would rescan a long
+  // run of them from every position)
+  const FILE_TOKEN = /(?<![\w@.\-/])[\w@.\-/]{0,300}[\w-]\.(?:py|js|mjs|cjs|ts|tsx|jsx|sh|bash|rb|go|php|ps1|pl|java|kt|rs|sql|swift|dart|cs)\b/g;
   const PY_MODULE = /\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_][\w.]*)/g;
   for (const f of scanFiles) {
     if ((f.category !== 'code' && f.category !== 'config') || !readable(f)) continue;
     let text;
     try { text = fs.readFileSync(path.join(root, f.path), 'utf8'); } catch { continue; }
     const hits = [...text.matchAll(FILE_TOKEN)].map((m) => [m[0], m.index]);
+    const lineOf = lineIndex(text);
     for (const m of text.matchAll(PY_MODULE)) hits.push([m[1].replace(/\./g, '/') + '.py', m.index]);
     for (const [token, at] of hits) {
       const target = resolve(token, f.path);
       if (!target || target === f.path || !listed.has(target) || importers.get(target)?.has(f.path)) continue;
-      add(mentions, target, { from: f.path, line: text.slice(0, at).split('\n').length });
+      add(mentions, target, { from: f.path, line: lineOf(at) });
     }
   }
 }

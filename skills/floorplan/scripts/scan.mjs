@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { discover, listGitFiles, explainGitError, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson } from './lib/common.mjs';
+import { discover, listGitFiles, explainGitError, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson, skippedConfigs, MAX_CONFIG_BYTES } from './lib/common.mjs';
 import { extract, callableCallsVia } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
@@ -176,6 +176,8 @@ const hosts = [];
 for (const f of files) for (const h of f.hosts || []) hosts.push({ from: f.path, host: h.host, line: h.line });
 
 // ---------- 5. write scan.json ----------
+// config files too big to be real ones (a tsconfig.json padded to megabytes) are noted, not read
+for (const c of skippedConfigs) found.skipped.push({ path: toPosix(path.relative(root, c.path)), reason: `config file over ${MAX_CONFIG_BYTES / 1024 / 1024} MB, not read (${Math.round(c.bytes / 1024)} KB)` });
 const scan = {
   version: 1,
   generatedAt: new Date().toISOString(),
@@ -224,6 +226,8 @@ const wts = found.skipped.filter((s) => s.reason.includes('worktree'));
 if (wts.length) line(`  skipped ${wts.length} duplicate worktree(s), e.g. ${wts.slice(0, 3).map((s) => s.path).join(', ')}`);
 const dumps = found.skipped.filter((s) => s.reason.includes('data dump'));
 if (dumps.length) line(`  skipped ${dumps.length} large non-git dir(s), e.g. ${dumps.slice(0, 2).map((s) => s.path).join(', ')}`);
+const bigConfigs = found.skipped.filter((s) => s.reason.startsWith('config file over'));
+if (bigConfigs.length) line(`  didn't read ${bigConfigs.length} config file(s) over ${MAX_CONFIG_BYTES / 1024 / 1024} MB (import aliases in them aren't followed): ${bigConfigs.slice(0, 3).map((s) => s.path).join(', ')}`);
 line();
 if (problems.length) {
   line(`! PROBLEMS (${problems.length}): the map will be missing files until these are fixed`);

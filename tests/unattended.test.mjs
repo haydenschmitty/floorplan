@@ -591,6 +591,29 @@ test('build --json reports errors as data, and exits 1 like the plain build', ()
   } finally { cleanup(p); }
 });
 
+test('maskSecrets is a stable export a driver can call on text before writing it (docs/unattended.md)', async () => {
+  const { maskSecrets } = await lib('health.mjs');
+  assert.equal(typeof maskSecrets, 'function');
+  const key = ['sk', 'live', crypto.randomBytes(18).toString('hex')].join('_');
+  const text = `Charges cards with the key ${key}.`;
+  assert.equal(maskSecrets(text), 'Charges cards with the key «hidden».', 'the secret becomes «hidden», the rest stays');
+  const plain = 'Charges cards through Stripe and records the receipt.';
+  assert.equal(maskSecrets(plain), plain, 'text without secrets comes back unchanged, so a driver can compare');
+  // and a build that finds one says where, as data, never the value
+  const p = shopApp();
+  try {
+    const arch = readJson(path.join(p, 'floorplan', 'architecture.json'));
+    arch.nodes[0].summary = text;
+    writeJson(path.join(p, 'floorplan', 'architecture.json'), arch);
+    run('scan.mjs', p);
+    const r = unattended('build.mjs', p);
+    assert.equal(r.code, 0, 'a warning, never an error');
+    assert.deepEqual(r.json.secretsHidden, [{ file: 'architecture.json', field: 'nodes[0].summary' }]);
+    assert.match(r.json.warnings[0], /^secret-looking text in architecture\.json \(nodes\[0\]\.summary\)/);
+    assert.ok(!r.out.includes(key));
+  } finally { cleanup(p); }
+});
+
 test('--json and --unattended never swallow the codebase root that follows them', async () => {
   const { parseArgs } = await lib('common.mjs');
   assert.deepEqual(parseArgs(['--json', '/work/app', '--unattended', '--days', '3']), { _: ['/work/app'], json: true, unattended: true, days: '3' });

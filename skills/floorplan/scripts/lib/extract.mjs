@@ -27,7 +27,8 @@ const stripCStyle = (src) => {
       continue;
     }
     let end = -1;
-    if (c === '/' && src[i + 1] === '*') { end = src.indexOf('*/', i + 2); if (end >= 0) end += 2; }
+    // an unclosed /* runs to the end (looking for */ again from every later /* would take quadratic time)
+    if (c === '/' && src[i + 1] === '*') { end = src.indexOf('*/', i + 2); end = end < 0 ? src.length : end + 2; }
     else if (c === '/' && src[i + 1] === '/' && !/[:\\]/.test(src[i - 1] || '')) { end = src.indexOf('\n', i); if (end < 0) end = src.length; }
     if (end >= 0) { out += blank(src.slice(i, end)); i = end; continue; }
     out += c;
@@ -59,7 +60,7 @@ function tableHandler(raw) {
   // lambda e, s: get_path(s, e)  ·  (req) => getPath(req)  ·  async function (req) { return getPath(req) }
   const inline = /^(?:lambda\b[^:]*:|(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|(?:async\s+)?function\b[^{]*\{)([\s\S]*)$/.exec(v);
   if (inline) {
-    const call = [...inline[1].matchAll(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g)].map((m) => last(m[1])).find((n) => !NOT_A_HANDLER.test(n));
+    const call = [...inline[1].matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g)].map((m) => last(m[1])).find((n) => !NOT_A_HANDLER.test(n));
     return { handler: call || null };
   }
   // requireAuth(listOrders), login_required(views.orders): the wrapped function is the handler
@@ -137,6 +138,7 @@ const ASSIGN = /(?:\b(?:const|let|var)\s+|^\s*(?:self\.|this\.)?)([A-Za-z_$][\w$
 function variableUse(lines, i, name) {
   const use = new RegExp(`(?:\\.(get|post|put|patch|delete|head|request)\\s*(?:<[^>]*>)?\\s*\\(|\\b(?:fetch|axios|ky|got|request|urlopen)\\s*\\(|\\brequests\\.(get|post|put|patch|delete)\\s*\\()\\s*${name}\\b`, 'i');
   for (let j = i + 1; j < Math.min(lines.length, i + 10); j++) {
+    if (lines[j].length > 500) continue; // as in extractCalls: long lines are minified code or data
     const m = use.exec(lines[j]);
     if (!m) continue;
     const verb = (m[1] && m[1].toLowerCase() !== 'request' ? m[1] : m[2]) || METHOD_OPT.exec(lines.slice(j, j + 4).join(' '))?.[1] || '';
@@ -196,16 +198,18 @@ function extractJs(src, filePath) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
   const imports = [];
-  for (const m of all(/(?:^|[;\n}])\s*import\s+(?!\()((?:type\s+)?[^'";]*?)\s+from\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[2], ...parseImportClause(m[1]), line: at(m.index) });
-  for (const m of all(/(?:^|[;\n])\s*import\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[1], names: [], line: at(m.index) });
-  for (const m of all(/\bexport\s+(?:type\s+)?(\*(?:\s+as\s+\w+)?|\{[^}]*\})\s+from\s+["']([^"'\n]+)["']/g, code)) {
+  // (patterns here start at a line, ; or } and keep their gaps bounded: an unbounded \s* or [^…]* tried from
+  // every blank line or every "{" of a large file takes quadratic time)
+  for (const m of all(/(?:^|[;\n}])[ \t]*import\s+(?!\()((?:type\s+)?[^'";]{0,2000}?)\s+from\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[2], ...parseImportClause(m[1]), line: at(m.index) });
+  for (const m of all(/(?:^|[;\n])[ \t]*import\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[1], names: [], line: at(m.index) });
+  for (const m of all(/\bexport\s+(?:type\s+)?(\*(?:\s+as\s+\w+)?|\{[^}]{0,2000}\})\s+from\s+["']([^"'\n]+)["']/g, code)) {
     // `export { a as b } from` → exported { b: 'a' }, the names this file passes on
     const clause = m[1].startsWith('{') ? parseImportClause(m[1]) : null;
     imports.push({ spec: m[2], names: clause ? clause.names : [], ...(clause ? { exported: clause.locals } : {}), line: at(m.index), reexport: true });
   }
   for (const m of all(/\brequire\(\s*["']([^"'\n]+)["']\s*\)/g, code)) {
     // `const usersRouter = require('./users')` / `const { a, b: c } = require(…)` bind local names
-    const before = code.slice(code.lastIndexOf('\n', m.index) + 1, m.index);
+    const before = code.slice(Math.max(code.lastIndexOf('\n', m.index) + 1, m.index - 300), m.index);
     const bind = /(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?$/.exec(before);
     const locals = {};
     if (bind?.[1].startsWith('{')) for (const part of bind[1].slice(1, -1).split(',')) { const [orig, alias] = part.trim().split(/\s*:\s*/); if (orig) locals[(alias || orig).trim()] = orig.trim(); }
@@ -241,17 +245,18 @@ function extractJs(src, filePath) {
   // Express / Koa / Hono style routes and mounts
   const routes = [];
   const mounts = [];
-  for (const m of all(/\b([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|all|options|head)\(\s*["'`](\/[^"'`]*)["'`]/g, code)) {
+  for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|all|options|head)\(\s*["'`](\/[^"'`]*)["'`]/g, code)) {
     if (!/^(app|server|fastify|hono|routes?|[a-z]*Router|router)$/.test(m[1])) continue;
     routes.push({ method: m[2].toUpperCase(), path: m[3], var: m[1], line: at(m.index) });
   }
-  for (const m of all(/\b([A-Za-z_$][\w$]*)\.(use|route)\(\s*["'`](\/[^"'`]*)["'`]\s*,([^\n;]*)/g, code)) {
+  for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.(use|route)\(\s*["'`](\/[^"'`]*)["'`]\s*,([^\n;]*)/g, code)) {
     const req = /require\(\s*["']([^"']+)["']\s*\)/.exec(m[4]);
     const mw = (m[4].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][w$.]*$/.test(s))).map((s) => s.split('.').pop());
     if (req) { mounts.push({ prefix: m[3], spec: req[1], line: at(m.index), ...(mw.length ? { mw } : {}) }); continue; }
     const args = m[4].replace(/\)\s*$/, '').split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][\w$.]*$/.test(s));
     if (args.length) mounts.push({ prefix: m[3], var: args[args.length - 1], line: at(m.index), ...(args.length > 1 ? { mw: args.slice(0, -1).map((s) => s.split('.').pop()) } : {}) });
   }
+  let importedLocals = null; // the names this file imports, built when first needed
   // Fastify plugins: app.register(ticketRoutes, { prefix: '/api/tickets' }), or register(import('./x.js'), …).
   // A plugin registered with no prefix still sits under its parent's, so it's a mount with an empty one.
   // Only an imported plugin counts: one defined in this file would put its prefix on every route here.
@@ -260,7 +265,7 @@ function extractJs(src, filePath) {
     const prefix = /\bprefix\s*:\s*["'`](\/[^"'`$]*)["'`]/.exec(opts)?.[1] ?? (/\bprefix\s*:/.test(opts) ? null : '');
     if (prefix == null) continue;
     if (m[1]) mounts.push({ prefix, spec: m[1], line: at(m.index) });
-    else if (imports.some((i) => i.locals && Object.hasOwn(i.locals, m[2]))) mounts.push({ prefix, var: m[2], line: at(m.index) });
+    else if ((importedLocals ??= new Set(imports.flatMap((i) => (i.locals ? Object.keys(i.locals) : [])))).has(m[2])) mounts.push({ prefix, var: m[2], line: at(m.index) });
   }
 
   // Next.js app/pages API routes, derived from the file path
@@ -290,7 +295,7 @@ function extractJs(src, filePath) {
 // `export const approveItem = onCall(…)`, `exports.sign = functions.region('eu').https.onRequest(…)`,
 // `export const nightly = onSchedule('every day 03:00', …)`: the exported name, the chain before the
 // trigger (v1 style `functions.firestore.document('x')`), and the trigger itself
-const FIREBASE_FN = /(?:\bexport\s+(?:const|let|var)\s+|(?:^|[;\n])[ \t]*(?:const|let|var)\s+|\b(?:module\.)?exports\.)([A-Za-z_$][\w$]*)\s*(?::[^=\n]*)?=\s*((?:[A-Za-z_$][\w$]*(?:\([^()]*\))?\s*\.\s*)*)((?:on|before)[A-Z]\w*)\s*(?:<[^;]{0,300}?>)?\s*\(/g;
+const FIREBASE_FN = /(?:\bexport\s+(?:const|let|var)\s+|(?:^|[;\n])[ \t]*(?:const|let|var)\s+|\b(?:module\.)?exports\.)([A-Za-z_$][\w$]*)\s*(?::[^=\n]{0,300})?=\s*((?:[A-Za-z_$][\w$]*(?:\([^()]*\))?\s*\.\s*)*)((?:on|before)[A-Z]\w*)\s*(?:<[^;]{0,300}?>)?\s*\(/g;
 const FIRST_STRING = /["'`]([^"'`\n]{1,120})["'`]/;
 
 /**
@@ -324,7 +329,10 @@ function firebaseFunctions(code, at, routes, mounts) {
 // httpsCallable(functions, 'approveItem'), httpsCallable<Req, Res>(getFunctions(app), 'x') and the
 // older functions.httpsCallable('x'); the generic arguments may span lines
 const CALLABLE = /\bhttpsCallable\s*(?:<[^;]{0,300}?>)?\s*\(\s*(?:[^,()'"`]*(?:\([^()]*\))?\s*,\s*)?(["'`])([\w-]+)\1/g;
-const DEFS = /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(([^)]*)\)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:<[^>]*>\s*)?\(([^)]*)\)\s*(?::\s*[^=]+?)?=>/g;
+const DEFS = /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]{0,300}>)?\s*\(([^)]{0,1000})\)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:<[^>]{0,300}>\s*)?\(([^)]{0,1000})\)\s*(?::\s*[^=]{1,300}?)?=>/g;
+// helpers that wrap fetch or httpsCallable: past this many in one file, the rest are left out (each is
+// followed through the whole file)
+const MAX_WRAPPERS = 40;
 /** A callable's name as a path: grouped functions deploy as `group-name`, so 'items-approve' → /items/approve. */
 const callablePath = (name) => '/' + name.split('-').filter(Boolean).join('/');
 
@@ -343,16 +351,16 @@ function callableCalls(code, at) {
     const body = code.slice(m.index + m[0].length, m.index + m[0].length + 400);
     if (!new RegExp(`\\bhttpsCallable\\s*(?:<[^;]{0,300}?>)?\\s*\\(\\s*(?:[^,()'"\`]*(?:\\([^()]*\\))?\\s*,\\s*)?${p0}\\s*[,)]`).test(body)) continue;
     wrappers.push(name);
-    calls.push(...callsVia(code, name, at(m.index)));
+    calls.push(...callsVia(code, name, at(m.index), at));
+    if (wrappers.length >= MAX_WRAPPERS) break;
   }
   return { calls, wrappers };
 }
 
 /** Uses of a callable helper: `callFunction('approveItem', data)` → CALL /approveItem. */
-function callsVia(code, name, skipLine = 0) {
+function callsVia(code, name, skipLine = 0, at = lineIndex(code)) {
   const out = [];
   const re = new RegExp(`(?<![\\w$.])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:<[^;]{0,300}?>)?\\s*\\(\\s*(["'\`])([\\w-]+)\\1`, 'g');
-  const at = lineIndex(code);
   for (const m of code.matchAll(re)) {
     const line = at(m.index);
     if (line !== skipLine) out.push({ path: callablePath(m[2]), method: 'CALL', line });
@@ -371,6 +379,7 @@ export const callableCallsVia = (src, localName) => callsVia(stripCStyle(src), l
  */
 function wrapperCalls(code, at) {
   const out = [];
+  let flat = null, found = 0; // the file's lines, flattened once for every helper
   for (const m of code.matchAll(DEFS)) {
     const name = m[1] || m[3];
     const params = (m[2] ?? m[4]).split(',').map((p) => p.trim()).filter(Boolean);
@@ -385,9 +394,12 @@ function wrapperCalls(code, at) {
     const defMethod = (methodIdx > 0 && /=\s*["'`](\w+)["'`]/.exec(params[methodIdx])?.[1]) || METHOD_CALL.exec(body)?.[1] || 'GET';
     const callRe = new RegExp(`\\b${name}\\s*(?:<[^>]*>)?\\(\\s*([\"'\`])((?:\\\\.|(?!\\1)[^\\\\\\n])*)\\1([^\\n]*)`, 'g');
     const defLine = at(m.index);
-    code.split('\n').forEach((raw, i) => {
-      if (i + 1 === defLine) return; // the definition itself
-      for (const c of flattenTemplates(raw).matchAll(callRe)) {
+    if (++found > MAX_WRAPPERS) break;
+    flat ??= code.split('\n').map((raw) => (raw.length > 2000 ? '' : flattenTemplates(raw)));
+    if (!code.includes(name)) continue;
+    flat.forEach((line, i) => {
+      if (i + 1 === defLine || !line.includes(name)) return; // the definition itself, or no call on this line
+      for (const c of line.matchAll(callRe)) {
         const n = normalizeCallLiteral(tpl + c[2]);
         if (!n?.path || n.host) continue;
         const verb = methodIdx > 0 ? /["'`](GET|POST|PUT|PATCH|DELETE)["'`]/i.exec(c[3])?.[1] : null;
@@ -415,7 +427,7 @@ function extractPy(src) {
       if (mod) imports.push({ spec: mod.trim(), names: [], alias: alias?.trim(), line: at(m.index) });
     }
   }
-  for (const m of all(/^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([^)]*\)|[^\n]+)/gm, code)) {
+  for (const m of all(/^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([^)]{0,5000}\)|[^\n]+)/gm, code)) {
     const names = [];
     const aliases = {};
     for (const part of m[2].replace(/[()\\]/g, ' ').split(',')) {
@@ -432,7 +444,7 @@ function extractPy(src) {
 
   const routes = [];
   const routers = {};
-  for (const m of all(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:\w+\.)?(Blueprint|APIRouter|Router)\(([^)]*)\)/gm, code)) {
+  for (const m of all(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:\w+\.)?(Blueprint|APIRouter|Router)\(([^)]{0,2000})\)/gm, code)) {
     routers[m[1]] = /(?:url_)?prefix\s*=\s*["']([^"']*)["']/.exec(m[3])?.[1] || '';
   }
   for (const m of all(/^[ \t]*@([A-Za-z_]\w*)\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[rf]?["']([^"']*)["']([^\n]*)/gm, code)) {
@@ -467,7 +479,7 @@ function extractPy(src) {
     mounts.push({ var: m[2], prefix: /(?:url_)?prefix\s*=\s*["']([^"']*)["']/.exec(args)?.[1] || '', line: at(m.index), ...(mw.length ? { mw } : {}) });
   }
 
-  const routeLine = /^\s*@\w+\.(route|get|post|put|patch|delete)\(/;
+  const routeLine = /^[ \t]*@\w+\.(route|get|post|put|patch|delete)\(/;
   const { calls, hosts } = extractCalls(code, at, { skip: routeLine });
   return { imports, symbols, routes, mounts, calls, hosts, routers };
 }
@@ -479,11 +491,11 @@ function extractGo(src) {
   const at = lineIndex(code);
   const imports = [];
   for (const m of all(/^import\s+(?:[\w.]+\s+)?"([^"]+)"/gm, code)) imports.push({ spec: m[1], names: [], line: at(m.index) });
-  for (const block of all(/^import\s*\(([\s\S]*?)\)/gm, code)) {
+  for (const block of all(/^import\s*\(([^)]{0,20000})\)/gm, code)) {
     for (const m of all(/(?:[\w.]+\s+)?"([^"]+)"/g, block[1])) imports.push({ spec: m[1], names: [], line: at(block.index) });
   }
   const symbols = [];
-  for (const m of all(/^func\s+(?:\([^)]*\)\s*)?([A-Z]\w*)/gm, code)) symbols.push({ name: m[1], kind: 'function', line: at(m.index) });
+  for (const m of all(/^func\s+(?:\([^)\n]{0,300}\)\s*)?([A-Z]\w*)/gm, code)) symbols.push({ name: m[1], kind: 'function', line: at(m.index) });
   for (const m of all(/^type\s+([A-Z]\w*)\s+(struct|interface)?/gm, code)) symbols.push({ name: m[1], kind: m[2] || 'type', line: at(m.index) });
   const routes = [];
   for (const m of all(/\.(HandleFunc|Handle|GET|POST|PUT|PATCH|DELETE|Get|Post|Put|Patch|Delete)\(\s*"(\/[^"]*)"/g, code)) {
@@ -501,8 +513,8 @@ function extractRust(src) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
   const imports = [];
-  for (const m of all(/^[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/gm, code)) imports.push({ spec: m[1], kind: 'mod', names: [], line: at(m.index) });
-  for (const m of all(/^[ \t]*(?:pub(?:\([^)]*\))?\s+)?use\s+([\w:]+)/gm, code)) imports.push({ spec: m[1], kind: 'use', names: [], line: at(m.index) });
+  for (const m of all(/^[ \t]*(?:pub(?:\([^)\n]{0,60}\))?\s+)?mod\s+(\w+)\s*;/gm, code)) imports.push({ spec: m[1], kind: 'mod', names: [], line: at(m.index) });
+  for (const m of all(/^[ \t]*(?:pub(?:\([^)\n]{0,60}\))?\s+)?use\s+([\w:]+)/gm, code)) imports.push({ spec: m[1], kind: 'use', names: [], line: at(m.index) });
   const symbols = [];
   for (const m of all(/^[ \t]*pub\s+(?:async\s+)?(fn|struct|enum|trait|type|const|static)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1] === 'fn' ? 'function' : m[1], line: at(m.index) });
   const routes = [];
@@ -517,12 +529,12 @@ function extractRust(src) {
 function extractJvm(src) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
-  const pkg = /^\s*package\s+([\w.]+)/m.exec(code)?.[1] || null;
-  const imports = all(/^\s*import\s+(?:static\s+)?([\w.*]+)/gm, code).map((m) => ({ spec: m[1], names: [], line: at(m.index) }));
+  const pkg = /^[ \t]*package\s+([\w.]+)/m.exec(code)?.[1] || null;
+  const imports = all(/^[ \t]*import\s+(?:static\s+)?([\w.*]+)/gm, code).map((m) => ({ spec: m[1], names: [], line: at(m.index) }));
   const symbols = [];
-  for (const m of all(/^\s*(?:public\s+|internal\s+)?(?:abstract\s+|final\s+|data\s+|sealed\s+|open\s+)*(class|interface|enum|record|object)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
+  for (const m of all(/^[ \t]*(?:public\s+|internal\s+)?(?:abstract\s+|final\s+|data\s+|sealed\s+|open\s+)*(class|interface|enum|record|object)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
   const routes = [];
-  const classPrefix = /@RequestMapping\(\s*(?:value\s*=\s*|path\s*=\s*)?"([^"]*)"[^)]*\)\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:public\s+)?class/.exec(code)?.[1] || '';
+  const classPrefix = /@RequestMapping\(\s*(?:value\s*=\s*|path\s*=\s*)?"([^"]*)"[^)]{0,500}\)\s*(?:@\w+(?:\([^)]{0,500}\))?\s*){0,20}(?:public\s+)?class/.exec(code)?.[1] || '';
   for (const m of all(/@(Get|Post|Put|Patch|Delete|Request)Mapping\(\s*(?:value\s*=\s*|path\s*=\s*)?"([^"]*)"/g, code)) {
     if (m[1] === 'Request' && m[2] === classPrefix) continue;
     routes.push({ method: m[1] === 'Request' ? 'ANY' : m[1].toUpperCase(), path: classPrefix + m[2], var: null, line: at(m.index) });
@@ -538,12 +550,12 @@ function extractSimple(src, lang) {
   const at = lineIndex(code);
   const imports = [];
   if (lang === 'ruby') for (const m of all(/\brequire_relative\s*\(?\s*["']([^"']+)["']/g, code)) imports.push({ spec: './' + m[1].replace(/^\.\//, ''), names: [], line: at(m.index) });
-  if (lang === 'c' || lang === 'cpp' || lang === 'objc') for (const m of all(/^\s*#\s*(?:include|import)\s+"([^"]+)"/gm, code)) imports.push({ spec: m[1], names: [], kind: 'include', line: at(m.index) });
+  if (lang === 'c' || lang === 'cpp' || lang === 'objc') for (const m of all(/^[ \t]*#\s*(?:include|import)\s+"([^"]+)"/gm, code)) imports.push({ spec: m[1], names: [], kind: 'include', line: at(m.index) });
   if (lang === 'php') for (const m of all(/\b(?:require|include)(?:_once)?\s*\(?\s*(?:__DIR__\s*\.\s*)?["']([^"']+)["']/g, code)) imports.push({ spec: m[1].startsWith('/') ? '.' + m[1] : m[1], names: [], line: at(m.index) });
   if (lang === 'css') for (const m of all(/@(?:import|use|forward)\s+(?:url\()?["']([^"']+)["']/g, code)) imports.push({ spec: m[1].startsWith('.') ? m[1] : './' + m[1], names: [], line: at(m.index) });
   const symbols = [];
-  if (lang === 'ruby') for (const m of all(/^\s*(class|module)\s+([A-Z][\w:]*)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
-  if (lang === 'csharp') for (const m of all(/^\s*public\s+(?:static\s+|abstract\s+|sealed\s+|partial\s+)*(class|interface|enum|record|struct)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
+  if (lang === 'ruby') for (const m of all(/^[ \t]*(class|module)\s+([A-Z][\w:]*)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
+  if (lang === 'csharp') for (const m of all(/^[ \t]*public\s+(?:static\s+|abstract\s+|sealed\s+|partial\s+)*(class|interface|enum|record|struct)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
   const { calls, hosts } = ['ruby', 'php', 'csharp', 'swift', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
   return { imports, symbols, routes: [], mounts: [], calls, hosts };
 }
@@ -589,7 +601,7 @@ function pyDocAfter(lines, idx) {
   // idx: 0-based line of the def/class (or -1 for module). Find the end of the signature, then a string literal.
   let i = idx;
   if (idx >= 0) {
-    while (i < lines.length && i < idx + 20 && !/:\s*(#.*)?$/.test(lines[i])) i++;
+    while (i < lines.length && i < idx + 20 && !(lines[i].length <= 500 && /:\s*(#.*)?$/.test(lines[i]))) i++;
     i++;
   } else i = 0;
   while (i < lines.length && (!lines[i].trim() || (idx < 0 && /^\s*(#|from __future__)/.test(lines[i])))) i++;
@@ -624,13 +636,15 @@ function commentBefore(lines, idx) {
   let i = idx - 1;
   while (i >= 0 && /^\s*@/.test(lines[i])) i--;
   if (i < 0) return null;
+  // (a doc comment is read back at most 60 lines: walking further for every declaration of a large file
+  // would take quadratic time)
   if (/\*\/\s*$/.test(lines[i])) {
     const end = i;
-    while (i >= 0 && !/\/\*/.test(lines[i])) i--;
-    return i >= 0 ? cleanDoc(lines.slice(i, end + 1).join('\n')) : null;
+    while (i >= 0 && i > end - 60 && !/\/\*/.test(lines[i])) i--;
+    return i >= 0 && /\/\*/.test(lines[i]) ? cleanDoc(lines.slice(i, end + 1).join('\n')) : null;
   }
   const buf = [];
-  while (i >= 0 && /^\s*(\/\/|#(?!!))/.test(lines[i])) buf.unshift(lines[i--]);
+  while (i >= 0 && buf.length < 60 && /^\s*(\/\/|#(?!!))/.test(lines[i])) buf.unshift(lines[i--]);
   return buf.length ? cleanDoc(buf.join('\n')) : null;
 }
 

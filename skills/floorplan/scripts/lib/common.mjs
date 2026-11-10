@@ -9,9 +9,26 @@ export const rel = (from, to) => toPosix(path.relative(from, to)) || '.';
 // ---------- globs ----------
 
 const GLOB_CHARS = /[*?{[]/;
+// Limits on a pattern, so a careless or hostile one can't make matching slow: its length, its wildcards and
+// its {a,b} groups (each adds alternatives every path is tried against)
+export const GLOB_LIMITS = { length: 300, wildcards: 12, braces: 8 };
+
+/** Why a glob can't be used, in plain words, or null when it's fine. */
+export function globProblem(glob) {
+  if (typeof glob !== 'string') return 'it is not text';
+  if (glob.length > GLOB_LIMITS.length) return `it is longer than ${GLOB_LIMITS.length} characters`;
+  const g = tidyGlob(glob);
+  if ((g.match(/\*+|\?/g) || []).length > GLOB_LIMITS.wildcards) return `it has more than ${GLOB_LIMITS.wildcards} wildcards (* or ?)`;
+  if ((g.match(/\{/g) || []).length > GLOB_LIMITS.braces) return `it has more than ${GLOB_LIMITS.braces} {…} groups`;
+  try { globToRegExp(g); globToRegExp(g + '/**'); } catch (e) { return e.globProblem || 'it is not a pattern this map understands'; }
+  return null;
+}
+/** The glob as matched: forward slashes, no leading ./ or trailing /, and repeated ** segments folded into one. */
+const tidyGlob = (glob) => toPosix(glob).replace(/^\.\//, '').replace(/\/$/, '').replace(/(^|\/)\*\*(?:\/\*\*)+(?=\/|$)/g, '$1**').replace(/\*{3,}/g, '**');
+const globError = (msg) => Object.assign(new Error(msg), { globProblem: msg });
 
 export function globToRegExp(glob) {
-  const g = toPosix(glob).replace(/^\.\//, '').replace(/\/$/, '');
+  const g = tidyGlob(glob);
   let re = '';
   let braces = 0;
   for (let i = 0; i < g.length; ) {
@@ -41,17 +58,27 @@ export function globToRegExp(glob) {
     }
     if (c === '[') {
       const j = g.indexOf(']', i + 1);
-      if (j > i) { re += '[' + g.slice(i + 1, j).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = j + 1; continue; }
+      if (j < 0) throw globError('it has a "[" with no "]" to close it');
+      const set = g.slice(i + 1, j).replace(/^!/, '^');
+      if (!set || set === '^') throw globError('it has an empty [] set');
+      for (const [, a, b] of set.matchAll(/(.)-(.)/g)) if (a > b) throw globError(`its range [${a}-${b}] runs backwards`);
+      re += '[' + set.replace(/\\/g, '\\\\').replace(/\[/g, '\\[') + ']'; i = j + 1; continue;
     }
-    re += c.replace(/[.+^$()|\\\]]/g, '\\$&');
+    re += c.replace(/[.+^$()|\\\][]/g, '\\$&');
     i++;
   }
-  return new RegExp('^' + re + '$');
+  if (braces) throw globError('it has a "{" with no "}" to close it');
+  try { return new RegExp('^' + re + '$'); } catch { throw globError('it is not a pattern this map understands'); }
 }
 
-/** Compile a glob. A pattern with no wildcards also matches everything under it as a directory. */
+/**
+ * Compile a glob. A pattern with no wildcards also matches everything under it as a directory. Throws an error
+ * whose message says what's wrong (globProblem) when the pattern can't be used.
+ */
 export function compileGlob(glob) {
-  const g = toPosix(glob).replace(/^\.\//, '').replace(/\/$/, '');
+  const problem = globProblem(glob);
+  if (problem) throw globError(`"${String(glob).slice(0, 60)}" is not a valid pattern: ${problem}`);
+  const g = tidyGlob(glob);
   const literalPrefix = g.split(GLOB_CHARS)[0];
   if (!GLOB_CHARS.test(g)) {
     return { glob, specificity: g.length, test: (p) => p === g || p.startsWith(g + '/') };
@@ -272,13 +299,76 @@ export function discover(root, { includeWorktrees = false, maxLooseFiles = 5000 
 
 // ---------- misc ----------
 
+/**
+ * JSON with comments and trailing commas (tsconfig.json, jsconfig.json…) as plain JSON text, in one pass over
+ * the text: strings are kept as they are, comments and the commas before a closing } or ] are dropped. An
+ * unclosed comment runs to the end, as it would for the tools that read these files.
+ */
+export function stripJsonComments(text) {
+  const out = [];
+  let i = 0, start = 0, lastComma = -1;
+  const n = text.length;
+  const flush = (to) => { if (to > start) out.push(text.slice(start, to)); };
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    if (c === 34) { // a string: copy through its closing quote
+      i++;
+      while (i < n) { const d = text.charCodeAt(i); if (d === 92) i += 2; else if (d === 34) { i++; break; } else i++; }
+      lastComma = -1;
+    } else if (c === 47 && text.charCodeAt(i + 1) === 42) { // /* … */
+      flush(i);
+      const e = text.indexOf('*/', i + 2);
+      i = e < 0 ? n : e + 2;
+      start = i;
+    } else if (c === 47 && text.charCodeAt(i + 1) === 47) { // // …
+      flush(i);
+      const e = text.indexOf('\n', i + 2);
+      i = e < 0 ? n : e;
+      start = i;
+    } else if (c === 44) { // a comma: remember where, in case a } or ] comes next
+      flush(i); start = i; lastComma = out.length; out.push(','); i++; start = i;
+    } else if (c === 125 || c === 93) { // } or ]: a comma just before it (past whitespace and comments) goes
+      if (lastComma >= 0) out[lastComma] = '';
+      lastComma = -1; i++;
+    } else {
+      if (!(c === 32 || c === 9 || c === 10 || c === 13)) lastComma = -1;
+      i++;
+    }
+  }
+  flush(n);
+  return out.join('');
+}
+
+/**
+ * [start, end] of every /* … *\/ comment, in one pass; an unclosed one runs to the end. (A lazy regex like
+ * /\/\*[\s\S]*?\*\//g looks for the end again from every later "/*", which takes quadratic time.)
+ */
+export function blockComments(src) {
+  const out = [];
+  for (let i = src.indexOf('/*'); i >= 0;) {
+    const e = src.indexOf('*/', i + 2);
+    const end = e < 0 ? src.length : e + 2;
+    out.push([i, end]);
+    i = e < 0 ? -1 : src.indexOf('/*', end);
+  }
+  return out;
+}
+/** The text with every /* … *\/ comment blanked to spaces (line breaks kept, so offsets and lines stay put). */
+export function blankBlockComments(src) {
+  let out = '', from = 0;
+  for (const [a, b] of blockComments(src)) { out += src.slice(from, a) + src.slice(a, b).replace(/[^\n]/g, ' '); from = b; }
+  return out + src.slice(from);
+}
+
+/** Config files bigger than this aren't read: no real tsconfig.json or package.json comes close. */
+export const MAX_CONFIG_BYTES = 1024 * 1024;
+/** Config files readJsonLoose left unread because of their size, as { path, bytes } (the scan reports them). */
+export const skippedConfigs = [];
 export function readJsonLoose(file) {
   try {
-    const txt = fs.readFileSync(file, 'utf8')
-      .replace(/^﻿/, '')
-      .replace(/("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m, str) => str ?? '')
-      .replace(/,(\s*[}\]])/g, '$1');
-    return JSON.parse(txt);
+    const bytes = fs.statSync(file).size;
+    if (bytes > MAX_CONFIG_BYTES) { skippedConfigs.push({ path: file, bytes }); return null; }
+    return JSON.parse(stripJsonComments(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')));
   } catch {
     return null;
   }

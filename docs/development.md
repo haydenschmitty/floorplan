@@ -36,6 +36,8 @@ skills/floorplan/
     ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
     serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
+    page-safety.mjs  the one way data and code go into a page's <script> blocks, and its Content-Security-Policy
+                   (used by build.mjs, and copied next to serve.mjs)
     query-cli.mjs  becomes floorplan/query.mjs
     logo.png, favicon.png
     vendor/        bundled layout engine (elkjs) and fonts, with their licenses
@@ -94,6 +96,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
 | `worksheets.test.mjs` | the description worksheets quote each endpoint's code and very short files whole, within their caps, with secrets masked and `.env`-style files never quoted, and list the files that import, request or name each file |
 | `plain-language.test.mjs` | the build's warnings, never errors, about developer words in part labels and summaries on a map for everyone (product names and developer maps left alone, the word list kept in step with the writing guide, the `--json` shape), and about parts with many files in folders of their own |
+| `hostile-content.test.mjs` | mapping code you didn't write: hostile text in every model-written and scan-derived field leaves a page whose data parses and round-trips exactly (built, served, exported, Export button); secrets written into descriptions are masked with a warning naming the file and field, while prose, commit hashes and UUIDs stay; every page's Content-Security-Policy matches its scripts' hashes; invalid patterns are named build errors; config files and files built to slow pattern matching don't stall the scan; invisible and reordering characters are shown as markers |
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |

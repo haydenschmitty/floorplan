@@ -70,6 +70,7 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | `descriptions` | `files` and `routes` as `{ described, total }`, `modules` ({ withSummary, total, missing }), `review` (entries still flagged), and `complete`: every file and endpoint described and nothing left to review |
 | `plainLanguage` | developer words in node labels and summaries on a map for everyone: `checked` (false when `audience` is `developers`), `count` (parts with any) and `items[]` ({ node, field: `label` or `summary`, term, say }). Each part also gets a `plain language:` line in `warnings[]`. Never an error |
 | `partsToSplit[]` | parts with no children and more than 24 files that sit in several folders of their own: `{ id, files, folders: [{ dir, files }] }`, also in `warnings[]` |
+| `secretsHidden[]` | `{ file, field }` for each piece of written text that looked like it held a secret and went into the map as «hidden», e.g. `{ "file": "descriptions/api.json", "field": "files[\"api/server.js\"].description" }`. Never the value. Each file also gets a `secret-looking text in …` line at the top of `warnings[]`. A warning, never an error; the files themselves are left as they are |
 | `health` | `kind` (`health`, or `design-review` for a blueprint), `high`, `medium`, `low`, and `important[]` ({ severity, kind, title }); `null` when there's none |
 | `screens` | how many screens were found |
 | `recentWork` | `cards` and `tasks` highlighted, and whether `recent-work.json` exists |
@@ -211,6 +212,14 @@ Two `descriptions` jobs, one per worksheet, each writing its `descriptions` file
 
 - Running each model job with only the tools the file lists, inside the codebase, read-only, and no network.
 - Checking each answer against its schema, sending the problems back, and writing the accepted answer itself. The model never writes files.
+- Keeping secrets out of what it writes. The model reads the code, secrets included, so a fooled or careless one can copy a key into a description. The build masks such text before it reaches the map (see `secretsHidden` above), but the answer files keep what was written. To keep them clean too, run each answer's text through the same check before writing it:
+  ```js
+  import { maskSecrets } from '/path/to/floorplan/skills/floorplan/scripts/lib/health.mjs';
+  const safe = maskSecrets(text);        // text written by a person or a model
+  if (safe !== text) { /* it held something secret-looking: write `safe`, or send it back as a problem */ }
+  ```
+  `maskSecrets(text)` returns the text with every value that is or might be a secret replaced with `«hidden»`, and the same text when there's none. It's a stable export, checked by the tests. (With a second argument, `{ path, lang, category }`, it treats the text as that file's source code instead.)
+- Patterns in architecture.json (`paths`, `exclude`, `ignore`, `packages`, `hosts`) that aren't valid, are over 300 characters, have more than 12 wildcards or 8 `{…}` groups, or number over 500 in one list, are build errors that name them (`nodes[3] ("web").paths[0] "[evil" is not a valid pattern: …`), so they go back to the model like any other.
 - Limits: time, cost and how many tool calls a job may make (each job suggests a `toolCalls` budget).
 - What happens to the map afterwards. `floorplan/.cache/` holds digests of the code (the scan, the worksheets, which quote short pieces of it with secrets masked), so don't publish it. `graph.json` includes this machine's folder path and the repos' remotes. To share a map, make an export, which leaves those out: `node floorplan/serve.mjs --export [file] [--include flows,notes,recent,health]`.
 
