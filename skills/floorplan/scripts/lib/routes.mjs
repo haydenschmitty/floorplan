@@ -56,24 +56,34 @@ export function resolveRoutes(files) {
   }
   // Every prefix a file's routes live under, composing nested mounts (a router mounted into a router
   // that is itself mounted), e.g. app.use('/api', api) + api.use('/users', users) → /api/users.
+  // Each file's answer is remembered (files mounted twice into each other would otherwise be walked once per
+  // path through them, which doubles with every level), and a file has at most MAX_PREFIXES of them.
+  const MAX_PREFIXES = 50;
+  const prefixMemo = new Map(), mwMemo = new Map();
   const outerPrefixes = (file, v, seen = new Set()) => {
+    const key = `${file}|${v ?? ''}`;
+    if (prefixMemo.has(key)) return prefixMemo.get(key);
     const ms = (mountsTo.get(file) || []).filter((m) => v == null || m.v === '*' || m.v === v);
     if (!ms.length || seen.has(file)) return [''];
     const next = new Set(seen).add(file);
-    const out = [];
-    for (const m of ms) for (const p of m.from === file ? [''] : outerPrefixes(m.from, null, next)) out.push(joinPath(p, m.prefix));
-    return [...new Set(out)];
+    const out = new Set();
+    for (const m of ms) for (const p of m.from === file ? [''] : outerPrefixes(m.from, null, next)) if (out.size < MAX_PREFIXES) out.add(joinPath(p, m.prefix));
+    prefixMemo.set(key, [...out]);
+    return prefixMemo.get(key);
   };
 
   // Middleware applied where a file's routers are mounted, all the way up: app.use('/admin', requireStaff, admin)
   // then admin.use('/orders', orders) puts requireStaff in front of every route in orders.
   const mountMw = (file, v, seen = new Set()) => {
+    const key = `${file}|${v ?? ''}`;
+    if (mwMemo.has(key)) return mwMemo.get(key);
     const ms = (mountsTo.get(file) || []).filter((m) => v == null || m.v === '*' || m.v === v);
     if (!ms.length || seen.has(file)) return [];
     const next = new Set(seen).add(file);
     // a route is only as protected as its least-protected mount
     const each = ms.map((m) => [...m.mw, ...(m.from === file ? [] : mountMw(m.from, null, next))]);
-    return each.reduce((a, b) => a.filter((x) => b.includes(x)));
+    mwMemo.set(key, each.reduce((a, b) => a.filter((x) => b.includes(x))));
+    return mwMemo.get(key);
   };
 
   // Firebase deploys a function under the name the functions entry file exports it as, so

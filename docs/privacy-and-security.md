@@ -68,7 +68,13 @@ Your answer is kept in `~/.floorplan/settings.json`.
 
 The Health check looks for passwords, API keys and private keys in your code, and for `.env` files that would be committed. When it finds one, it records only the file, the line, the kind of secret, and a masked hint like "starts AKIA…, 20 characters". **Secret values are never stored in the map, printed, or sent anywhere**, and Claude is instructed never to repeat them.
 
+Text written about your code is checked too. If a description, label, summary, note or recent-work entry (in `architecture.json`, `descriptions/`, `recent-work.json` and the other files in `floorplan/`), or a comment the scan picked up, holds something that looks like a secret, the build puts it in the map as «hidden» and warns, naming the file and the field but never the value, so you can take it out. Your files are left as they are. It looks for well-known key formats, passwords in database addresses, quoted values given a secret-sounding name, `NAME=value` settings, and long generated-looking strings; ordinary words, file paths, commit hashes and IDs are left alone.
+
 The check is a helpful first pass, not a security audit.
+
+## Maps of code you didn't write
+
+A map shows text Floorplan didn't write: file names, endpoint paths and comments from the code, and descriptions written by an AI or a person. All of it is treated as text, never as part of the page: it's escaped wherever it's shown, it goes into the page's data in a form the browser can't mistake for markup, and characters that are invisible or reverse the text around them (which can make one file name read as another) are shown as a visible marker such as `[U+202E]`. Every map carries a Content-Security-Policy that lets only its own scripts run and keeps an exported copy from contacting anything (see [Is it safe to install?](is-it-safe.md#the-network)). A pattern in `architecture.json` that isn't valid is reported as a build error, and the scan skips config files over 1 MB and reads large files without slowing down.
 
 ## Git
 

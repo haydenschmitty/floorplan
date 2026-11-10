@@ -36,6 +36,8 @@ skills/floorplan/
     ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
     serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
+    page-safety.mjs  the one way data and code go into a page's <script> blocks, and its Content-Security-Policy
+                   (used by build.mjs, and copied next to serve.mjs)
     query-cli.mjs  becomes floorplan/query.mjs
     logo.png, favicon.png
     vendor/        bundled layout engine (elkjs) and fonts, with their licenses
@@ -92,15 +94,19 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `blueprint-change.test.mjs` | changing a blueprint from the map: the agent's updated plan is checked, saved and highlighted, retried once when it fails the checks, and undone (stand-in CLI in `fixtures/fake-cli/`) |
 | `large-files.test.mjs` | files over the scan's size limit stay on the map with their line count, and the scan, Health and the map say they weren't read |
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
+| `worksheets.test.mjs` | the description worksheets quote each endpoint's code and very short files whole, within their caps, with secrets masked and `.env`-style files never quoted, and list the files that import, request or name each file |
+| `plain-language.test.mjs` | the build's warnings, never errors, about developer words in part labels and summaries on a map for everyone (product names and developer maps left alone, screen words such as "hook" and "component" flagged only where they mean screens, the word list kept in step with the writing guide, the `--json` shape), and about parts with many files in folders of their own |
+| `hostile-content.test.mjs` | mapping code you didn't write: hostile text in every model-written and scan-derived field leaves a page whose data parses and round-trips exactly (built, served, exported, Export button); secrets written into descriptions are masked with a warning naming the file and field, while prose, commit hashes and UUIDs stay; every page's Content-Security-Policy matches its scripts' hashes; invalid patterns are named build errors; config files and files built to slow pattern matching don't stall the scan; invisible and reordering characters are shown as markers |
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
-| `unattended.test.mjs` | running without an agent session: a small driver follows `workflow.json` through a first map and a refresh with canned answers, using only `--json` and exit codes; nothing written outside `floorplan/`, a map that names no agent, git failures that fail loudly, the workflow file's names and schemas, and no change without unattended mode |
+| `unattended.test.mjs` | running without an agent session: a small driver follows `workflow.json` through a first map and a refresh with canned answers, using only `--json` and exit codes; the optional plain-language step (reworded, left alone, rejected for changing more than wording, or failed, with the map completing every time); nothing written outside `floorplan/`, a map that names no agent, git failures that fail loudly, the workflow file's names and schemas, `maskSecrets` as a stable export, and no change without unattended mode |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |
+| `sandboxed.test.mjs` | a map whose browser refuses storage, the clipboard or new windows (a sandboxed frame, strict settings): settings kept in memory for the visit, no tour on its own, `#tour=0`, "Copied" only when it was, the address shown when a window is blocked, and nothing changed where storage works (the page's own code run against a pretend browser, not a real frame) |
 
 Sample projects are written to a temp folder by `helpers.mjs` (`shopApp()`) or copied from `tests/fixtures/`. Anything secret-looking is assembled at runtime, so no real-looking key is ever committed.
 
@@ -112,7 +118,8 @@ Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order
 - the graph and lookups;
 - navigation (`go`, `open`, `reveal`, `showBoard`, `playFlow`);
 - `addHeaderButton` and `addPanelSection('overview' | 'item', fn)`;
-- `modal`, `toast`, `store`;
+- `modal`, `toast`, `store` (settings for this browser; `store.persistent` is false when the browser won't keep them past this visit, and they're held in memory instead);
+- `copy(text)`, which resolves true only when the text was really copied and otherwise shows it to copy by hand, and `openWindow(url)`, which shows the address when the browser blocks a new window. Use these rather than `navigator.clipboard` or `window.open`, so the map behaves in a sandboxed frame too;
 - events (`on('ready' | 'render' | 'panel' | 'technical')`);
 - `exported`, set in an exported copy: leave out anything there that needs Claude, Codex or the map's server.
 

@@ -644,8 +644,80 @@ const KIND_LABEL = new Proxy({}, { get: (_, k) => (technical() ? KIND_TECH : KIN
 let technicalFlag = false;
 const technical = () => technicalFlag;
 const METHODS = { GET: 1, POST: 1, PUT: 1, PATCH: 1, DELETE: 1, CALL: 1 };
-const store = { get(k, d) { try { return JSON.parse(localStorage.getItem('floorplan:' + k) ?? localStorage.getItem('show-code:' + k)) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem('floorplan:' + k, JSON.stringify(v)); } catch {} } };
-const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+/** Text for HTML, as shown to people (see revealHidden below). */
+const h = (s) => esc(revealHidden(s));
+/** An id or path for an attribute the page reads back (data-go, data-copy…): exactly as it is, only escaped. */
+const hk = (s) => esc(s);
+// Text from the code and its descriptions is shown as it really is: characters that are invisible, or that
+// reorder the text around them (right-to-left overrides and the like, which can make "invoice[U+202E]txt.js" read as
+// something else), are shown as a visible [U+202E] marker. Only what's displayed changes; ids and paths don't.
+const INVISIBLE = /[\u00AD\u061C\u115F\u1160\u17B4\u17B5\u180E\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\u3164\uFEFF\uFFA0\uFFF9-\uFFFB]/g;
+const revealHidden = (s) => String(s ?? '').replace(INVISIBLE, (c) => `[U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}]`);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// ---------- when the browser says no ----------
+// A map embedded in a sandboxed frame, opened in a private window or under strict settings may get no storage,
+// no clipboard and no new windows. These helpers behave the same either way, and say so plainly when they can't.
+// Settings the browser won't save are kept in memory instead, so they still hold until the page is closed;
+// store.persistent says whether they will last beyond that.
+const store = (() => {
+  const mem = new Map(); // JSON text, only for what the browser refused to save
+  let persistent = (() => { try { localStorage.getItem('floorplan:panel'); return true; } catch { return false; } })();
+  return {
+    get(k, d) {
+      if (mem.has(k)) { try { return JSON.parse(mem.get(k)) ?? d; } catch { return d; } }
+      try { return JSON.parse(localStorage.getItem('floorplan:' + k) ?? localStorage.getItem('show-code:' + k)) ?? d; } catch { return d; }
+    },
+    set(k, v) {
+      try { localStorage.setItem('floorplan:' + k, JSON.stringify(v)); mem.delete(k); } catch { persistent = false; mem.set(k, JSON.stringify(v)); }
+    },
+    get persistent() { return persistent; },
+  };
+})();
+function selectText(el) { try { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } catch {} }
+// the older way to copy, for browsers that refuse the clipboard API (an embedding page has to allow it) or lack it
+function copyByCommand(text) {
+  let ok = false;
+  const ta = document.createElement('textarea'), was = document.activeElement;
+  ta.value = text; ta.setAttribute('readonly', ''); ta.setAttribute('aria-hidden', 'true');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
+  try { document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy') === true; } catch {}
+  ta.remove();
+  try { if (was && was !== document.body) was.focus({ preventScroll: true }); } catch {}
+  return ok;
+}
+/** Shows text the browser wouldn't copy, selected so it can be copied by hand: where it already is on screen (`shown`), or in a small window. */
+function copyByHand(text, shown) {
+  if (shown && shown.isConnected) { selectText(shown); toast('This browser blocked copying. The text is selected, ready to copy.'); return; }
+  const m = showModal({ title: 'Copy it yourself', html: `<p>This browser didn’t let the map use the clipboard. The text is selected below, ready to copy.</p><pre>${h(text)}</pre>` });
+  selectText(m.el.querySelector('pre'));
+}
+/** Copies text. Resolves true only when it really was copied; otherwise shows it to copy by hand (unless quiet) and resolves false. */
+function copy(text, { select: shown = null, quiet = false } = {}) {
+  text = String(text ?? '');
+  let p = null;
+  try { p = navigator.clipboard?.writeText(text) || null; } catch {}
+  const done = p ? Promise.resolve(p).then(() => true, () => copyByCommand(text)) : Promise.resolve(copyByCommand(text));
+  return done.then((ok) => { if (!ok && !quiet) copyByHand(text, shown); return ok; });
+}
+/** An address the browser wouldn't open in a new window, shown to copy and open by hand. */
+function showAddress(url) {
+  const m = showModal({ title: 'Open this address', html: `<p>This browser didn’t let the map open a new window. Copy the address and open it yourself:</p><pre>${h(url)}</pre>`,
+    actions: [{ label: 'Copy address', primary: true, icon: 'copy', keepOpen: true, onClick: () => { copy(url, { select: pre }).then((ok) => { if (ok) toast('Copied'); }); } }] });
+  const pre = m.el.querySelector('pre');
+  selectText(pre);
+}
+/** Opens an address in a new window, with no way back to this page. True if it opened; if the browser blocked it, shows the address instead (unless quiet). */
+function openWindow(url, { quiet = false } = {}) {
+  url = String(url);
+  let w = null;
+  try { w = window.open('', '_blank'); } catch {}
+  if (w) {
+    try { w.opener = null; w.location.href = url; return true; } catch { try { w.close(); } catch {} }
+  }
+  if (!quiet) showAddress(url);
+  return false;
+}
+// ---------- end: when the browser says no ----------
 const fmt = (n) => n >= 10000 ? Math.round(n / 1000) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
 const dirname = (p) => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -1139,7 +1211,7 @@ function drawColumns(g, view, res) {
     const half = Math.min(textW(label, 13, 500) / 2 + 10, (x1 - x0) / 2 - 12);
     // ⌐—— label ——¬ : end ticks curl down toward the cards, with a gap in the line for the label
     el('path', { d: `M${x0},${y + 9} v-5 q0,-4 4,-4 H${cx - half} M${cx + half},${y} H${x1 - 4} q4,0 4,4 v5` }, g);
-    el('text', { x: cx, y }, g).textContent = label;
+    el('text', { x: cx, y }, g).textContent = revealHidden(label);
   }
 }
 
@@ -1196,7 +1268,6 @@ function openMenu(ev, items) {
   ctxEl.style.transformOrigin = `${ev.clientX - x}px ${ev.clientY - y}px`;
 }
 function closeMenu() { ctxEl.hidden = true; }
-const copy = (text) => navigator.clipboard?.writeText(text).catch(() => {});
 function itemMenu(id) {
   const real = id.startsWith('x:') ? connEntity(id) : id.startsWith('m:') ? 'f:' + id.slice(2) : id;
   const i = info(real);
@@ -1344,6 +1415,8 @@ $('#z-fit').onclick = () => fit(true);
 function setHash(container, sel) {
   if (container.startsWith('q:')) return; // answer views are transient
   const p = new URLSearchParams();
+  const tour = new URLSearchParams(location.hash.slice(1)).get('tour'); // a page embedding the map can say tour=0; keep it while moving around
+  if (tour !== null) p.set('tour', tour);
   if (container !== 'root') p.set('v', container);
   if (sel && typeof sel === 'string') p.set('s', sel);
   const s = p.toString();
@@ -1465,7 +1538,7 @@ function renderCrumbs() {
   path.forEach((item, idx) => {
     if (idx) { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '/'; c.appendChild(s); }
     const b = document.createElement('button');
-    b.textContent = item === 'root' ? 'Overview' : item === 'q:answer' ? `${state.answer.kind || 'Answer'}: ${state.answer.title}` : info(item).name;
+    b.textContent = revealHidden(item === 'root' ? 'Overview' : item === 'q:answer' ? `${state.answer.kind || 'Answer'}: ${state.answer.title}` : info(item).name);
     if (item === state.container) b.className = 'cur';
     b.onclick = () => go(item, { select: path[idx + 1] || null });
     c.appendChild(b);
@@ -1504,14 +1577,14 @@ function renderLegend(view) {
 const editorUrl = (p, line = 1) => G.meta.root && !PLAN ? `vscode://file/${encodeURI(G.meta.root.replace(/\\/g, '/'))}/${encodeURI(p)}:${line}` : null;
 const rowFor = (item, extra = '', dotColor) => {
   const i = info(item);
-  return `<a class="row" data-go="${h(item)}" title="${h(i.path || '')}"><span class="dot" style="background:${dotColor || colorOf(i)}"></span><span class="rt"><div class="rn">${h(i.name)}</div>${i.desc ? `<div class="rd">${h(i.desc)}</div>` : ''}</span>${extra ? `<span class="rc">${extra}</span>` : ''}</a>`;
+  return `<a class="row" data-go="${hk(item)}" title="${h(i.path || '')}"><span class="dot" style="background:${dotColor || colorOf(i)}"></span><span class="rt"><div class="rn">${h(i.name)}</div>${i.desc ? `<div class="rd">${h(i.desc)}</div>` : ''}</span>${extra ? `<span class="rc">${extra}</span>` : ''}</a>`;
 };
 const routeRow = (ri, extra = '') => {
   const r = routes[ri];
   return `<a class="row" data-go="r:${ri}"><span class="method" style="--m:${methodVar(r.m)};margin-top:1px">${h(r.m)}</span><span class="rt"><div class="rn">${h(r.name)}</div>${r.d ? `<div class="rd">${h(r.d)}</div>` : ''}<div class="rp">${h(r.p)}</div></span>${extra ? `<span class="rc">${extra}</span>` : ''}</a>`;
 };
 const listSec = (title, rows, count, max = 30) => rows.length ? `<div class="sec"><h3>${h(title)} <span class="c">${count ?? rows.length}</span></h3><div class="list">${rows.slice(0, max).join('')}${rows.length > max ? `<div class="more">+${rows.length - max} more</div>` : ''}</div></div>` : '';
-const pathBox = (p) => `<div class="pp"><span>${h(p)}</span><button data-copy="${h(p)}" title="Copy">${iconI('copy')}</button></div>`;
+const pathBox = (p) => `<div class="pp"><span>${h(p)}</span><button data-copy="${hk(p)}" title="Copy">${iconI('copy')}</button></div>`;
 function header(i) {
   const kind = i.type === 'node' ? i.kind : i.type === 'symbol' ? i.symKind : i.type === 'route' ? 'Endpoint' : i.type === 'module' ? 'file' : i.type;
   return `<div class="ph"><span class="ico" style="--c:${colorOf(i)}">${icon(iconKey(i))}</span><span class="kindlabel">${h(kind)}</span></div>
@@ -1551,7 +1624,7 @@ function renderPanel() {
   panel.querySelectorAll('[data-flow]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); startFlow(a.dataset.flow); }));
   panel.querySelectorAll('[data-sel]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); select(a.dataset.sel); centerOn(a.dataset.sel); }));
   panel.querySelector('[data-goroot]')?.addEventListener('click', () => go('root'));
-  panel.querySelectorAll('[data-copy]').forEach((a) => a.addEventListener('click', () => { navigator.clipboard?.writeText(a.dataset.copy); a.textContent = '✓'; }));
+  panel.querySelectorAll('[data-copy]').forEach((a) => a.addEventListener('click', () => { copy(a.dataset.copy, { select: a.previousElementSibling }).then((ok) => { if (ok) a.textContent = '✓'; }); }));
   emit('panel', { selected: sel, container: state.container });
 }
 
@@ -1559,8 +1632,8 @@ function answerPanel() {
   const a = state.answer;
   return `<div class="sec"><div class="ph"><span class="ico" style="--c:var(--accent)">${icon('feature')}</span><span class="kind">${h(a.kind || 'Answer')}</span></div><h2 class="pt">${h(a.title)}</h2><p class="pd">${h(a.question)}</p>${a.kind && a.answer ? `<div class="pd md">${md(a.answer)}</div>` : ''}
       <div class="actions"><button class="btn soft" data-goroot>Back to map</button></div></div>
-    ${listSec('On this board', a.items.map((x, i) => { const ii = info(x.id); return `<a class="row" data-sel="${h(x.id)}"><span class="anote" style="margin:0;padding:0;background:none;border:0"><b>${i + 1}</b></span><span class="rt"><div class="rn">${h(ii.name)}</div>${x.note ? `<div class="rd">${h(x.note)}</div>` : ''}${ii.path ? `<div class="rp">${h(ii.path)}</div>` : ''}</span></a>`; }))}
-    ${a.steps?.length >= 2 ? `<div class="sec"><h3>Walkthrough <span class="c">${a.steps.length}</span></h3><div class="list">${a.steps.map((s, i) => `<a class="row" data-sel="${h(s.id)}"><span class="dot" style="background:var(--accent)"></span><span class="rt"><div class="rn">${i + 1}. ${h(info(s.id).name)}</div><div class="rd">${h(s.note)}</div></span></a>`).join('')}</div></div>` : ''}`;
+    ${listSec('On this board', a.items.map((x, i) => { const ii = info(x.id); return `<a class="row" data-sel="${hk(x.id)}"><span class="anote" style="margin:0;padding:0;background:none;border:0"><b>${i + 1}</b></span><span class="rt"><div class="rn">${h(ii.name)}</div>${x.note ? `<div class="rd">${h(x.note)}</div>` : ''}${ii.path ? `<div class="rp">${h(ii.path)}</div>` : ''}</span></a>`; }))}
+    ${a.steps?.length >= 2 ? `<div class="sec"><h3>Walkthrough <span class="c">${a.steps.length}</span></h3><div class="list">${a.steps.map((s, i) => `<a class="row" data-sel="${hk(s.id)}"><span class="dot" style="background:var(--accent)"></span><span class="rt"><div class="rn">${i + 1}. ${h(info(s.id).name)}</div><div class="rd">${h(s.note)}</div></span></a>`).join('')}</div></div>` : ''}`;
 }
 
 // Top-level parts, grouped under names people understand instead of bare colour dots.
@@ -1590,7 +1663,7 @@ function overviewPanel() {
       <div class="stats" style="margin-top:14px"><div><b>${fmt(G.meta.counts.files)}</b><span>${PLAN ? 'planned files' : 'files'}</span></div>${PLAN ? `<div><b>${fmt((G.screens || []).length)}</b><span>screens</span></div>` : `<div><b>${fmt(G.meta.counts.loc)}</b><span>lines</span></div>`}<div><b>${fmt(routes.length)}</b><span>endpoints</span></div></div>
       ${undescribed ? `<div class="callout">${undescribed} files and endpoints still use generated names. Run the skill again to describe them.</div>` : ''}</div>
     ${systemsSection(tops)}
-    ${listSec('Guided flows', G.flows.map((f) => `<a class="row" data-flow="${h(f.id)}"><span class="dot" style="background:var(--accent)"></span><span class="rt"><div class="rn">${h(f.title)}</div>${f.description ? `<div class="rd">${h(f.description)}</div>` : ''}</span><span class="rc">${f.steps.length} steps</span></a>`))}
+    ${listSec('Guided flows', G.flows.map((f) => `<a class="row" data-flow="${hk(f.id)}"><span class="dot" style="background:var(--accent)"></span><span class="rt"><div class="rn">${h(f.title)}</div>${f.description ? `<div class="rd">${h(f.description)}</div>` : ''}</span><span class="rc">${f.steps.length} steps</span></a>`))}
     ${listSec('Repositories', G.meta.repos.map((r) => `<div class="row" style="cursor:default"><span class="dot" style="background:var(--text-4)"></span><span class="rt"><div class="rn">${h(r.name)}</div><div class="rp">${h(r.branch || '')} @ ${h((r.head || '').slice(0, 7))}</div></span></div>`))}
     ${p.entrypoints?.length ? listSec('Entrypoints', p.entrypoints.filter((e) => files.has(e)).map((e) => rowFor('f:' + e))) : ''}
     <div class="sec" style="color:var(--text-3);line-height:1.7;font-size:12px">Click a card to inspect it · double-click to open it<br><span class="kbd">/</span> search · <span class="kbd">⌫</span> up · <span class="kbd">F</span> fit · <span class="kbd">P</span> inspector</div>`;
@@ -1618,8 +1691,8 @@ function itemPanel(item, viaConnector) {
   const i = info(item);
   let html = `<div class="sec">${header(i)}`;
   const actions = [];
-  if (drillable(item) && state.container !== item) actions.push(`<button class="btn soft" data-open="${h(item)}">${iconI('drill')}Open</button>`);
-  if (viaConnector || (parentOf.get(item) !== state.container && state.container !== item)) actions.push(`<button class="btn soft" data-go="${h(item)}">Show on map</button>`);
+  if (drillable(item) && state.container !== item) actions.push(`<button class="btn soft" data-open="${hk(item)}">${iconI('drill')}Open</button>`);
+  if (viaConnector || (parentOf.get(item) !== state.container && state.container !== item)) actions.push(`<button class="btn soft" data-go="${hk(item)}">Show on map</button>`);
   if (i.type === 'node' || i.type === 'dir') {
     const n = i.n, s = statsOf(item);
     if (n?.details) html += n.details.split(/\n\n+/).map((p) => `<p class="pd" style="margin-top:8px">${h(p)}</p>`).join('');
@@ -1656,7 +1729,7 @@ function itemPanel(item, viaConnector) {
     html += listSec('Used by', inL.map((l) => rowL(l, l.a)));
     html += listSec('Depends on', outL.map((l) => rowL(l, l.b)));
     const handlers = new Set((routesByFile.get(f.p) || []).map((ri) => routes[ri].h));
-    if (technical()) html += listSec('Exports', (f.s || []).map((s, k) => [s, k]).filter(([s]) => !handlers.has(s[0])).map(([s, k]) => `<a class="row" ${parentOf.has(`s:${f.p}#${k}`) ? `data-go="s:${h(f.p)}#${k}"` : ''}><span class="dot" style="background:var(--n-symbol)"></span><span class="rt"><div class="rn" style="font-family:var(--mono);font-size:12px">${h(s[0])}</div>${s[4] ? `<div class="rd">${h(s[4])}</div>` : ''}</span><span class="rc">${h(s[1])} · L${s[2]}</span></a>`), undefined, 60);
+    if (technical()) html += listSec('Exports', (f.s || []).map((s, k) => [s, k]).filter(([s]) => !handlers.has(s[0])).map(([s, k]) => `<a class="row" ${parentOf.has(`s:${f.p}#${k}`) ? `data-go="s:${hk(f.p)}#${k}"` : ''}><span class="dot" style="background:var(--n-symbol)"></span><span class="rt"><div class="rn" style="font-family:var(--mono);font-size:12px">${h(s[0])}</div>${s[4] ? `<div class="rd">${h(s[4])}</div>` : ''}</span><span class="rc">${h(s[1])} · L${s[2]}</span></a>`), undefined, 60);
   } else if (i.type === 'route') {
     const r = i.r, url = editorUrl(r.f, r.l);
     html += pathBox(`${r.m} ${r.p}`);
@@ -1690,11 +1763,11 @@ function edgePanel(e) {
   return `<div class="sec"><div class="ph"><span class="ico" style="--c:var(--k-${e.k})">${icon(e.k === 'http' ? 'route' : 'feature')}</span><span class="kind">${KIND_LABEL[e.k]} connection</span></div>
       <h2 class="pt">${h(nameOf(e.a))} → ${h(nameOf(e.b))}</h2>
       <p class="pd">${desc.length ? h(desc.join(' ')) : `${plural(e.w, 'connection')}${eps.length ? ` across ${plural(eps.length, 'endpoint')}` : ''}${e.k === 'http' && eps.length ? ', matched from call sites to route definitions' : ''}.`}</p>
-      <div class="actions"><button class="btn soft" data-go="${h(ep(e.a))}">Go to source</button><button class="btn soft" data-go="${h(ep(e.b))}">Go to target</button></div></div>
+      <div class="actions"><button class="btn soft" data-go="${hk(ep(e.a))}">Go to source</button><button class="btn soft" data-go="${hk(ep(e.b))}">Go to target</button></div></div>
     ${listSec('Endpoints', eps.map((x) => routeRow(x.i, plural(x.n, 'call'))), eps.length, 40)}
     ${names.length && technical() ? `<div class="sec"><h3>Imported names <span class="c">${names.length}</span></h3><div class="tags">${names.slice(0, 60).map((x) => `<span class="tag">${h(x)}</span>`).join('')}</div></div>` : ''}
     ${listSec('Files involved', pairs.map((l) => { const a = l.a.startsWith('f:') ? files.get(l.a.slice(2)) : null, b = l.b.startsWith('f:') ? files.get(l.b.slice(2)) : null;
-      return `<a class="row" data-go="${h(l.a)}"><span class="dot" style="background:var(--k-${l.k})"></span><span class="rt"><div class="rn">${h(a ? a.name : nameOf(l.a))} → ${h(b ? b.name : nameOf(l.b))}</div><div class="rp">${h(a ? a.p : '')}</div></span><span class="rc">${l.w}</span></a>`; }), pairs.length, 40)}`;
+      return `<a class="row" data-go="${hk(l.a)}"><span class="dot" style="background:var(--k-${l.k})"></span><span class="rt"><div class="rn">${h(a ? a.name : nameOf(l.a))} → ${h(b ? b.name : nameOf(l.b))}</div><div class="rp">${h(a ? a.p : '')}</div></span><span class="rc">${l.w}</span></a>`; }), pairs.length, 40)}`;
 }
 
 // ======================= search (command palette) =======================
@@ -1748,8 +1821,8 @@ const fm = $('#flowmenu');
 fm.addEventListener('click', (ev) => ev.stopPropagation());
 function renderFlowMenu() {
   fm.innerHTML = G.flows.map((f) => f.custom && !EXPORTED
-    ? `<div class="r custom" data-flow="${h(f.id)}"><div class="rt"><b>${h(f.title)}<span class="yours">yours</span></b><span>${f.steps.length} steps${f.description ? ' · ' + h(f.description) : ''}</span></div><button class="del" data-del="${h(f.id)}" title="Delete flow">${iconI('x')}</button></div>`
-    : `<div class="r" data-flow="${h(f.id)}"><b>${h(f.title)}</b><span>${f.steps.length} steps${f.description ? ' · ' + h(f.description) : ''}</span></div>`).join('')
+    ? `<div class="r custom" data-flow="${hk(f.id)}"><div class="rt"><b>${h(f.title)}<span class="yours">yours</span></b><span>${f.steps.length} steps${f.description ? ' · ' + h(f.description) : ''}</span></div><button class="del" data-del="${hk(f.id)}" title="Delete flow">${iconI('x')}</button></div>`
+    : `<div class="r" data-flow="${hk(f.id)}"><b>${h(f.title)}</b><span>${f.steps.length} steps${f.description ? ' · ' + h(f.description) : ''}</span></div>`).join('')
     + (EXPORTED ? (G.flows.length ? '' : '<div class="r" style="cursor:default"><span>No flows in this copy.</span></div>') : (G.flows.length ? '<div class="mi-sep"></div>' : '')
     + `<div class="r new" data-new>${iconI('spark')}<b>Request a new flow…</b></div>`);
   fm.querySelectorAll('[data-flow]').forEach((r) => r.onclick = () => { fm.classList.remove('open'); startFlow(r.dataset.flow); });
@@ -1840,7 +1913,7 @@ async function requestFlow(prompt) {
     await saveCustomFlow(fl);
     renderFlowMenu();
     sheetShell(label, `<p>Added <strong>${h(fl.title)}</strong> to Flows, ${plural(fl.steps.length, 'step')}.${fl.description ? ' ' + h(fl.description) : ''}</p>
-      <div class="sheet-actions"><button class="btn soft" data-play="${h(fl.id)}">${iconI('right')}Play again</button></div>`);
+      <div class="sheet-actions"><button class="btn soft" data-play="${hk(fl.id)}">${iconI('right')}Play again</button></div>`);
     sheet.querySelector('[data-play]').onclick = () => startFlow(fl.id);
     startFlow(fl.id);
   } catch (e) {
@@ -1917,7 +1990,7 @@ function setWarning(code) {
   if (!code) return;
   warn.innerHTML = `<svg class="i" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>${WARNINGS[code] || h(code)}</span>${code === 'no_engine' ? '<button type="button" data-copycmd>Copy command</button>' : code === 'cli_tip' ? '<button type="button" data-dismiss>Got it</button>' : ''}`;
   warn.querySelector('[data-dismiss]')?.addEventListener('click', () => setWarning(null));
-  warn.querySelector('[data-copycmd]')?.addEventListener('click', (e) => { navigator.clipboard?.writeText('node floorplan/serve.mjs'); e.target.textContent = 'Copied'; });
+  warn.querySelector('[data-copycmd]')?.addEventListener('click', (e) => { const b = e.currentTarget; copy('node floorplan/serve.mjs', { select: warn.querySelector('code') }).then((ok) => { if (ok) b.textContent = 'Copied'; }); });
 }
 function setEngine(engine, label, warning) {
   askState.engine = engine;
@@ -1953,7 +2026,7 @@ function refChip(id) {
   const b = Q.brief(id);
   if (!b) return h(id);
   const ii = info(id);
-  return `<span class="ref" data-ref="${h(id)}" style="--c:${colorOf(ii)}"><i></i>${h(b.name)}</span>`;
+  return `<span class="ref" data-ref="${hk(id)}" style="--c:${colorOf(ii)}"><i></i>${h(b.name)}</span>`;
 }
 function md(src) {
   const inline = (s) => h(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\[\[([^\]]+)\]\]/g, (_, id) => refChip(id.replace(/&#39;|&quot;/g, '').trim()));
@@ -1997,7 +2070,7 @@ function renderAnswer(a) {
   const steps = a.steps?.length >= 2;
   sheetShell(a.question, `${md(a.answer)}
     <div class="sheet-actions">${steps ? `<button class="btn soft" data-act="steps">${iconI('right')}Walk through ${a.steps.length} steps</button>` : ''}</div>
-    ${a.followups?.length ? `<div class="followups">${a.followups.slice(0, 3).map((f) => `<button data-follow="${h(f)}">${h(f)}</button>`).join('')}</div>` : ''}`);
+    ${a.followups?.length ? `<div class="followups">${a.followups.slice(0, 3).map((f) => `<button data-follow="${hk(f)}">${h(f)}</button>`).join('')}</div>` : ''}`);
 }
 function showAnswer(raw, question) {
   const clean = (arr) => (Array.isArray(arr) ? arr : []).map((x) => typeof x === 'string' ? { id: x, note: '' } : x).filter((x) => x && Q.exists(String(x.id))).map((x) => ({ id: String(x.id), note: String(x.note || '') }));
@@ -2078,7 +2151,7 @@ function showChangeResult() {
   closeSheet(); // a card in the link opens the details sheet on a phone, and it would sit on top of this summary
   sheetShell(c.question, `<p><strong>${h(c.title || 'Plan updated')}</strong></p>${md(c.summary)}
     <div class="sheet-actions">${items.length ? `<button class="btn soft" data-cr="show">${iconI('search')}Show ${plural(items.length, 'change')}</button>` : ''}<button class="btn soft" data-cr="undo">${iconI('left')}Undo</button></div>
-    ${c.followups?.length ? `<div class="followups">${c.followups.slice(0, 3).map((f) => `<button data-cf="${h(f)}">${h(f)}</button>`).join('')}</div>` : ''}`);
+    ${c.followups?.length ? `<div class="followups">${c.followups.slice(0, 3).map((f) => `<button data-cf="${hk(f)}">${h(f)}</button>`).join('')}</div>` : ''}`);
   sheet.querySelector('[data-cr="show"]')?.addEventListener('click', () => showBoard({ title: c.title || 'What changed', question: c.question, items }));
   sheet.querySelector('[data-cr="undo"]').addEventListener('click', async (ev) => {
     ev.currentTarget.disabled = true;
@@ -2148,7 +2221,7 @@ function addAskContext(id) {
 }
 function renderChips() {
   const box = $('#ask-chips');
-  box.innerHTML = askState.context.map((id) => { const i = info(id); return `<span class="chip" title="${h(i.path || '')}"><span class="ico" style="--c:${colorOf(i)}">${icon(iconKey(i))}</span><span>${h(i.name)}</span><button type="button" data-rm="${h(id)}" aria-label="Remove">${iconI('x')}</button></span>`; }).join('');
+  box.innerHTML = askState.context.map((id) => { const i = info(id); return `<span class="chip" title="${h(i.path || '')}"><span class="ico" style="--c:${colorOf(i)}">${icon(iconKey(i))}</span><span>${h(i.name)}</span><button type="button" data-rm="${hk(id)}" aria-label="Remove">${iconI('x')}</button></span>`; }).join('');
   box.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { askState.context = askState.context.filter((x) => x !== b.dataset.rm); renderChips(); askInput.focus(); });
   askInput.placeholder = !askState.engine ? 'Asking is unavailable' : askState.mode === 'change' ? (askState.context.length ? 'What should change here?' : 'Ask for a change, e.g. “also plan out refunds”…') : askState.context.length ? 'Ask about this…' : `Ask anything about ${G.project.name}…`;
   askSend.disabled = !askState.engine;
@@ -2187,7 +2260,7 @@ renderFlowMenu();
 if (!EXPORTED) loadCustomFlows();
 
 // ======================= boot =======================
-$('#proj-name').textContent = G.project.name;
+$('#proj-name').textContent = revealHidden(G.project.name);
 if (EXPORTED) {
   document.body.classList.add('exported');
   const at = new Date(EXPORTED.at);
@@ -2207,7 +2280,18 @@ if (EXPORTED) {
   made.append('Made with', logo, name, free);
   $('#stage').appendChild(made);
 }
-document.title = `${G.project.name} map`;
+document.title = revealHidden(`${G.project.name} map`);
+// Links that open a new window. Where the browser keeps storage they work as they always have. Where it doesn't
+// (usually a sandboxed frame, which tends to block new windows too) they go through openWindow, which can tell
+// when a window was blocked and shows the address instead of nothing happening. Ctrl-, ⌘-, Shift- and
+// middle-clicks are always left to the browser.
+document.addEventListener('click', (ev) => {
+  if (store.persistent) return;
+  const a = ev.target?.closest?.('a[target="_blank"][href]');
+  if (!a || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+  ev.preventDefault();
+  openWindow(a.href);
+});
 $('#btn-up').onclick = up;
 // drag the panel's left edge to resize it; the width sticks between visits
 const setPanelWidth = (w) => { document.documentElement.style.setProperty('--panel-w', `${clamp(Math.round(w), 300, Math.min(720, innerWidth - 360))}px`); };
@@ -2340,7 +2424,7 @@ window.Floorplan = Object.freeze({
   info, chain, children: (id) => visibleKids(id), parentOf: (id) => parentOf.get(id), exists: (id) => Q.exists(id),
   files, nodes, routes, colorOf, iconKey,
   // html helpers
-  h, icon, iconI, fmt, plural, md,
+  h, hk, revealHidden, icon, iconI, fmt, plural, md,
   // navigation
   go, reveal, select, open, up, fit, render: (o) => render({ keepTransform: true, ...o }), refreshPanel: () => renderPanel(),
   showBoard, playFlow, startFlow, stopFlow: () => { if (state.flow) stopFlow(); },
@@ -2372,7 +2456,7 @@ window.Floorplan = Object.freeze({
   addPanelSection(where, fn) { (ext.sections[where] ||= []).push(fn); },
   showPanel(html, bind) { custom.panel = { html, bind }; setPanel(true); renderPanel(); },
   closePanel() { custom.panel = null; renderPanel(); },
-  modal: showModal, toast, copy: (text) => copy(text),
+  modal: showModal, toast, copy: (text, o) => copy(text, o), openWindow: (url, o) => openWindow(url, o), showAddress: (url) => showAddress(url),
   icons: P,
   technical, setTechnical,
   store,

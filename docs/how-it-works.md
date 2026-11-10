@@ -52,13 +52,13 @@ Claude or Codex reads the scan summary, READMEs, setup files and entry points, t
 
 The build then assigns every file to the deepest part whose patterns match, and reports anything left over.
 
-Next, `describe.mjs` writes a worksheet for each part. A worksheet is a digest of every file and endpoint: what it defines, its doc comments, what it uses and what uses it. The AI fills in a name and description for each. On large projects, Claude Code splits the worksheets across parallel helpers.
+Next, `describe.mjs` writes a worksheet for each part. A worksheet is a digest of every file and endpoint: what it defines, its doc comments, what it uses, and which files import it, send it web requests or mention it by name (so a script started from `package.json` shows who starts it). It also quotes the code of every endpoint and the whole of very short files, a few lines each and at most 120 lines a worksheet, so the AI can see when something is still a placeholder ("replies OK and keeps nothing") instead of guessing from its name. Values that might be secret are masked in those quotes, and settings files like `.env` are never quoted. The AI fills in a name and description for each, saying what the code does today. On large projects, Claude Code splits the worksheets across parallel helpers.
 
 By default everything is written for the app's owner, not an engineer: what each thing does for the business, in everyday words. Ask for a developer-facing map and it switches to technical style.
 
 ## 4. Build
 
-`build.mjs` validates everything the AI wrote and reports problems by name ("did you mean …"). It then:
+`build.mjs` validates everything the AI wrote and reports problems by name ("did you mean …"). On a map for everyone, it also warns when a part's name or summary uses developer words ("API client", "UI kit", a framework's name), and when a part holds many files that sit in folders of their own, so the AI can reword or split it. It then:
 
 - connects the parts, using imports, matched requests and the AI's explicit connections;
 - runs the **Health** check;

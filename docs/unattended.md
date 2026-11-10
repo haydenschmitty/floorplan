@@ -68,6 +68,9 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | `nodes[]` | the top-level parts: `id`, `kind`, `files`, `loc` |
 | `links` | `total` and `byKind` (import, http, …) |
 | `descriptions` | `files` and `routes` as `{ described, total }`, `modules` ({ withSummary, total, missing }), `review` (entries still flagged), and `complete`: every file and endpoint described and nothing left to review |
+| `plainLanguage` | developer words in node labels and summaries on a map for everyone: `checked` (false when `audience` is `developers`), `count` (parts with any) and `items[]` ({ node, field: `label` or `summary`, term, say }). Each part also gets a `plain language:` line in `warnings[]`. Never an error |
+| `partsToSplit[]` | parts with no children and more than 24 files that sit in several folders of their own: `{ id, files, folders: [{ dir, files }] }`, also in `warnings[]` |
+| `secretsHidden[]` | `{ file, field }` for each piece of written text that looked like it held a secret and went into the map as «hidden», e.g. `{ "file": "descriptions/api.json", "field": "files[\"api/server.js\"].description" }`. Never the value. Each file also gets a `secret-looking text in …` line at the top of `warnings[]`. A warning, never an error; the files themselves are left as they are |
 | `health` | `kind` (`health`, or `design-review` for a blueprint), `high`, `medium`, `low`, and `important[]` ({ severity, kind, title }); `null` when there's none |
 | `screens` | how many screens were found |
 | `recentWork` | `cards` and `tasks` highlighted, and whether `recent-work.json` exists |
@@ -137,10 +140,10 @@ The NEXT codes are stable, so a program can act on them:
 `skills/floorplan/workflow.json` (`"schema": "floorplan/workflow@1"`) is SKILL.md's process as data: everything a program needs to make a map, or bring one up to date, with any model. It has:
 
 - **`conventions`**: how to run a script, what exit codes mean, how results are saved and read, how answers are checked and written, and the four tools a model gets: `read_file`, `list_files`, `grep` (all read-only, inside the codebase) and `submit` (its answer).
-- **`format`**: what each kind of step means. A step runs a script, runs a model job (once, or once per item, possibly in parallel), writes a fixed file, repeats some steps until a check passes, or follows refresh's NEXT list.
+- **`format`**: what each kind of step means. A step runs a script, runs a model job (once, or once per item, possibly in parallel), writes a fixed file, repeats some steps until a check passes (at least `minAttempts` times when given), or follows refresh's NEXT list. A job or repeat step marked `optional: true` may fail without failing the run: the driver puts the files in its `restore` list back as they were, runs its `onFail` steps, records `{ step, reason }` in the run's notes and carries on. A job with `onlyChange: { file, fields }` may change only those fields of that file (`nodes[].label` means every node's label); any other difference is sent back to the model like a schema problem.
 - **`start`**: run `status.mjs --json` and pick `first_map` or `refresh`.
 - **`workflows`** and **`procedures`**: the steps.
-- **`jobs`**: one per kind of model work: `architecture`, `update_architecture`, `descriptions` and `recent_work`. Each lists the reference files to give the model, its instructions (written for a model with only those tools and nobody to ask), its inputs, the file its answer becomes, and the name of its answer's schema.
+- **`jobs`**: one per kind of model work: `architecture`, `plain_language`, `update_architecture`, `descriptions` and `recent_work`. Each lists the reference files to give the model, its instructions (written for a model with only those tools and nobody to ask), its inputs, the file its answer becomes, and the name of its answer's schema.
 - **`schemas`**: a JSON Schema for each kind of answer.
 
 The jobs point at the reference files in `skills/floorplan/references/` rather than repeating them, so the format and the style guide have one source, shared with SKILL.md.
@@ -148,8 +151,8 @@ The jobs point at the reference files in `skills/floorplan/references/` rather t
 ### How a first map goes
 
 1. `scan.mjs --json`. The model gets its `summary`.
-2. The `architecture` job: the model reads `schema.md`, `choosing-boundaries.md` and `writing-descriptions.md`, looks around the code with its tools, and submits architecture.json. Then `build.mjs --json`. Until `build.ok` is true and `files.unassignedPercent` is under 10, the job runs again, now also given its last architecture.json and the build's `report`. Up to 4 attempts.
-3. `describe.mjs --json`, then one `descriptions` job per worksheet, in parallel if you like: the model gets the worksheet and the file to fill in, and submits it filled in. Then build. This repeats until `descriptions.complete` is true (describe.mjs lists only what's still missing). Up to 3 attempts.
+2. The `architecture` job: the model reads `schema.md`, `choosing-boundaries.md` and `writing-descriptions.md`, looks around the code with its tools, and submits architecture.json. Then `build.mjs --json`. Until `build.ok` is true and `files.unassignedPercent` is under 10, the job runs again, now also given its last architecture.json and the build's `report`. Up to 4 attempts. Then, if `plainLanguage.count` is above 0, the `plain_language` job gets architecture.json and that report, to reword only the labels and summaries its `plain language:` warnings name; the driver rejects an answer that changes anything else (`onlyChange`), and the build checks it still passes. This step is `optional`: if the model gives no valid answer, or the reworded file doesn't build cleanly after 2 attempts, the driver puts back the architecture.json that built, rebuilds, notes it and carries on. Words left after that stay warnings: they never fail the run.
+3. `describe.mjs --json`, then one `descriptions` job per worksheet, in parallel if you like: the model gets the worksheet (which quotes the code of each endpoint and of very short files) and the file to fill in, and submits it filled in. Then build. This repeats until `descriptions.complete` is true (describe.mjs lists only what's still missing). Up to 3 attempts.
 4. `recent.mjs --json`. If `nothingRecent`, write `{ "tasks": [] }`; otherwise the `recent_work` job turns its `text` into recent-work.json. There's no conversation to go on, so the input is what changed since the last map, uncommitted changes and recent commits. Then build.
 
 ### How a refresh goes
@@ -208,9 +211,18 @@ Two `descriptions` jobs, one per worksheet, each writing its `descriptions` file
 ### What a driver is responsible for
 
 - Running each model job with only the tools the file lists, inside the codebase, read-only, and no network.
-- Checking each answer against its schema, sending the problems back, and writing the accepted answer itself. The model never writes files.
+- Checking each answer against its schema (and its job's `onlyChange`), sending the problems back, and writing the accepted answer itself. The model never writes files.
+- Honouring `optional` steps: a failed one puts its `restore` files back, runs `onFail`, and is noted, never fatal.
+- Keeping secrets out of what it writes. The model reads the code, secrets included, so a fooled or careless one can copy a key into a description. The build masks such text before it reaches the map (see `secretsHidden` above), but the answer files keep what was written. To keep them clean too, run each answer's text through the same check before writing it:
+  ```js
+  import { maskSecrets } from '/path/to/floorplan/skills/floorplan/scripts/lib/health.mjs';
+  const safe = maskSecrets(text);        // text written by a person or a model
+  if (safe !== text) { /* it held something secret-looking: write `safe`, or send it back as a problem */ }
+  ```
+  `maskSecrets(text)` returns the text with every value that is or might be a secret replaced with `«hidden»`, and the same text when there's none. It's a stable export, checked by the tests. (With a second argument, `{ path, lang, category }`, it treats the text as that file's source code instead.)
+- Patterns in architecture.json (`paths`, `exclude`, `ignore`, `packages`, `hosts`) that aren't valid, are over 300 characters, have more than 12 wildcards or 8 `{…}` groups, or number over 500 in one list, are build errors that name them (`nodes[3] ("web").paths[0] "[evil" is not a valid pattern: …`), so they go back to the model like any other.
 - Limits: time, cost and how many tool calls a job may make (each job suggests a `toolCalls` budget).
-- What happens to the map afterwards. `floorplan/.cache/` holds digests of the code (the scan, the worksheets), so don't publish it. `graph.json` includes this machine's folder path and the repos' remotes. To share a map, make an export, which leaves those out: `node floorplan/serve.mjs --export [file] [--include flows,notes,recent,health]`.
+- What happens to the map afterwards. `floorplan/.cache/` holds digests of the code (the scan, the worksheets, which quote short pieces of it with secrets masked), so don't publish it. `graph.json` includes this machine's folder path and the repos' remotes. To share a map, make an export, which leaves those out: `node floorplan/serve.mjs --export [file] [--include flows,notes,recent,health]`.
 
 ## What isn't covered
 
