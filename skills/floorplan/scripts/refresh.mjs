@@ -146,6 +146,9 @@ if (fs.existsSync(descDir)) {
     const fp = path.join(descDir, name);
     let d;
     try { d = JSON.parse(fs.readFileSync(fp, 'utf8')); } catch { continue; }
+    // a file that isn't an object, or whose files or routes aren't, is left as it is: the build below names it
+    const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+    if (!isObj(d) || ['files', 'routes'].some((k) => d[k] !== undefined && !isObj(d[k]))) continue;
     let changed = false;
     const filesOut = {};
     for (const [p, v] of Object.entries(d.files || {})) {
