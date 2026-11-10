@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Run Floorplan without an agent session:** in CI, in a script, or from your own tooling, with any model that can read files and return JSON. See [Running without an agent session](docs/unattended.md).
+  - **Unattended mode** (`FLOORPLAN_UNATTENDED=1`, or `--unattended`): nothing is written outside `floorplan/` (no `CLAUDE.local.md`, no `.git/info/exclude`, no moving an old section out of `CLAUDE.md`), the map names no agent, `open.mjs` starts nothing, and a refresh whose build fails, or that finds no map, exits with an error.
+  - **Results as JSON:** `--json` on `scan.mjs`, `build.mjs`, `describe.mjs`, `refresh.mjs`, `recent.mjs` and `status.mjs` prints one JSON object instead of the report. A refresh's NEXT list comes with stable codes (`fix_build`, `assign_new_files`, `describe`, `review_structure`, `recent_work`) a program can act on.
+  - **The workflow as data:** `skills/floorplan/workflow.json` describes the steps SKILL.md takes, which script to run, which jobs need a model, what each is given, the schema of its answer and when it's done, so a small program can follow it. A new test follows it through a first map and a refresh, so it keeps working.
+  - **Maps that name no agent:** `FLOORPLAN_AGENT=none` (which unattended mode implies) makes the map's buttons say "Fix with AI" rather than naming Claude or Codex.
+- **A repo git can't read no longer disappears quietly:** if git isn't installed, or refuses a checkout because a different user owns it ("dubious ownership", common in containers), the scan now names the repo and the fix instead of leaving it off the map without a word. In unattended mode, that and finding no files at all are errors.
+- Nothing changes for people using Floorplan in Claude Code or Codex.
+
 ## 0.6.3 (2026-11-02)
 
 - **Endpoints in route tables** (#54, from @Yahhi): servers without a framework often keep their endpoints in a lookup a dispatcher reads, keyed by method and path, like `{ "GET /api/orders": listOrders }` in JavaScript or a Python dict of handlers behind a cloud function. Floorplan found no endpoints in these apps, so the website's requests weren't linked to the server. Now each key is an endpoint, named after its handler (a function, an inline function that calls one, or a wrapped one like `requireAuth(createOrder)`). Tables of other things keyed the same way, like access levels or notes, are left alone. Health doesn't judge sign-in on these endpoints, because the dispatcher or the handler checks it where Floorplan can't see.

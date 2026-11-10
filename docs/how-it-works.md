@@ -103,6 +103,10 @@ Everything above is how Floorplan maps existing code, its main job. A blueprint 
 
 Updating a blueprint redraws it from `plan.json`. Once the code exists, `refresh.mjs --from-code` maps the real code instead, and `plan.json` stays.
 
+## Without an agent session
+
+The same pipeline runs without Claude Code or Codex: in CI, in a script, or from your own tooling, with any model that can read files and return JSON. `skills/floorplan/workflow.json` describes each step as data (which script to run, which job needs a model, what it's given and what it must answer), every script can report its result as JSON, and unattended mode keeps Floorplan to its own folder. See [Running Floorplan without an agent session](unattended.md).
+
 ## Asking questions
 
 The map's server answers each question with the AI on your computer, in your project:

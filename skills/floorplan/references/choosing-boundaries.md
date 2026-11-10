@@ -27,7 +27,7 @@ Ask: *what are the deployable or ownable things, and what do they talk to?*
 
 ## Summaries
 
-One sentence, about responsibility, in the codebase's own vocabulary. "Syncs product catalog and inventory with Shopify" beats "Contains Shopify-related services". Mention the framework only at the top level.
+One sentence, about responsibility, in the codebase's own vocabulary. "Syncs product catalog and inventory with Shopify" beats "Contains Shopify-related services". Mention the framework only at the top level: in `project.summary`, or in top-level node summaries when the map's audience is developers. For everyone, node summaries say what a part does, not what it's built with ("Plain language" in writing-descriptions.md).
 
 ## Flows
 

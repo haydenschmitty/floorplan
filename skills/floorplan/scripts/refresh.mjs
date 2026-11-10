@@ -4,41 +4,77 @@
 // (renames carried over, deleted entries removed, entries whose exports/routes changed flagged
 // with "review"), rebuilds, and reports exactly what is left for Claude to look at.
 //
-// usage: node refresh.mjs [root]
+// usage: node refresh.mjs [root] [--from-code] [--json] [--unattended]
+//
+// --json prints one JSON object (floorplan/refresh-result@1): the change counts, the build's own --json
+// result, and NEXT as items with stable codes. In unattended mode (FLOORPLAN_UNATTENDED=1 or --unattended)
+// it exits 1 when there's no map, the scan fails, or the build fails; otherwise those exit 0 as before.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, parseArgs, mapDir } from './lib/common.mjs';
+import { compileGlob, parseArgs, mapDir, unattendedMode, printJson } from './lib/common.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
+const unattended = unattendedMode(args);
+const SCHEMA = 'floorplan/refresh-result@1';
 const root = path.resolve(args._[0] || '.');
 const outDir = mapDir(root);
 const graphFile = path.join(outDir, 'graph.json');
 const archFile = path.join(outDir, 'architecture.json');
 if (!fs.existsSync(graphFile) || !fs.existsSync(archFile)) {
-  console.log('No existing map here (floorplan/graph.json + architecture.json). Do a full run instead.');
-  process.exit(0);
+  const msg = 'No existing map here (floorplan/graph.json + architecture.json). Do a full run instead.';
+  if (args.json) await printJson({ schema: SCHEMA, ok: false, map: false, errors: [msg], build: null, next: [{ code: 'first_map', text: msg }], report: msg }, unattended ? 1 : 0);
+  console.log(msg);
+  process.exit(unattended ? 1 : 0);
 }
 const old = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
 const arch = JSON.parse(fs.readFileSync(archFile, 'utf8'));
+// build.mjs with --json, read back: the result as data, and its report exactly as build prints it
+const node = process.execPath;
+function runBuild(...extra) {
+  let out = '', ok = true;
+  try { out = execFileSync(node, [path.join(HERE, 'build.mjs'), root, ...extra, '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }); }
+  catch (e) { out = String(e.stdout || ''); ok = false; }
+  try { const result = JSON.parse(out); return { ok, result, text: result.report ?? '' }; }
+  catch { return { ok: false, result: null, text: out }; }
+}
 
 // A blueprint is redrawn from plan.json, not from code. --from-code maps the real code instead
 // (plan.json is kept, so the blueprint can be drawn again with plan.mjs + build.mjs).
 if (old.meta?.blueprint && !args['from-code']) {
-  const run = (script, ...rest) => execFileSync(process.execPath, [path.join(HERE, script), root, ...rest], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
-  try {
-    process.stdout.write(run('plan.mjs') + '\n' + run('build.mjs', ...process.argv.slice(2).filter((a) => a.startsWith('--'))));
-  } catch (e) { process.stdout.write(String(e.stdout || '')); process.exit(1); }
-  console.log('\nNEXT  This map is a blueprint, redrawn from floorplan/plan.json. Edit plan.json and architecture.json to change the plan. Once the code exists, run refresh.mjs --from-code for a map of the real code; plan.json stays.');
+  const next = 'This map is a blueprint, redrawn from floorplan/plan.json. Edit plan.json and architecture.json to change the plan. Once the code exists, run refresh.mjs --from-code for a map of the real code; plan.json stays.';
+  let planOut;
+  try { planOut = execFileSync(node, [path.join(HERE, 'plan.mjs'), root], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }); }
+  catch (e) {
+    if (args.json) await printJson({ schema: SCHEMA, ok: false, map: true, blueprint: true, errors: ['plan.mjs found problems in plan.json'], build: null, next: [{ code: 'fix_plan', text: 'Fix the problems in plan.json above, then run refresh.mjs again.' }], report: String(e.stdout || '') }, 1);
+    process.stdout.write(String(e.stdout || '')); process.exit(1);
+  }
+  const passed = process.argv.slice(2).filter((a) => a.startsWith('--') && a !== '--json');
+  const b = runBuild(...passed);
+  if (args.json) await printJson({ schema: SCHEMA, ok: b.ok, map: true, blueprint: true, errors: b.ok ? [] : (b.result?.errors || ['build failed']), build: b.result, next: [{ code: 'blueprint', text: next }], report: planOut + '\n' + b.text }, b.ok ? 0 : 1);
+  if (!b.ok) { process.stdout.write(b.text + '\n'); process.exit(1); }
+  process.stdout.write(planOut + '\n' + b.text + '\n');
+  console.log('\nNEXT  ' + next);
   process.exit(0);
 }
 
 // ---------- 1. re-scan (no tokens) ----------
-const node = process.execPath;
-execFileSync(node, [path.join(HERE, 'scan.mjs'), root], { stdio: ['ignore', 'ignore', 'inherit'] });
+let scanResult = null;
+try {
+  scanResult = JSON.parse(execFileSync(node, [path.join(HERE, 'scan.mjs'), root, '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
+} catch (e) {
+  // only unattended mode fails a scan on purpose (a repo git can't list, or no files at all)
+  let failed = null;
+  try { failed = JSON.parse(String(e.stdout || '')); } catch {}
+  if (!failed) throw e;
+  const errors = failed.errors || ['scan failed'];
+  if (args.json) await printJson({ schema: SCHEMA, ok: false, map: true, errors, scan: failed, build: null, next: [{ code: 'fix_scan', text: 'Fix what stopped the scan (above), then run refresh.mjs again.' }], report: errors.map((m) => `✗ ${m}`).join('\n') }, 1);
+  for (const m of errors) console.log(`✗ ${m}`);
+  process.exit(1);
+}
 const scan = JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'scan.json'), 'utf8'));
 
 const include = Array.isArray(arch.include) ? arch.include : ['code'];
@@ -142,10 +178,10 @@ fs.writeFileSync(path.join(outDir, '.cache', 'changes.json'), JSON.stringify({
 }, null, 2));
 
 // ---------- 5. rebuild (no tokens) ----------
-let buildOut = '';
-let buildOk = true;
-try { buildOut = execFileSync(node, [path.join(HERE, 'build.mjs'), root], { encoding: 'utf8' }); }
-catch (e) { buildOut = (e.stdout || '') + (e.stderr || ''); buildOk = false; }
+const built = runBuild();
+const buildOut = built.text;
+const buildOk = built.ok;
+const B = built.result; // null only if the build crashed before it could report
 
 // ---------- 6. report ----------
 const since = new Date(old.meta.generatedAt);
@@ -155,6 +191,7 @@ L.push(`  files   +${created.length} new · −${deleted.length} deleted · ${re
 L.push(`  routes  +${newRoutes.size} new · −${goneRoutes.length - routeMoves.size} removed · ${routeMoves.size} re-pathed (descriptions carried over)`);
 L.push(`  descriptions: ${carried + routeCarried} carried over, ${pruned + routePruned} removed, ${flagged} flagged for review`);
 if (!before.values().next().value?.h) L.push('  (the previous map predates content fingerprints, so edits since then could not be detected; future refreshes will)');
+for (const p of scanResult?.problems || []) L.push(`  ! ${p.message}`);
 const byDir = new Map();
 for (const p of created) { const d = p.split('/').slice(0, -1).join('/'); byDir.set(d, (byDir.get(d) || 0) + 1); }
 if (byDir.size) {
@@ -165,12 +202,39 @@ L.push('');
 L.push('BUILD');
 L.push(buildOut.split('\n').filter((l) => /^(✗|!|  - |ASSIGNMENT|  unassigned|    |DESCRIPTIONS|  Run describe|✓)/.test(l)).slice(0, 40).join('\n'));
 L.push('');
+// NEXT, with a stable code per item so a program can act on it (see docs/unattended.md)
 const todo = [];
-if (!buildOk) todo.push('Fix the build errors above in architecture.json (usually a flow step or annotation pointing at a deleted file), then run build.mjs.');
-if (/unassigned, by directory/.test(buildOut)) todo.push('New files landed outside every node: add globs (or a node) in architecture.json for the directories listed under "unassigned".');
-if (/Run describe/.test(buildOut)) todo.push('Run describe.mjs: it writes worksheets for only the new and flagged items. Fill them in (drop each "review" field once the entry is accurate), then run build.mjs.');
-if (created.length + deleted.length > Math.max(20, before.size * 0.15)) todo.push('This is a large change: re-read the summaries of the modules that gained or lost many files, and check the flows still hold.');
-todo.push('Mark recent work: run recent.mjs, rewrite recent-work.json for what was just worked on (an empty "tasks" list if nothing was), then run build.mjs.');
+const largeChange = created.length + deleted.length > Math.max(20, before.size * 0.15);
+if (!buildOk) todo.push({ code: 'fix_build', text: 'Fix the build errors above in architecture.json (usually a flow step or annotation pointing at a deleted file), then run build.mjs.', errors: B?.errors || [] });
+if (B ? B.files?.unassigned > 0 : /unassigned, by directory/.test(buildOut)) todo.push({ code: 'assign_new_files', text: 'New files landed outside every node: add globs (or a node) in architecture.json for the directories listed under "unassigned".', directories: B?.unassignedByDirectory || [] });
+if (B?.descriptions ? !B.descriptions.complete : /Run describe/.test(buildOut)) todo.push({ code: 'describe', text: 'Run describe.mjs: it writes worksheets for only the new and flagged items. Fill them in (drop each "review" field once the entry is accurate), then run build.mjs.', ...(B?.descriptions ? { missing: { files: B.descriptions.files.total - B.descriptions.files.described, routes: B.descriptions.routes.total - B.descriptions.routes.described }, review: B.descriptions.review } : {}) });
+if (largeChange) todo.push({ code: 'review_structure', text: 'This is a large change: re-read the summaries of the modules that gained or lost many files, and check the flows still hold.' });
+todo.push({ code: 'recent_work', text: 'Mark recent work: run recent.mjs, rewrite recent-work.json for what was just worked on (an empty "tasks" list if nothing was), then run build.mjs.' });
 L.push('NEXT');
-todo.forEach((t, i) => L.push(`  ${i + 1}. ${t}`));
-console.log(L.join('\n'));
+todo.forEach((t, i) => L.push(`  ${i + 1}. ${t.text}`));
+if (!args.json) console.log(L.join('\n'));
+else {
+  await printJson({
+    schema: SCHEMA,
+    ok: buildOk,
+    map: true,
+    blueprint: false,
+    since: old.meta.generatedAt,
+    errors: buildOk ? [] : (B?.errors?.length ? B.errors : ['build failed']),
+    warnings: (scanResult?.problems || []).map((p) => p.message),
+    changes: {
+      files: { new: created.length, deleted: deleted.length, moved: renames.size, edited: edited.length, digestChanged: digestChanged.length },
+      routes: { new: newRoutes.size, removed: goneRoutes.length - routeMoves.size, repathed: routeMoves.size },
+      descriptions: { carried: carried + routeCarried, removed: pruned + routePruned, flagged },
+      large: largeChange,
+      fingerprints: !!before.values().next().value?.h,
+    },
+    newFilesByDirectory: [...byDir.entries()].sort((a, b) => b[1] - a[1]).map(([dir, files]) => ({ dir, files })),
+    changesFile: 'floorplan/.cache/changes.json',
+    build: B,
+    next: todo,
+    report: L.join('\n'),
+  });
+}
+// unattended: a refresh whose build failed is a failure
+if (unattended && !buildOk) process.exitCode = 1;

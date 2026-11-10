@@ -268,6 +268,7 @@ More in [Privacy and security](docs/privacy-and-security.md). Wondering whether 
 | [Privacy and security](docs/privacy-and-security.md) | What runs where, and what leaves your machine |
 | [Is it safe to install?](docs/is-it-safe.md) | No hooks, MCP servers, dependencies or downloads; every program it runs; checking your installed copy |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and fixes |
+| [Running without an agent session](docs/unattended.md) | In CI, in scripts or from your own tooling, with any model |
 | [Developing Floorplan](docs/development.md) | Repo layout, local installs, releases |
 
 ## FAQ
