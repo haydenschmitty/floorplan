@@ -16,7 +16,9 @@ Ask: *what are the deployable or ownable things, and what do they talk to?*
 
 - Prefer **responsibility** over **file type**. "Orders", "Inventory" and "Auth" beat "routes", "services" and "models" when the code is organized that way. But if the code really is layered (routes/ → services/ → models/), mirror the layers. A layered board that shows routes → services → models is honest and readable.
 - A child is worth making when it has a clear one-sentence purpose and enough files (roughly 3+) or importance (a central API client) to matter.
-- Large UI component trees: group by feature area (`products`, `orders`, `checkout`), and keep a `UI kit` chip for shared primitives (`components/ui`). The kit will have many incoming traces. That's correct and useful to see.
+- Large UI component trees: group by feature area (`products`, `orders`, `checkout`), and keep one chip for the shared building blocks (`components/ui`: buttons, tables, dialogs). That chip will have many incoming traces. That's correct and useful to see.
+- **Don't make one bucket for every component.** If `components/` holds `products/`, `orders/`, `account/` and `nav/`, a single "Screen parts" chip with 30 files tells the reader nothing. Give each feature folder its own child ("Products", "Orders", "Account settings", "Menu and frame"), and keep only the shared kit together. The same goes for any part where most files sit in a few folders of their own.
+- A part with no children and more than ~24 files is too coarse. The build warns about one whose files fall into several folders of 3 or more ("Consider children by feature area"), and lists the folders. Split it along them, or along whatever the code really follows.
 - Don't go deeper than three levels of nodes. The viewer already gives you folder, file and symbol levels below your nodes.
 
 ## Covering the files
@@ -27,7 +29,7 @@ Ask: *what are the deployable or ownable things, and what do they talk to?*
 
 ## Summaries
 
-One sentence, about responsibility, in the codebase's own vocabulary. "Syncs product catalog and inventory with Shopify" beats "Contains Shopify-related services". Mention the framework only at the top level.
+One sentence, about responsibility, in the codebase's own vocabulary. "Syncs product catalog and inventory with Shopify" beats "Contains Shopify-related services". Mention the framework only at the top level: in `project.summary`, or in top-level node summaries when the map's audience is developers. For everyone, node summaries say what a part does, not what it's built with ("Plain language" in writing-descriptions.md). Say what it does today: if a part is mostly placeholders, the summary says so ("Say what it does today" in writing-descriptions.md).
 
 ## Flows
 

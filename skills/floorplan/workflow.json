@@ -1,0 +1,492 @@
+{
+  "schema": "floorplan/workflow@1",
+  "title": "Making and updating a Floorplan map without an agent session",
+  "about": [
+    "This file describes, as data, the steps SKILL.md describes in prose: which scripts to run, which jobs need a model, what each job is given, what it must answer and when it's done.",
+    "It's for running Floorplan without an agent session: in CI, in scripts, or from your own tooling, with any model that can read files and return JSON. A small program (a driver) reads this file and follows it.",
+    "The scripts do everything mechanical and never call a model. A model only ever writes JSON files: floorplan/architecture.json, floorplan/descriptions/<key>.json and floorplan/recent-work.json.",
+    "docs/unattended.md explains the format with a worked example. tests/unattended.test.mjs contains a small driver that follows this file."
+  ],
+
+  "conventions": {
+    "skillDir": "The folder holding this file. Script names are under <skillDir>/scripts/ and reference files are relative to <skillDir>.",
+    "root": "The codebase root: one repo, or a folder holding several repos side by side. Every script takes it as its first argument, and every path in this file (writes, file inputs) is relative to it.",
+    "environment": { "FLOORPLAN_UNATTENDED": "1" },
+    "run": "Run a script step as: node <skillDir>/scripts/<run> <root> <args...>, with the environment above added to your own. Its stdout is exactly one JSON object (every step passes --json); stderr is notes for a person, worth logging.",
+    "exitCodes": "0 means the step worked, including when there was nothing to do (the JSON says so). Anything else means it failed: the workflow stops there, unless the step says allowFailure, in which case its JSON is still saved and a later check decides.",
+    "results": "A step with `save` stores its JSON under that name. `saveFields` also stores fields of it under other names, e.g. { \"build\": \"build\" } stores result.build as `build`. The latest save of a name wins.",
+    "paths": "A dotted path such as build.files.unassignedPercent reads a saved result. A path that doesn't exist yet counts as not met in a condition, and an input that names one is left out when it's optional.",
+    "templates": "{name.path} inside a string is replaced with that value: a saved result, the current forEach item, the current NEXT item (`item`), or {now}, the current time as an ISO 8601 string.",
+    "conditions": "A list of { path, op, value } that must all hold. op is one of: equals, notEquals, lessThan, atMost, greaterThan, in (value is a list).",
+    "answers": "A model job's answer is one JSON object, checked against the job's schema (under `schemas`, standard JSON Schema using only: type, properties, required, items, enum, pattern, minItems, minLength, additionalProperties, description). If it doesn't match, send the problems back and ask again, up to `answerRetries` times. Then apply the job's `set` fields, if any, and write it to the job's `writes` path as JSON with 2-space indentation, creating folders as needed. The model never writes files itself.",
+    "answerRetries": 2,
+    "tools": {
+      "read_file": "Read a text file under the codebase root, optionally a range of lines. Read-only.",
+      "list_files": "List files under the codebase root matching a glob. Read-only.",
+      "grep": "Search files under the codebase root for a regular expression, optionally limited by a glob. Read-only.",
+      "submit": "Give the final answer: one JSON object matching the job's schema. The job ends when the answer is accepted."
+    },
+    "toolLimits": "Keep the model inside the codebase root, read-only, with no network, no shell and no other tools. Each job's `toolCalls` is a suggested budget, not a hard rule."
+  },
+
+  "format": {
+    "start": "Run its script and save the result, then take the first entry in choose whose conditions hold: run that workflow, or fail with its message.",
+    "workflow": "{ steps: [step...], done: [conditions] }. Steps run in order; afterwards, done must hold, or the run failed.",
+    "run step": "{ id, run: \"<script>.mjs\", args: [...], save?, saveFields?, allowFailure?, when? }: run a script (see conventions.run).",
+    "job step": "{ id, job: \"<job name>\", forEach?, as?, parallel?, when? }: run a model job from `jobs`. With forEach (a path to a list), run it once per item, with the item available to templates under the name in `as`; parallel: true means those runs may happen at the same time.",
+    "write step": "{ id, write: \"<path>\", value: {...}, when? }: write that JSON to the path, with no model involved.",
+    "repeat step": "{ id, repeat: [step...], until: [conditions], minAttempts?, maxAttempts, failMessage }: before each attempt, if every condition holds, the repeat is done (so it may not run at all), except that the first minAttempts attempts (default 0) always run. Otherwise run its steps and check again, up to maxAttempts times. If the conditions still don't hold after the last attempt, the workflow fails with failMessage.",
+    "optional": "A job or repeat step may have `optional: true`, `restore: [paths]` and `onFail: [step...]`: it may fail without failing the workflow. Before running it, keep a copy of each path in restore (noting which don't exist). If it fails (a job gives no valid answer within conventions.answerRetries, a script fails without allowFailure, or a repeat's conditions still don't hold after maxAttempts), put those files back exactly as they were (deleting any that didn't exist), run its onFail steps (which are not optional), record { step: id, reason } in the run's notes, and carry on with the next step. Use it only for work that improves the map without being needed for it.",
+    "onlyChange": "A job may have `onlyChange: { file, fields: [\"nodes[].label\", …] }`: its answer may differ from that file, as it was before the job, only in those fields (`nodes[]` means every item of the nodes list, matched by position; the list's length and every other field must stay the same). Any other difference is a problem with the answer, sent back like a schema problem.",
+    "use step": "{ id, use: \"<procedure or workflow name>\" }: run the steps of a procedure (under `procedures`) or a workflow (under `workflows`) in place.",
+    "next step": "{ id, next: \"<path to refresh's next list>\", handlers: { <code>: <procedure or workflow name> | { fail: message } | { skip: true } } }: for each NEXT item in order, with the item available as `item`, run its handler. An item whose code has no handler fails the workflow, so a newer Floorplan with a new code can't be silently ignored.",
+    "when": "Any step may have `when`: a list of conditions; the step is skipped unless they all hold."
+  },
+
+  "start": {
+    "about": "Pick the workflow from status.mjs. A map that already exists is refreshed, which re-reads only what changed.",
+    "run": "status.mjs",
+    "args": ["--json"],
+    "save": "status",
+    "choose": [
+      { "when": [{ "path": "status.state", "op": "in", "value": ["map", "blueprint"] }], "workflow": "refresh" },
+      { "when": [{ "path": "status.state", "op": "in", "value": ["none", "unbuilt"] }], "workflow": "first_map" },
+      { "when": [{ "path": "status.state", "op": "in", "value": ["blueprint-started", "unknown"] }], "fail": "This folder holds a blueprint that was never drawn, or its map couldn't be read. That needs a person: see SKILL.md." }
+    ]
+  },
+
+  "workflows": {
+    "first_map": {
+      "about": "A first map: scan, have the model write architecture.json until the build is clean, give it a chance to reword only the labels and summaries the build says use developer words (build.plainLanguage, a warning, never a failure: an optional step that puts the earlier architecture.json back if the rewording doesn't build), describe every file and endpoint, then mark recent work.",
+      "steps": [
+        { "id": "scan", "run": "scan.mjs", "args": ["--json"], "save": "scan" },
+        {
+          "id": "architecture",
+          "repeat": [
+            { "id": "write-architecture", "job": "architecture" },
+            { "id": "build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true }
+          ],
+          "until": [
+            { "path": "build.ok", "op": "equals", "value": true },
+            { "path": "build.files.unassignedPercent", "op": "lessThan", "value": 10 }
+          ],
+          "maxAttempts": 4,
+          "failMessage": "The build still has errors, or more than 10% of files are unassigned, after the model's last attempt at architecture.json."
+        },
+        {
+          "id": "plain-language",
+          "about": "Only wording: a warning is never worth failing the map over, so if the reworded architecture.json doesn't build cleanly, the one that did is put back.",
+          "when": [{ "path": "build.plainLanguage.count", "op": "greaterThan", "value": 0 }],
+          "optional": true,
+          "restore": ["floorplan/architecture.json"],
+          "repeat": [
+            { "id": "reword-labels", "job": "plain_language" },
+            { "id": "plain-language-build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true }
+          ],
+          "until": [
+            { "path": "build.ok", "op": "equals", "value": true },
+            { "path": "build.files.unassignedPercent", "op": "lessThan", "value": 10 }
+          ],
+          "minAttempts": 1,
+          "maxAttempts": 2,
+          "failMessage": "The reworded architecture.json doesn't build cleanly, so the one before it was kept.",
+          "onFail": [{ "id": "plain-language-undone", "run": "build.mjs", "args": ["--json"], "save": "build" }]
+        },
+        { "id": "describe", "use": "describe" },
+        { "id": "recent-work", "use": "recent_work" }
+      ],
+      "done": [
+        { "path": "build.ok", "op": "equals", "value": true },
+        { "path": "build.descriptions.complete", "op": "equals", "value": true }
+      ]
+    },
+
+    "refresh": {
+      "about": "Bring an existing map up to date: refresh.mjs re-scans and does the bookkeeping without a model, then do only what its NEXT list asks.",
+      "steps": [
+        { "id": "refresh", "run": "refresh.mjs", "args": ["--json"], "save": "refresh", "saveFields": { "build": "build" }, "allowFailure": true },
+        {
+          "id": "next",
+          "next": "refresh.next",
+          "handlers": {
+            "first_map": "first_map",
+            "fix_scan": { "fail": "The scan stopped (a repo git can't list, or no files at all). That needs fixing on the machine: see refresh.errors." },
+            "fix_plan": { "fail": "plan.json has problems. Blueprints need a person: see SKILL.md." },
+            "blueprint": { "skip": true },
+            "fix_build": "fix_build",
+            "assign_new_files": "assign_new_files",
+            "describe": "describe",
+            "review_structure": "review_structure",
+            "recent_work": "recent_work"
+          }
+        }
+      ],
+      "done": [
+        { "path": "build.ok", "op": "equals", "value": true }
+      ]
+    }
+  },
+
+  "procedures": {
+    "describe": [
+      {
+        "id": "describe-all",
+        "repeat": [
+          { "id": "worksheets", "run": "describe.mjs", "args": ["--json"], "save": "describe" },
+          { "id": "fill-worksheet", "job": "descriptions", "forEach": "describe.worksheets", "as": "worksheet", "parallel": true, "when": [{ "path": "describe.nothingToDo", "op": "equals", "value": false }] },
+          { "id": "build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true }
+        ],
+        "until": [
+          { "path": "build.ok", "op": "equals", "value": true },
+          { "path": "build.descriptions.complete", "op": "equals", "value": true }
+        ],
+        "maxAttempts": 3,
+        "failMessage": "Some files or endpoints still have no description (or still need review) after the last attempt. describe.mjs lists only what's missing, so running this again picks up where it stopped."
+      }
+    ],
+
+    "recent_work": [
+      { "id": "recent-facts", "run": "recent.mjs", "args": ["--json"], "save": "recent" },
+      { "id": "clear-recent-work", "write": "floorplan/recent-work.json", "value": { "updatedAt": "{now}", "tasks": [] }, "when": [{ "path": "recent.nothingRecent", "op": "equals", "value": true }] },
+      { "id": "write-recent-work", "job": "recent_work", "when": [{ "path": "recent.nothingRecent", "op": "equals", "value": false }] },
+      { "id": "build", "run": "build.mjs", "args": ["--json"], "save": "build" }
+    ],
+
+    "fix_build": [
+      {
+        "id": "fix-build",
+        "repeat": [
+          { "id": "update-architecture", "job": "update_architecture" },
+          { "id": "build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true }
+        ],
+        "until": [{ "path": "build.ok", "op": "equals", "value": true }],
+        "maxAttempts": 3,
+        "failMessage": "The build still has errors after the model's last attempt at fixing architecture.json."
+      }
+    ],
+
+    "assign_new_files": [
+      { "id": "place-new-files", "job": "update_architecture", "when": [{ "path": "refresh.changes.files.new", "op": "greaterThan", "value": 0 }] },
+      { "id": "build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true, "when": [{ "path": "refresh.changes.files.new", "op": "greaterThan", "value": 0 }] },
+      {
+        "id": "assign-new-files",
+        "repeat": [
+          { "id": "update-architecture", "job": "update_architecture" },
+          { "id": "build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true }
+        ],
+        "until": [
+          { "path": "build.ok", "op": "equals", "value": true },
+          { "path": "build.files.unassignedPercent", "op": "lessThan", "value": 10 }
+        ],
+        "maxAttempts": 3,
+        "failMessage": "More than 10% of files are still unassigned, or the build has errors, after the model's last attempt."
+      }
+    ],
+
+    "review_structure": [
+      { "id": "update-architecture", "job": "update_architecture" },
+      { "id": "build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true },
+      { "id": "fix-build", "use": "fix_build" }
+    ]
+  },
+
+  "jobs": {
+    "architecture": {
+      "about": "SKILL.md steps 2-4: decide what the parts of the app are, and write architecture.json.",
+      "read": ["references/schema.md", "references/choosing-boundaries.md", "references/writing-descriptions.md"],
+      "input": [
+        { "name": "Scan summary", "from": "scan.summary" },
+        { "name": "Your last architecture.json", "file": "floorplan/architecture.json", "optional": true },
+        { "name": "What the last build said about it", "from": "build.report", "optional": true }
+      ],
+      "instructions": [
+        "You are drawing a map of a codebase that someone new can read like a system diagram: its parts, the outside services it uses, and how they connect. You can't ask anyone anything, so decide, and record anything uncertain in a summary.",
+        "The scan summary lists the repos, a code tree with line counts, entrypoint candidates, the heaviest imports between folders, web requests matched to endpoints, and outside packages and hosts. Work from it. Don't try to read every file.",
+        "Read the reference documents you were given: schema.md is the format of your answer (architecture.json), choosing-boundaries.md is how to carve a codebase into a good map, and writing-descriptions.md says how to write labels and summaries.",
+        "Explore just enough with your tools: READMEs, manifests (package.json, pyproject.toml, go.mod, docker-compose files, deploy configs) and entrypoints, then skim 1-2 files per candidate part until you can write a one-sentence summary for each. You're after the shape of the system, not a code review.",
+        "Explore cheaply. Ask for several files in one turn when you can, and read the top of a file (start_line 1, end_line 60-80) rather than all of it; open more only if the top leaves its purpose unclear. Stop once every candidate part has its one-sentence summary: most codebases need 15-30 tool calls, and everything you read stays in the conversation and makes each later step slower.",
+        "Don't invent. Add an external node, an edge or a flow step only for a connection you can point to: in the scan summary (imports, web requests, EXTERNAL PACKAGES, EXTERNAL HOSTS) or in code you read. A setting or a password that names a service is not evidence that the code talks to it; if you're unsure, leave it out and say so in a summary.",
+        "Aim for: 3-9 top-level nodes; 3-12 children under each big one; `paths` globs covering more than 90% of code files; external nodes for the databases and outside services the code really talks to (with `packages` and `hosts` so the build connects them); edges only for what the scan can't see (queues, scheduled jobs, webhooks, calls through addresses kept in settings); 1-3 flows for the system's main jobs; and a `tour` of 3-8 stops in the order a newcomer should see them (what the app is, the apps people use, the main server, outside services, ending on an important screen's file). Every node needs a `summary`.",
+        "Audience: leave `audience` unset (everyone) unless the code is plainly for engineers (a library, an SDK, infrastructure code). Write `project.summary`, every node `label` and `summary`, and the tour in plain language for the app's owner (\"Plain language\" in writing-descriptions.md). Use short labels like \"Main server\" rather than \"Shop API (Flask)\". For everyone, framework and tool names (Express, React, FastAPI, Docker…) may appear once, in `project.summary`; keep them out of node summaries, flow notes and the tour, which say what each part does instead.",
+        "Say what the code does today, not what its names suggest (\"Say what it does today\" in writing-descriptions.md): if a part, a flow step or a tour stop is a placeholder that only replies or stores nothing yet, say so.",
+        "Paths are relative to the codebase root and use forward slashes. With several repos side by side, they start with the repo folder, e.g. `api-service/src/**`.",
+        "If you were given your last architecture.json and what the build said about it, fix every error the build names, and give each sizeable directory under \"unassigned, by directory\" a home (or an `ignore` entry for things that aren't the system: generated code, vendored copies, fixtures). Reword every label and summary a \"plain language:\" warning names, using the plain phrase it suggests, and split a part the build says holds many files in folders of their own into children by feature area. Keep the rest as it was.",
+        "Submit the complete architecture.json."
+      ],
+      "writes": "floorplan/architecture.json",
+      "schema": "architecture",
+      "toolCalls": 40
+    },
+
+    "plain_language": {
+      "about": "Reword the part labels and summaries the build's \"plain language:\" warnings name, and change nothing else.",
+      "read": ["references/writing-descriptions.md"],
+      "input": [
+        { "name": "The current architecture.json", "file": "floorplan/architecture.json" },
+        { "name": "What the build said about it", "from": "build.report" }
+      ],
+      "instructions": [
+        "A map of a codebase is written for everyone, and the build found developer words in some of its part labels and summaries. Each \"plain language:\" warning in what the build said names a part (its node id), the field (label or summary), the words and a plain phrase to use instead (\"Jargon → plain\" in writing-descriptions.md).",
+        "Change ONLY the wording of those labels and summaries. Keep every other field of architecture.json exactly as it is: the node ids, kinds, parents, paths, exclude, packages, hosts and tags, the other nodes, and project, include, ignore, edges, flows, annotations and tour. Don't add, remove or reorder nodes. An answer that changes anything else is sent back.",
+        "Say the same thing in plain words, as accurately as before. If a word names something that really is called that in this app (a product name, or the business's own word for it), keep it.",
+        "You don't need to read any code. Submit the complete architecture.json."
+      ],
+      "writes": "floorplan/architecture.json",
+      "schema": "architecture",
+      "onlyChange": { "file": "floorplan/architecture.json", "fields": ["nodes[].label", "nodes[].summary"] },
+      "toolCalls": 3
+    },
+
+    "update_architecture": {
+      "about": "A refresh's NEXT items fix_build, assign_new_files and review_structure: change architecture.json only as far as the item asks.",
+      "read": ["references/schema.md", "references/choosing-boundaries.md", "references/writing-descriptions.md"],
+      "input": [
+        { "name": "What to do (from the refresh's NEXT list)", "from": "item.text" },
+        { "name": "What the refresh found", "from": "refresh.report" },
+        { "name": "What the last build said", "from": "build.report", "optional": true },
+        { "name": "The current architecture.json", "file": "floorplan/architecture.json" }
+      ],
+      "instructions": [
+        "You keep a map of a codebase up to date after its code changed. Its structure is in architecture.json (format: schema.md). You can't ask anyone anything, so decide.",
+        "Do only what you were asked to do (and if the last build reported errors, fix those too): fix the build errors it names (usually a flow step, tour stop or annotation pointing at a file that was deleted or moved); or give the new directories listed under \"unassigned, by directory\" a home, with globs on the right node or a new node (or an `ignore` entry for things that aren't the system); or, after a large change, re-read the summaries of the parts that gained or lost many files and check the flows still hold.",
+        "Look at the code with your tools where you need to. Keep every node id, and every label and summary that's still right, exactly as it is: other files refer to the ids.",
+        "Write anything new in the same style as the rest: plain language unless `audience` is \"developers\" (writing-descriptions.md), saying what the code does today. If the last build gave \"plain language:\" warnings for parts you add or change, reword those.",
+        "Submit the complete updated architecture.json."
+      ],
+      "writes": "floorplan/architecture.json",
+      "schema": "architecture",
+      "toolCalls": 40
+    },
+
+    "descriptions": {
+      "about": "SKILL.md step 6, one worksheet per run: a name and a one-line description for every file and endpoint in it.",
+      "read": ["references/writing-descriptions.md"],
+      "input": [
+        { "name": "Worksheet", "file": "{worksheet.worksheet}" },
+        { "name": "The file to fill in, as it stands", "file": "{worksheet.descriptions}" },
+        { "name": "Who you're writing for", "from": "describe.style" }
+      ],
+      "instructions": [
+        "You name and describe the files and endpoints of a codebase for its map. Read writing-descriptions.md first and follow it.",
+        "The worksheet is a digest of each file (what it defines, its doc comments, what it uses, and the files that import it, send it web requests or name it) and each endpoint (its handler), and it quotes the code of each endpoint and the whole of very short files. That's enough to describe most of them. Open a file with read_file (its first ~80 lines, or the handler) when the digest leaves its purpose unclear, or before you claim anything it doesn't show: generic names (utils, index, common) and big files usually need a look.",
+        "Say what the code does today, not what its name suggests (\"Say what it does today\" in writing-descriptions.md). When quoted code only replies, stores nothing or is otherwise a placeholder, say so plainly (\"…without keeping it anywhere yet\"). Don't say who or what runs or uses something (by hand, on a schedule, by a tool) unless the worksheet's imported by / sent web requests by / named in lines or code you read show it, and never invent example values.",
+        "The file to fill in already has an entry for everything the worksheet lists. Fill in every empty description and improve every name. Don't change, add or remove keys: they're how the build matches entries to files and endpoints. Endpoint keys are \"METHOD /path\" exactly as the worksheet prints them.",
+        "Entries the worksheet marks REVIEW already have a description, but their code changed: update the name and description if the change matters, then drop the `review` field. Leave entries the worksheet doesn't list exactly as they are.",
+        "Be consistent within the file: sibling files should read as a set, and two siblings should never get nearly the same description.",
+        "Submit the whole file, every entry included."
+      ],
+      "writes": "{worksheet.descriptions}",
+      "schema": "descriptions",
+      "toolCalls": 20
+    },
+
+    "recent_work": {
+      "about": "SKILL.md step 7 without a conversation: the facts from recent.mjs (changes since the last map, uncommitted changes, recent commits) are the only source.",
+      "read": ["references/schema.md"],
+      "input": [
+        { "name": "Recent work facts", "from": "recent.text" }
+      ],
+      "instructions": [
+        "You mark recent work on a codebase's map: the cards for what was just worked on get a \"Changed\" or \"New\" tag and your note. The format is the \"Recent work\" section of schema.md.",
+        "There's no conversation to go on, so the facts you were given are your only source: what changed since the previous map, uncommitted changes, and recent commits, each with the card it shows up as. Use what is clearly in flight. If nothing is, submit { \"tasks\": [] } so old highlights clear.",
+        "One task per piece of work the commits and changes show (a feature, a fix): `title` (2-5 words); `request`: leave it empty (\"\"), because the map shows it as \"You asked: ...\" and nobody asked for this work here, so a commit message there would put words in the reader's mouth; `summary` (1-2 sentences: what the work set out to do, in plain words, then what was done and where it stands, including anything deleted, since deleted files aren't on the map).",
+        "`items`: the cards whose behaviour changed for that task, usually 3-15, each a file path, node id or \"METHOD /path\" exactly as the facts list them, with `change` (\"new\" or \"changed\") and a `note`: one or two plain sentences on what changed on this card and how it serves the task. Skip tests and drive-by edits unless they're the point. A file with a changed endpoint can list both.",
+        "Keep the code's words out unless the map's audience is developers. Never put secrets in notes. Say what the change does today, including when it's a placeholder, and never invent example values: use only values you can see in the facts or the code.",
+        "Submit recent-work.json."
+      ],
+      "writes": "floorplan/recent-work.json",
+      "set": { "updatedAt": "{now}" },
+      "schema": "recent_work",
+      "toolCalls": 15
+    }
+  },
+
+  "schemas": {
+    "architecture": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "floorplan/architecture.json. The full format and its meaning: references/schema.md. build.mjs checks it against the scan and names every problem.",
+      "type": "object",
+      "required": ["project", "nodes"],
+      "additionalProperties": false,
+      "properties": {
+        "$schema": { "type": "string", "enum": ["floorplan/architecture@1"] },
+        "project": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "summary": { "type": "string", "description": "1-3 sentences, plain language" },
+            "entrypoints": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "audience": { "type": "string", "enum": ["everyone", "developers"] },
+        "include": { "type": "array", "items": { "type": "string", "enum": ["code", "config", "docs"] } },
+        "ignore": { "type": "array", "items": { "type": "string" } },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "kind"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^[A-Za-z0-9_.\\-]+$" },
+              "label": { "type": "string", "minLength": 1 },
+              "kind": { "type": "string", "enum": ["ui", "service", "worker", "library", "feature", "data", "config", "test", "script", "infra", "external"] },
+              "parent": { "type": "string" },
+              "summary": { "type": "string", "description": "one sentence: what it is responsible for. Every node should have one." },
+              "details": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "exclude": { "type": "array", "items": { "type": "string" } },
+              "packages": { "type": "array", "items": { "type": "string" } },
+              "hosts": { "type": "array", "items": { "type": "string" } },
+              "tags": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "kind"],
+            "additionalProperties": false,
+            "properties": {
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "kind": { "type": "string", "enum": ["import", "call", "http", "rpc", "event", "queue", "data", "config"] },
+              "label": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "annotations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "note"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "note": { "type": "string" },
+              "tags": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "flows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "steps"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "description": { "type": "string" },
+              "steps": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": ["node", "note"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "node": { "type": "string", "description": "a node id or a file path" },
+                    "note": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tour": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["node", "title", "note"],
+            "additionalProperties": false,
+            "properties": {
+              "node": { "type": "string", "description": "a node id or a file path" },
+              "title": { "type": "string" },
+              "note": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "descriptions": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "floorplan/descriptions/<key>.json: a name and description for each file (keyed by path) and endpoint (keyed by \"METHOD /path\"). Guide: references/writing-descriptions.md. `review` is only ever left by refresh.mjs, for entries whose code changed; drop it once the entry is right.",
+      "type": "object",
+      "required": ["files"],
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["name", "description"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "review": { "type": "string" }
+            }
+          }
+        },
+        "routes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["name", "description"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "review": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "recent_work": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "floorplan/recent-work.json. Format: the \"Recent work\" section of references/schema.md. { \"tasks\": [] } clears the highlights.",
+      "type": "object",
+      "required": ["tasks"],
+      "additionalProperties": false,
+      "properties": {
+        "updatedAt": { "type": "string" },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["title", "request", "summary", "items"],
+            "additionalProperties": false,
+            "properties": {
+              "title": { "type": "string", "minLength": 1 },
+              "request": { "type": "string" },
+              "summary": { "type": "string" },
+              "status": { "type": "string" },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["ref", "change", "note"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "ref": { "type": "string", "description": "a file path, a node id, or \"METHOD /path\", exactly as on the map" },
+                    "change": { "type": "string", "enum": ["new", "changed"] },
+                    "note": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -94,7 +94,7 @@
         SC.modal({
           title: `Build this with ${A.name}`,
           html: `<p class="hc-hint">Copy this request and paste it into <b>${h(A.app)}</b>, opened in your project folder.</p><pre>${h(prompt)}</pre>`,
-          actions: [{ label: 'Copy prompt', primary: true, icon: 'copy', onClick: () => { SC.copy(prompt); SC.toast(`Copied. Paste it into ${A.app}.`); } }],
+          actions: [{ label: 'Copy prompt', primary: true, icon: 'copy', onClick: () => { SC.copy(prompt).then((ok) => { if (ok) SC.toast(`Copied. Paste it into ${A.app}.`); }); } }],
         });
       }),
     };
