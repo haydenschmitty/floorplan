@@ -145,6 +145,8 @@
     ],
 
     "assign_new_files": [
+      { "id": "place-new-files", "job": "update_architecture", "when": [{ "path": "refresh.changes.files.new", "op": "greaterThan", "value": 0 }] },
+      { "id": "build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true, "when": [{ "path": "refresh.changes.files.new", "op": "greaterThan", "value": 0 }] },
       {
         "id": "assign-new-files",
         "repeat": [

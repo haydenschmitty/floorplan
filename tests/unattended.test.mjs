@@ -294,6 +294,40 @@ test('a refresh, following workflow.json: run refresh, then only what NEXT asks'
   assert.deepEqual(d.json.worksheets, []);
 });
 
+test('a refresh gives a new file a home even when unassigned files stay under the 10% check', () => {
+  // twenty files in one part, then one new file in a folder no part covers: 1 in 21 is under 10%,
+  // so the repeat's check already holds, but the new file still deserves a place on the map
+  const files = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`app/src/m${i}.js`, `export const m${i} = ${i};\n`]));
+  const p = makeProject(files, { repos: ['app'] });
+  try {
+    commitAll(path.join(p, 'app'), 'First version');
+    const arch = { project: { name: 'App', summary: 'An app.' }, nodes: [{ id: 'app', label: 'App', kind: 'service', summary: 'The app.', paths: ['app/src/**'] }] };
+    const fill = ({ inputs }) => {
+      const d = JSON.parse(inputs['The file to fill in, as it stands']);
+      return { files: Object.fromEntries(Object.keys(d.files).map((k) => [k, { name: path.posix.basename(k), description: `Holds ${k}.` }])) };
+    };
+    const seen = [];
+    const m = {
+      architecture: () => structuredClone(arch),
+      descriptions: fill,
+      recent_work: () => ({ tasks: [] }),
+      update_architecture: ({ inputs, scope }) => {
+        seen.push(scope.item.code);
+        const a = JSON.parse(inputs['The current architecture.json']);
+        a.nodes.push({ id: 'tools', label: 'Tools', kind: 'script', summary: 'Jobs run by hand.', paths: ['app/tools/**'] });
+        return a;
+      },
+    };
+    drive(p, m);
+    fs.mkdirSync(path.join(p, 'app', 'tools'));
+    fs.writeFileSync(path.join(p, 'app', 'tools', 'seed.js'), 'export function seed() { return 1; }\n');
+    commitAll(path.join(p, 'app'), 'Add a seed script');
+    const { results } = drive(p, m);
+    assert.deepEqual(seen, ['assign_new_files'], 'one update_architecture job placed the new file');
+    assert.equal(results.build.files.unassigned, 0);
+  } finally { cleanup(p); }
+});
+
 // ---------- nothing outside the map folder ----------
 /** Every file under root except the map folder (git's own files included), with a hash of its contents. */
 function snapshot(dir) {
