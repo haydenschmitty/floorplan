@@ -1,6 +1,6 @@
 # What's in your project
 
-Floorplan writes to exactly two places in your project: the `floorplan/` folder, and (in Claude Code, only if you say yes) a short section in `CLAUDE.local.md`. Neither is committed to git, and nothing else in your project is touched.
+Floorplan writes to exactly two places in your project: the `floorplan/` folder, and (in Claude Code, only if you say yes) a short section in `CLAUDE.local.md`. Neither is committed to git, and nothing else in your project is touched. Run in [unattended mode](unattended.md) (from CI or your own scripts), it writes only the `floorplan/` folder.
 
 ## The `floorplan/` folder
 

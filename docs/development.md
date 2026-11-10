@@ -15,6 +15,7 @@
 skills/floorplan/
   SKILL.md             the workflow Claude and Codex follow
   agents/openai.yaml   how Codex lists the skill
+  workflow.json        the same steps as SKILL.md, as data, for running without an agent session
   references/          formats and style guides Claude reads while working
     schema.md                architecture.json and recent-work.json
     choosing-boundaries.md   how to carve a codebase into a good map
@@ -55,7 +56,7 @@ claude plugin install floorplan@floorplan
 
 A plugin installed from a local folder runs straight from it, so edits apply in the next session with no update step.
 
-To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
+To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
 
 The scripts also run on their own, which is the fastest way to work on them:
 
@@ -96,6 +97,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
+| `unattended.test.mjs` | running without an agent session: a small driver follows `workflow.json` through a first map and a refresh with canned answers, using only `--json` and exit codes; nothing written outside `floorplan/`, a map that names no agent, git failures that fail loudly, the workflow file's names and schemas, and no change without unattended mode |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |
@@ -129,6 +131,7 @@ An engine must be read-only in a way its CLI enforces, not only because the prom
 - **No dependencies.** The scripts must run anywhere Node 18+ does, with nothing to install.
 - **Plain language first.** Anything the map shows people should make sense to an app's owner, not just its engineers.
 - **Never store or print secret values.** Health findings record where a secret is and a masked hint, never the value.
+- **One description of the process.** `workflow.json` describes the same steps as SKILL.md, for running Floorplan without an agent session ([unattended.md](unattended.md)). When you change one, change the other, and point at `references/` rather than repeating them.
 - **Keep examples generic.** Code comments, docs and prompts must not describe any real private project.
 
 ## Maintaining

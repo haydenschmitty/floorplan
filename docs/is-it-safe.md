@@ -38,6 +38,10 @@ Each is started directly with its arguments, never as a command line for a shell
 
 In Claude Code, while the skill is in use, it pre-approves one kind of command: `node` running one of its own scripts, each named exactly (`scripts/build.mjs`, `describe.mjs`, `open.mjs`, `plan.mjs`, `recent.mjs`, `refresh.mjs`, `scan.mjs` and `status.mjs`). That list is fixed by the tests below. Anything else Claude does asks according to your permission settings, as usual. Codex asks according to your approval settings.
 
+### The workflow file
+
+`skills/floorplan/workflow.json` is data, not code: the same steps as SKILL.md, for people who run Floorplan from their own scripts or CI ([Running without an agent session](unattended.md)). Nothing in Floorplan reads it to decide what to run.
+
 ### Three things worth explaining
 
 - **`skills/floorplan/assets/vendor/elk.bundled.js`** is a 1.6 MB minified file: the layout engine that arranges the map. It's [elkjs](https://github.com/kieler/elkjs) 0.9.3, byte for byte the same as the official package on npm. Its SHA-256 is `b0745abd7f23cd91690a1587e377edbe19fd7233c783300290936720546216d4`. To check it yourself:

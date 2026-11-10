@@ -423,7 +423,7 @@ test('a repo git cannot list: the scan says so for everyone, and fails in unatte
     breakRepo(path.join(p, 'shop-web'));
     const plain = exec('scan.mjs', p);
     assert.equal(plain.code, 0, 'without unattended mode the scan still finishes');
-    assert.match(plain.out, /! PROBLEMS \(1\)[\s\S]*shop-web: git could not read this repo/);
+    assert.match(plain.out, /! PROBLEMS \(1\)[\s\S]*shop-web adds no files to the map: git could not read this repo/);
     assert.match(plain.out, /shop-web +0 files .*! git could not list its files/);
     fs.rmSync(path.join(p, 'floorplan', '.cache'), { recursive: true });
 
@@ -431,11 +431,11 @@ test('a repo git cannot list: the scan says so for everyone, and fails in unatte
     assert.equal(r.code, 1, 'unattended mode fails instead of making a map without shop-web');
     assert.equal(r.json.ok, false);
     assert.deepEqual(r.json.problems.map((x) => [x.code, x.repo]), [['git_failed', 'shop-web']]);
-    assert.match(r.json.errors[0], /^shop-web: git could not read this repo \(fatal: /);
+    assert.match(r.json.errors[0], /^shop-web adds no files to the map: git could not read this repo \(fatal: /);
     assert.ok(!fs.existsSync(path.join(p, 'floorplan', '.cache', 'scan.json')), 'no scan written');
     const text = exec('scan.mjs', p, [], { env: UNATTENDED });
     assert.equal(text.code, 1);
-    assert.match(text.err, /✗ shop-web: git could not read this repo/);
+    assert.match(text.err, /✗ shop-web adds no files to the map: git could not read this repo/);
   } finally { cleanup(p); }
 });
 
@@ -446,7 +446,7 @@ test('git missing altogether: unattended mode names the cause', () => {
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PATH'));
     const r = exec('scan.mjs', p, ['--json'], { baseEnv: { ...env, PATH: empty }, env: UNATTENDED });
     assert.equal(r.code, 1);
-    assert.match(r.json.errors.join('\n'), /shop-api: git is not installed here, or not on PATH/);
+    assert.match(r.json.errors.join('\n'), /shop-api adds no files to the map: git is not installed here, or not on PATH/);
   } finally { cleanup(p); cleanup(empty); }
 });
 

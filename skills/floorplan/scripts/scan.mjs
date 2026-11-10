@@ -51,7 +51,7 @@ const ignoredByDir = (p) => p.split('/').some((seg) => HARD_IGNORE_DIRS.has(seg)
 const problems = [];
 for (const r of found.repos) {
   const { files: listed, error } = listGitFiles(r.abs);
-  if (listed == null) problems.push({ code: 'git_failed', repo: r.path, message: `${r.path === '.' ? path.basename(root) : r.path}: ${explainGitError(error, r.abs)} Until then it adds no files to the map.`, error });
+  if (listed == null) problems.push({ code: 'git_failed', repo: r.path, message: `${r.path === '.' ? path.basename(root) : r.path} adds no files to the map: ${explainGitError(error, r.abs)}`, error });
   const info = gitInfo(r.abs);
   const prefix = r.path === '.' ? '' : r.path + '/';
   let count = 0;
