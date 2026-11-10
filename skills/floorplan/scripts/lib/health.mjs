@@ -207,6 +207,36 @@ function findSecrets(src, f, out) {
   });
 }
 
+/**
+ * Code that is safe to quote, e.g. in the worksheets describe.mjs writes: every value the check above would
+ * report, plus anything that only might be a secret, replaced with «hidden». Here recall beats precision:
+ * hiding a harmless value costs a reader nothing. Every well-known key format and private key block (in test
+ * files too), database passwords in connection addresses, any quoted value given to a name that sounds
+ * secret, and long random-looking strings.
+ */
+const HIDDEN = '«hidden»';
+const QUOTED_ASSIGN = /(["']?)([A-Za-z_][\w.-]*)\1(\s*(?::=|=>|=|:)\s*(?:[rbuRBU]{1,2})?)(["'`])([^"'`\n]*)\4/g;
+const RANDOM_LOOKING = /(["'`])([A-Za-z0-9+/=_\-]{32,})\1/g;
+export function maskSecrets(src, file = {}) {
+  let out = String(src)
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)/g, `${HIDDEN} (a private key)`);
+  for (const fm of FORMATS) out = out.replace(fm.re, HIDDEN);
+  out = out.replace(JWT, HIDDEN).replace(DB_URL, (m, user, pw) => m.replace(`:${pw}@`, `:${HIDDEN}@`));
+  out = out.replace(QUOTED_ASSIGN, (m, q, name, op, q2, value) => value && SECRET_NAME.test(snake(name.split('.').pop())) ? `${q}${name}${q}${op}${q2}${HIDDEN}${q2}` : m);
+  out = out.replace(RANDOM_LOOKING, (m, q, v) => /\d/.test(v) && /[A-Za-z]/.test(v) && entropy(v) >= 4 ? `${q}${HIDDEN}${q}` : m);
+  // and the lines Health itself flags (config files may leave values unquoted)
+  const flagged = [];
+  try { findSecrets(out, { path: file.path || '', lang: file.lang, category: file.category }, flagged); } catch {}
+  if (!flagged.length) return out;
+  const lines = out.split('\n');
+  for (const { line } of flagged) {
+    const i = line - 1;
+    if (lines[i] == null || lines[i].includes(HIDDEN)) continue;
+    lines[i] = lines[i].replace(/(["'`])[^"'`\n]*\1/g, `$1${HIDDEN}$1`).replace(/^(\s*(?:export\s+)?[A-Za-z_][\w.-]*\s*[:=]\s*)([^\s#'"`].*)$/, `$1${HIDDEN}`);
+  }
+  return lines.join('\n');
+}
+
 // ---------- 2. who may call each endpoint ----------
 
 // Decorators / middleware / dependencies whose names say "check who is calling".
