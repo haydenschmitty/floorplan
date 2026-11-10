@@ -83,6 +83,7 @@ function validate(schema, value, at = '$') {
 function drive(root, model) {
   const results = {};
   const log = [];
+  const notes = []; // optional steps that failed: { step, reason }
   const get = (p, scope) => p.split('.').reduce((o, k) => (o == null ? undefined : o[k]), { ...results, ...scope });
   const holds = (conds, scope) => conds.every((c) => {
     const v = get(c.path, scope);
@@ -121,15 +122,33 @@ function drive(root, model) {
       if (v === undefined) { assert.ok(inp.optional, `job ${name}: its input "${inp.name}" (${inp.from || inp.file}) is missing`); continue; }
       inputs[inp.name] = v;
     }
-    const answer = model[name]({ inputs, scope });
-    const errs = validate(WORKFLOW.schemas[job.schema], answer);
-    assert.deepEqual(errs, [], `the answer for job ${name} doesn't match schemas.${job.schema}`);
+    // onlyChange: the file as it was, to compare the answer with
+    const was = job.onlyChange ? readJson(path.join(root, fill(job.onlyChange.file, scope))) : null;
+    let answer, problems = [];
+    for (let attempt = 0; ; attempt++) {
+      answer = model[name]({ inputs, scope, problems });
+      problems = [...validate(WORKFLOW.schemas[job.schema], answer), ...(was ? changedOutside(was, answer, job.onlyChange.fields) : [])];
+      if (!problems.length) break;
+      log.push(`job ${name}: answer sent back (${problems.length} problem(s))`);
+      if (attempt >= WORKFLOW.conventions.answerRetries) throw new Error(`job ${name} gave no valid answer: ${problems.join('; ')}`);
+    }
     Object.assign(answer, fillDeep(job.set || {}, scope));
     writeJson(path.join(root, fill(job.writes, scope)), answer);
     log.push(`job ${name}${scope.worksheet ? ` (${scope.worksheet.key})` : scope.item ? ` (${scope.item.code})` : ''}`);
   }
   function runStep(step, scope) {
     if (step.when && !holds(step.when, scope)) { log.push(`skip ${step.id}`); return; }
+    if (!step.optional) return runRequired(step, scope);
+    // optional: keep the restore files, and on failure put them back, run onFail, note it and carry on
+    const kept = (step.restore || []).map((p) => { const f = path.join(root, fill(p, scope)); return [f, fs.existsSync(f) ? fs.readFileSync(f) : null]; });
+    try { runRequired(step, scope); } catch (e) {
+      for (const [f, data] of kept) { if (data == null) fs.rmSync(f, { force: true }); else fs.writeFileSync(f, data); }
+      notes.push({ step: step.id, reason: e.message });
+      log.push(`optional ${step.id} failed: kept the files as they were`);
+      for (const s of step.onFail || []) runStep(s, scope);
+    }
+  }
+  function runRequired(step, scope) {
     if (step.run) return runScript(step);
     if (step.job) {
       if (!step.forEach) return runJob(step.job, scope);
@@ -141,7 +160,7 @@ function drive(root, model) {
     if (step.write) { writeJson(path.join(root, fill(step.write, scope)), fillDeep(step.value, scope)); log.push(`write ${step.write}`); return; }
     if (step.repeat) {
       for (let i = 0; ; i++) {
-        if (holds(step.until, scope)) return;
+        if (i >= (step.minAttempts || 0) && holds(step.until, scope)) return;
         if (i >= step.maxAttempts) throw new Error(`${step.id}: ${step.failMessage}`);
         for (const s of step.repeat) runStep(s, scope);
       }
@@ -169,7 +188,26 @@ function drive(root, model) {
   log.push(`workflow ${pick.workflow}`);
   for (const s of wf.steps) runStep(s, {});
   assert.ok(holds(wf.done, {}), `workflow ${pick.workflow} finished but its done conditions don't hold: ${JSON.stringify(results.build?.errors)}`);
-  return { results, log };
+  return { results, log, notes };
+}
+
+/** What an answer changed outside the fields onlyChange allows ("nodes[].label"): a list of problems. */
+function changedOutside(was, answer, fields) {
+  const blank = (doc) => {
+    const copy = structuredClone(doc);
+    for (const f of fields) {
+      const m = /^(\w+)\[\]\.(\w+)$/.exec(f);
+      assert.ok(m, `onlyChange field "${f}" isn't of the form list[].field`);
+      if (Array.isArray(copy[m[1]])) for (const item of copy[m[1]]) if (item && typeof item === 'object') delete item[m[2]];
+    }
+    return copy;
+  };
+  const a = blank(was), b = blank(answer);
+  const problems = [];
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) problems.push(`"${k}" changed, but only ${fields.join(', ')} may change`);
+  }
+  return problems;
 }
 
 // ---------- canned model answers ----------
@@ -333,28 +371,49 @@ test('a first map hands developer words in labels back to the model once, and ne
     { id: 'api', label: 'Express backend', kind: 'service', summary: 'The REST API and its middleware.', paths: ['shop-api/**'] },
     { id: 'web', label: 'React frontend', kind: 'ui', summary: 'The pages customers use.', paths: ['shop-web/**'] },
   ] };
-  for (const rewords of [true, false]) {
+  // what the plain_language job's model does: reword as asked, leave it as it was, or also change something
+  // else (as one measured run did, editing `ignore` and dropping a file from the map), or give no answer at all
+  const KINDS = {
+    rewords: (cur) => ({ ...cur, nodes: cur.nodes.map((n, i) => ({ ...n, label: SHOP_ARCH.nodes[i].label, summary: SHOP_ARCH.nodes[i].summary })) }),
+    keeps: (cur) => cur,
+    oversteps: (cur) => ({ ...KINDS.rewords(cur), ignore: ['shop-web/**'] }),
+    fails: () => { throw new Error('the model gave no answer'); },
+  };
+  for (const [kind, reword] of Object.entries(KINDS)) {
     const p = shopApp();
     try {
       fs.rmSync(path.join(p, 'floorplan'), { recursive: true });
-      const seen = [];
+      const seen = [], asked = [];
       const m = {
         ...model,
-        architecture: ({ inputs }) => {
-          seen.push(inputs['What the last build said about it'] || null);
-          return structuredClone(seen.length > 1 && rewords ? SHOP_ARCH : JARGON_ARCH);
+        architecture: ({ inputs }) => { seen.push(inputs['What the last build said about it'] || null); return structuredClone(JARGON_ARCH); },
+        plain_language: ({ inputs, problems }) => {
+          asked.push({ report: inputs['What the build said about it'], problems });
+          return reword(JSON.parse(inputs['The current architecture.json']));
         },
         recent_work: () => ({ tasks: [] }),
       };
-      const { results, log } = drive(p, m);
-      assert.equal(seen.length, 2, `the model was asked once more, and only once (${rewords ? 'it rewords' : 'it doesn\'t'})`);
-      assert.equal(seen[0], null);
-      assert.match(seen[1], /plain language: node "api" uses developer words: "Express backend" in its label[\s\S]*plain language: node "web"/);
-      assert.ok(log.includes('run build.mjs → 0'));
+      const { results, log, notes } = drive(p, m);
+      assert.deepEqual(seen, [null], `the architecture job ran once (${kind})`);
+      assert.match(asked[0].report, /plain language: node "api" uses developer words: "Express backend" in its label[\s\S]*plain language: node "web"/);
       assert.equal(results.build.ok, true);
-      assert.equal(results.build.descriptions.complete, true, 'the map was finished either way');
-      assert.equal(results.build.plainLanguage.count, rewords ? 0 : 2);
-      assert.equal(readJson(path.join(p, 'floorplan', 'architecture.json')).nodes[0].label, rewords ? 'Main server' : 'Express backend');
+      assert.equal(results.build.descriptions.complete, true, `the map was finished either way (${kind})`);
+      const arch = readJson(path.join(p, 'floorplan', 'architecture.json'));
+      if (kind === 'rewords' || kind === 'keeps') {
+        assert.equal(asked.length, 1, 'asked once');
+        assert.deepEqual(notes, []);
+        assert.equal(results.build.plainLanguage.count, kind === 'rewords' ? 0 : 2);
+        assert.equal(arch.nodes[0].label, kind === 'rewords' ? 'Main server' : 'Express backend');
+      } else {
+        // the optional step failed: architecture.json is as it was, the map still completes, and the run says so
+        assert.equal(asked.length, kind === 'fails' ? 1 : 1 + WORKFLOW.conventions.answerRetries);
+        if (kind === 'oversteps') assert.match(asked[1].problems.join('\n'), /"ignore" changed, but only nodes\[\]\.label, nodes\[\]\.summary may change/);
+        assert.deepEqual(notes.map((n) => n.step), ['plain-language']);
+        assert.ok(log.includes('optional plain-language failed: kept the files as they were'), log.join('\n'));
+        assert.deepEqual(arch, JARGON_ARCH, 'the architecture.json that built is back');
+        assert.equal(results.build.plainLanguage.count, 2, 'the words stay warnings');
+        assert.equal(results.build.files.unassigned, 0, 'no file was dropped from the map');
+      }
     } finally { cleanup(p); }
   }
 });

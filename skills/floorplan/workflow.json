@@ -35,7 +35,9 @@
     "run step": "{ id, run: \"<script>.mjs\", args: [...], save?, saveFields?, allowFailure?, when? }: run a script (see conventions.run).",
     "job step": "{ id, job: \"<job name>\", forEach?, as?, parallel?, when? }: run a model job from `jobs`. With forEach (a path to a list), run it once per item, with the item available to templates under the name in `as`; parallel: true means those runs may happen at the same time.",
     "write step": "{ id, write: \"<path>\", value: {...}, when? }: write that JSON to the path, with no model involved.",
-    "repeat step": "{ id, repeat: [step...], until: [conditions], maxAttempts, failMessage }: before each attempt, if every condition holds, the repeat is done (so it may not run at all). Otherwise run its steps and check again, up to maxAttempts times. If the conditions still don't hold after the last attempt, the workflow fails with failMessage.",
+    "repeat step": "{ id, repeat: [step...], until: [conditions], minAttempts?, maxAttempts, failMessage }: before each attempt, if every condition holds, the repeat is done (so it may not run at all), except that the first minAttempts attempts (default 0) always run. Otherwise run its steps and check again, up to maxAttempts times. If the conditions still don't hold after the last attempt, the workflow fails with failMessage.",
+    "optional": "A job or repeat step may have `optional: true`, `restore: [paths]` and `onFail: [step...]`: it may fail without failing the workflow. Before running it, keep a copy of each path in restore (noting which don't exist). If it fails (a job gives no valid answer within conventions.answerRetries, a script fails without allowFailure, or a repeat's conditions still don't hold after maxAttempts), put those files back exactly as they were (deleting any that didn't exist), run its onFail steps (which are not optional), record { step: id, reason } in the run's notes, and carry on with the next step. Use it only for work that improves the map without being needed for it.",
+    "onlyChange": "A job may have `onlyChange: { file, fields: [\"nodes[].label\", …] }`: its answer may differ from that file, as it was before the job, only in those fields (`nodes[]` means every item of the nodes list, matched by position; the list's length and every other field must stay the same). Any other difference is a problem with the answer, sent back like a schema problem.",
     "use step": "{ id, use: \"<procedure or workflow name>\" }: run the steps of a procedure (under `procedures`) or a workflow (under `workflows`) in place.",
     "next step": "{ id, next: \"<path to refresh's next list>\", handlers: { <code>: <procedure or workflow name> | { fail: message } | { skip: true } } }: for each NEXT item in order, with the item available as `item`, run its handler. An item whose code has no handler fails the workflow, so a newer Floorplan with a new code can't be silently ignored.",
     "when": "Any step may have `when`: a list of conditions; the step is skipped unless they all hold."
@@ -55,7 +57,7 @@
 
   "workflows": {
     "first_map": {
-      "about": "A first map: scan, have the model write architecture.json until the build is clean, give it one chance to reword any labels or summaries the build says use developer words (build.plainLanguage, a warning, never a failure), describe every file and endpoint, then mark recent work.",
+      "about": "A first map: scan, have the model write architecture.json until the build is clean, give it a chance to reword only the labels and summaries the build says use developer words (build.plainLanguage, a warning, never a failure: an optional step that puts the earlier architecture.json back if the rewording doesn't build), describe every file and endpoint, then mark recent work.",
       "steps": [
         { "id": "scan", "run": "scan.mjs", "args": ["--json"], "save": "scan" },
         {
@@ -71,20 +73,24 @@
           "maxAttempts": 4,
           "failMessage": "The build still has errors, or more than 10% of files are unassigned, after the model's last attempt at architecture.json."
         },
-        { "id": "plain-language", "job": "architecture", "when": [{ "path": "build.plainLanguage.count", "op": "greaterThan", "value": 0 }] },
-        { "id": "plain-language-build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true, "when": [{ "path": "build.plainLanguage.count", "op": "greaterThan", "value": 0 }] },
         {
-          "id": "architecture-still-builds",
+          "id": "plain-language",
+          "about": "Only wording: a warning is never worth failing the map over, so if the reworded architecture.json doesn't build cleanly, the one that did is put back.",
+          "when": [{ "path": "build.plainLanguage.count", "op": "greaterThan", "value": 0 }],
+          "optional": true,
+          "restore": ["floorplan/architecture.json"],
           "repeat": [
-            { "id": "fix-architecture", "job": "architecture" },
-            { "id": "rebuild", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true }
+            { "id": "reword-labels", "job": "plain_language" },
+            { "id": "plain-language-build", "run": "build.mjs", "args": ["--json"], "save": "build", "allowFailure": true }
           ],
           "until": [
             { "path": "build.ok", "op": "equals", "value": true },
             { "path": "build.files.unassignedPercent", "op": "lessThan", "value": 10 }
           ],
+          "minAttempts": 1,
           "maxAttempts": 2,
-          "failMessage": "The build has errors, or more than 10% of files are unassigned, after the model reworded architecture.json."
+          "failMessage": "The reworded architecture.json doesn't build cleanly, so the one before it was kept.",
+          "onFail": [{ "id": "plain-language-undone", "run": "build.mjs", "args": ["--json"], "save": "build" }]
         },
         { "id": "describe", "use": "describe" },
         { "id": "recent-work", "use": "recent_work" }
@@ -210,6 +216,25 @@
       "writes": "floorplan/architecture.json",
       "schema": "architecture",
       "toolCalls": 40
+    },
+
+    "plain_language": {
+      "about": "Reword the part labels and summaries the build's \"plain language:\" warnings name, and change nothing else.",
+      "read": ["references/writing-descriptions.md"],
+      "input": [
+        { "name": "The current architecture.json", "file": "floorplan/architecture.json" },
+        { "name": "What the build said about it", "from": "build.report" }
+      ],
+      "instructions": [
+        "A map of a codebase is written for everyone, and the build found developer words in some of its part labels and summaries. Each \"plain language:\" warning in what the build said names a part (its node id), the field (label or summary), the words and a plain phrase to use instead (\"Jargon → plain\" in writing-descriptions.md).",
+        "Change ONLY the wording of those labels and summaries. Keep every other field of architecture.json exactly as it is: the node ids, kinds, parents, paths, exclude, packages, hosts and tags, the other nodes, and project, include, ignore, edges, flows, annotations and tour. Don't add, remove or reorder nodes. An answer that changes anything else is sent back.",
+        "Say the same thing in plain words, as accurately as before. If a word names something that really is called that in this app (a product name, or the business's own word for it), keep it.",
+        "You don't need to read any code. Submit the complete architecture.json."
+      ],
+      "writes": "floorplan/architecture.json",
+      "schema": "architecture",
+      "onlyChange": { "file": "floorplan/architecture.json", "fields": ["nodes[].label", "nodes[].summary"] },
+      "toolCalls": 3
     },
 
     "update_architecture": {
