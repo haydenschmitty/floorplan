@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The map works when the browser blocks storage, copying or new windows:** embedded in a sandboxed iframe, in a private window, or with strict settings. Settings now hold while the page is open instead of resetting, the "Start here" tour no longer starts on every load (the button still starts it, and `#tour=0` in the address keeps it from starting on its own anywhere), copy buttons say "Copied" only when the text really was copied and otherwise select it for you, and links that would open a new window show their address instead of doing nothing. Links to a place on the map (`#v=…&s=…`) and embedding are now described in [Using the map](docs/using-the-map.md#links-to-a-place-on-the-map). Nothing changes where the browser allows these.
+
 ## 0.7.0 (2026-11-09)
 
 - **Run Floorplan without an agent session:** in CI, in a script, or from your own tooling, with any model that can read files and return JSON. See [Running without an agent session](docs/unattended.md).
