@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Truer descriptions:** maps now say what the code does today, not what its names suggest, so a half-built feature reads as "replies that a note was saved, without keeping it anywhere yet" instead of "saves notes". The writing guide has a new "Say what it does today" section, the description worksheets quote the code of each endpoint and of very short files (secrets masked, `.env` files never quoted, a few lines each), and they list which files import, request or name each file, so nobody has to guess who runs a script. The build also warns, never fails, when a part's name or summary on a map for everyone uses developer words ("API client", "UI kit", a framework's name), and when a part holds many files that sit in folders of their own.
+
 ## 0.7.0 (2026-11-09)
 
 - **Run Floorplan without an agent session:** in CI, in a script, or from your own tooling, with any model that can read files and return JSON. See [Running without an agent session](docs/unattended.md).

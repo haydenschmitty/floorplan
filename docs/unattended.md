@@ -68,6 +68,8 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | `nodes[]` | the top-level parts: `id`, `kind`, `files`, `loc` |
 | `links` | `total` and `byKind` (import, http, …) |
 | `descriptions` | `files` and `routes` as `{ described, total }`, `modules` ({ withSummary, total, missing }), `review` (entries still flagged), and `complete`: every file and endpoint described and nothing left to review |
+| `plainLanguage` | developer words in node labels and summaries on a map for everyone: `checked` (false when `audience` is `developers`), `count` (parts with any) and `items[]` ({ node, field: `label` or `summary`, term, say }). Each part also gets a `plain language:` line in `warnings[]`. Never an error |
+| `partsToSplit[]` | parts with no children and more than 24 files that sit in several folders of their own: `{ id, files, folders: [{ dir, files }] }`, also in `warnings[]` |
 | `health` | `kind` (`health`, or `design-review` for a blueprint), `high`, `medium`, `low`, and `important[]` ({ severity, kind, title }); `null` when there's none |
 | `screens` | how many screens were found |
 | `recentWork` | `cards` and `tasks` highlighted, and whether `recent-work.json` exists |
@@ -148,8 +150,8 @@ The jobs point at the reference files in `skills/floorplan/references/` rather t
 ### How a first map goes
 
 1. `scan.mjs --json`. The model gets its `summary`.
-2. The `architecture` job: the model reads `schema.md`, `choosing-boundaries.md` and `writing-descriptions.md`, looks around the code with its tools, and submits architecture.json. Then `build.mjs --json`. Until `build.ok` is true and `files.unassignedPercent` is under 10, the job runs again, now also given its last architecture.json and the build's `report`. Up to 4 attempts.
-3. `describe.mjs --json`, then one `descriptions` job per worksheet, in parallel if you like: the model gets the worksheet and the file to fill in, and submits it filled in. Then build. This repeats until `descriptions.complete` is true (describe.mjs lists only what's still missing). Up to 3 attempts.
+2. The `architecture` job: the model reads `schema.md`, `choosing-boundaries.md` and `writing-descriptions.md`, looks around the code with its tools, and submits architecture.json. Then `build.mjs --json`. Until `build.ok` is true and `files.unassignedPercent` is under 10, the job runs again, now also given its last architecture.json and the build's `report`. Up to 4 attempts. Then, if `plainLanguage.count` is above 0, the job runs once more with that report, to reword the labels and summaries its `plain language:` warnings name, and the build checks it still passes. Words left after that stay warnings: they never fail the run.
+3. `describe.mjs --json`, then one `descriptions` job per worksheet, in parallel if you like: the model gets the worksheet (which quotes the code of each endpoint and of very short files) and the file to fill in, and submits it filled in. Then build. This repeats until `descriptions.complete` is true (describe.mjs lists only what's still missing). Up to 3 attempts.
 4. `recent.mjs --json`. If `nothingRecent`, write `{ "tasks": [] }`; otherwise the `recent_work` job turns its `text` into recent-work.json. There's no conversation to go on, so the input is what changed since the last map, uncommitted changes and recent commits. Then build.
 
 ### How a refresh goes
@@ -210,7 +212,7 @@ Two `descriptions` jobs, one per worksheet, each writing its `descriptions` file
 - Running each model job with only the tools the file lists, inside the codebase, read-only, and no network.
 - Checking each answer against its schema, sending the problems back, and writing the accepted answer itself. The model never writes files.
 - Limits: time, cost and how many tool calls a job may make (each job suggests a `toolCalls` budget).
-- What happens to the map afterwards. `floorplan/.cache/` holds digests of the code (the scan, the worksheets), so don't publish it. `graph.json` includes this machine's folder path and the repos' remotes. To share a map, make an export, which leaves those out: `node floorplan/serve.mjs --export [file] [--include flows,notes,recent,health]`.
+- What happens to the map afterwards. `floorplan/.cache/` holds digests of the code (the scan, the worksheets, which quote short pieces of it with secrets masked), so don't publish it. `graph.json` includes this machine's folder path and the repos' remotes. To share a map, make an export, which leaves those out: `node floorplan/serve.mjs --export [file] [--include flows,notes,recent,health]`.
 
 ## What isn't covered
 

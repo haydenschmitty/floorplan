@@ -48,6 +48,29 @@ Fill in every `description` and improve every `name`. **Don't change, add or rem
 - Don't say "This file…", don't hedge, and don't repeat the name.
 - For routes, describe the effect, not the HTTP mechanics. "Marks an order as shipped and emails the customer their tracking link" beats "POST endpoint for shipping".
 
+## Say what it does today
+
+A map is only useful if it's true. Describe what the code does now, not what its name, its folder or the rest of the app suggest it ought to do. Half-built apps are full of placeholders, and a map that says they work is worse than no map. This goes for node summaries, flow notes and the tour too.
+
+1. **Behaviour the code shows.** If a handler only replies with a fixed answer, deletes nothing, stores nothing or moves no money, say so plainly: "for now it only…", "…without keeping it anywhere yet". A one-line handler deserves one honest clause, not the feature its name promises.
+2. **Placeholders, stubs and unfinished code are news.** An owner wants to know that the refund button does nothing yet. Say it in the description, in plain words, not as a hedge.
+3. **Don't claim who or what uses it unless the code shows it.** "Run by hand", "run every night", "used by the release tools", "called by the mobile app", "saved to the database": each needs evidence in the worksheet (its `imported by`, `sent web requests by` and `named in` lines) or in code you read. If nothing uses a file, leave its users out, or say that nothing uses it yet.
+4. **Never invent examples.** "Such as active, pending or paid", "local or live": only values that appear in the code. If you don't know them, describe the thing without examples.
+5. **When unsure, open the file.** The worksheet quotes the code of every endpoint it lists and the whole of very short files. For anything else, read the file (the top ~80 lines, or the handler) before writing a claim you can't see.
+
+| | |
+|---|---|
+| ✗ | `POST /api/notes`: "Saves a note so staff can keep track of what was said about a customer." |
+| ✓ | "Replies that a note was saved, without checking who sent it and without keeping it anywhere yet." |
+| ✗ | `DELETE /admin/users/:id`: "Removes a customer's account for good. Only staff can ask for this." |
+| ✓ | "Removes a customer's account, for staff only; for now it only confirms and deletes nothing." |
+| ✗ | `create_owner.py`: "Run by hand once to set up the owner's account." (the worksheet says it's `named in: scripts/start.sh`) |
+| ✓ | "Creates the owner's account each time the server starts, unless it already exists." |
+| ✗ | `export-prices.mjs`: "Exports the price list, used by the nightly sync." (`imported by: nothing`) |
+| ✓ | "Writes the price list to a spreadsheet file. Nothing in the code runs it yet." |
+| ✗ | `status-pill.tsx`: "Shows an order's status, such as paid, shipped or refunded." (the code has none of these) |
+| ✓ | "Shows a small coloured label with whatever status it's given, in one of three colours." |
+
 ## Plain language
 
 The default audience is `"everyone"`. Write as if explaining the app to its owner over coffee: they know the business inside out, but not the code.
@@ -97,9 +120,11 @@ The default audience is `"everyone"`. Write as if explaining the app to its owne
 | session | staying signed in |
 | hook, context, provider (React) | shared screen logic / keeps the screens in step |
 | component, UI kit, primitives | a building block of the screens (button, table, dialog) |
+| shell, app shell | the frame around the screens (menu, header) |
+| toast, modal, popover | a pop-up message / a pop-up window |
 | state | what the screen currently remembers |
 | deploy, CI/CD | putting a new version live |
-| container, Docker, Cloud Run, serverless | where the server runs in the cloud |
+| container, Docker, Docker Compose, Cloud Run, serverless | where the server runs in the cloud / how it's started |
 | storage bucket, S3, GCS, blob | file storage in the cloud (images, uploads, exports) |
 | CDN | a fast delivery network for images and files |
 | idempotent | safe to run twice |
@@ -108,6 +133,8 @@ The default audience is `"everyone"`. Write as if explaining the app to its owne
 | refactor, tech debt | (leave out) |
 | MCP server | a connection that lets AI assistants (like Claude) look things up in your app |
 | unit tests, test suite | automatic checks that the code still works |
+
+On a map for everyone, `build.mjs` warns when a part's `label` or `summary` in architecture.json uses words from this table or names a framework, and names the part, so you can reword it. It checks the words that are almost never the business's own (the list is in `scripts/lib/names.mjs`), and never product names like Stripe or Postgres. It's a warning, never an error.
 
 ### Examples
 
@@ -146,11 +173,11 @@ For `"developers"`, the ✗ column is closer to right (minus the filler). Same r
 
 ## How to work
 
-1. Read the worksheet. It lists each file's definitions, docstrings, what it uses and what uses it, and each route's handler. That's enough for most files.
-2. Open the file (the top ~80 lines, or the specific handler) only when the digest leaves the purpose unclear. Generic names (`utils.py`, `index.ts`, `common.py`) and big files usually need a look.
+1. Read the worksheet. It lists each file's definitions, docstrings, what it uses, and which files import it, send it web requests or name it (`imported by`, `sent web requests by`, `named in`). It quotes the code of each endpoint it lists and the whole of very short files. That's enough for most files.
+2. Open the file (the top ~80 lines, or the specific handler) when the digest leaves the purpose unclear, or before you claim anything it doesn't show. Generic names (`utils.py`, `index.ts`, `common.py`) and big files usually need a look.
 3. Write the JSON in one go per worksheet, in the style the worksheet's `Audience:` line asks for.
 4. Be consistent within a module: sibling files should read as a set.
 
 ## Quality bar
 
-A good description lets someone pick the right file to open without opening the others. If two siblings end up with nearly identical descriptions, find what actually distinguishes them and say that. For `"everyone"`, also check: would the owner understand every word without asking?
+A good description lets someone pick the right file to open without opening the others. If two siblings end up with nearly identical descriptions, find what actually distinguishes them and say that. Check every claim against the code: would the owner be surprised to find it does less than it says? For `"everyone"`, also check: would the owner understand every word without asking?

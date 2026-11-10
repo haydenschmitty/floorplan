@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit, toPosix, unattendedMode, printJson } from './lib/common.mjs';
-import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
+import { fallbackFileName, fallbackRouteName, routeKey, jargonIn } from './lib/names.mjs';
 import { buildHealth, withDismissed, dismissalFor } from './lib/health.mjs';
 import { buildPlanHealth } from './lib/blueprint.mjs';
 import { buildScreens } from './lib/screens.mjs';
@@ -342,6 +342,41 @@ for (const f of included) {
   }
 }
 
+// ---------- plain language (maps for everyone) ----------
+// Developer words in a part's label or summary, from the one list in lib/names.mjs. Only ever a warning:
+// whoever writes architecture.json can reword them, and a driver following workflow.json hands them back once.
+const plainItems = [];
+if (audience === 'everyone') {
+  for (const n of nodes) {
+    if (!n?.id) continue;
+    const found = ['label', 'summary'].flatMap((field) => jargonIn(n[field], { frameworks: n.kind !== 'external' }).map((j) => ({ node: n.id, field, ...j })));
+    if (!found.length) continue;
+    plainItems.push(...found);
+    warn(`plain language: node "${n.id}" uses developer words: ${found.map((f) => `"${f.term}" in its ${f.field} (${f.say})`).join('; ')}. This map is for everyone, so reword them ("Jargon → plain" in references/writing-descriptions.md).`);
+  }
+}
+const plainLanguage = { checked: audience === 'everyone', count: new Set(plainItems.map((i) => i.node)).size, items: plainItems };
+
+// ---------- parts that hold many files in folders of their own ----------
+// A part with no smaller parts and far more files than the 3-12 a card should show, when those files sit in
+// several folders that could each be a part (components/items/, components/admin/…). A gentle warning only.
+const PART_FILES = 24, FOLDER_FILES = 3;
+const hasChildren = new Set(nodes.filter((n) => n?.parent).map((n) => n.parent));
+const partsToSplit = [];
+for (const n of nodes) {
+  if (!n?.id || hasChildren.has(n.id) || ['external', 'test', 'data'].includes(n.kind)) continue;
+  const mine = included.filter((f) => owner.get(f.path) === n.id).map((f) => f.path.split('/').slice(0, -1));
+  if (mine.length <= PART_FILES) continue;
+  let common = mine[0];
+  for (const d of mine) { let i = 0; while (i < common.length && i < d.length && common[i] === d[i]) i++; common = common.slice(0, i); }
+  const folders = new Map();
+  for (const d of mine) if (d.length > common.length) { const k = d.slice(0, common.length + 1).join('/'); folders.set(k, (folders.get(k) || 0) + 1); }
+  const big = [...folders.entries()].filter(([, c]) => c >= FOLDER_FILES).sort((a, b) => b[1] - a[1]);
+  if (big.length < 2 || big.reduce((s, [, c]) => s + c, 0) < mine.length / 2) continue;
+  partsToSplit.push({ id: n.id, files: mine.length, folders: big.map(([dir, files]) => ({ dir, files })) });
+  warn(`node "${n.id}" holds ${mine.length} files and no smaller parts, and they sit in folders that could each be one: ${big.slice(0, 6).map(([d, c]) => `${d}/ (${c})`).join(', ')}${big.length > 6 ? '…' : ''}. Consider children by feature area ("Second level" in references/choosing-boundaries.md).`);
+}
+
 // ---------- report ----------
 const pct = included.length ? (unassigned.length / included.length) * 100 : 0;
 const report = [];
@@ -396,6 +431,10 @@ const result = (extra) => ({
     review: reviewCount,
     complete: describedFiles === included.length && describedRoutes === routesIn.length && !reviewCount,
   },
+  // developer words in node labels and summaries on a map for everyone (also in warnings[]); never an error
+  plainLanguage,
+  // parts with many files in folders that could each be a part (also in warnings[])
+  partsToSplit,
   ...extra,
 });
 if (errors.length) {
