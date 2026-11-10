@@ -117,8 +117,11 @@ export function keepOutOfGit(dir) {
   return `${tracked.length} file(s) in ${rel}/ were committed to git before; they stay tracked until you run: git rm -r --cached ${rel}  (this keeps the files on disk)`;
 }
 
-/** The map folder for a codebase root. Moves an old show-code/ map into place unless migrate is false. */
-export function mapDir(root, { migrate = true } = {}) {
+/**
+ * The map folder for a codebase root. Moves an old show-code/ map into place unless migrate is false,
+ * or in unattended mode, which never writes outside the map folder.
+ */
+export function mapDir(root, { migrate = !isUnattended() } = {}) {
   const dir = path.join(root, MAP_DIR);
   const old = path.join(root, LEGACY_MAP_DIR);
   if (migrate && !fs.existsSync(dir) && isMapDir(old)) {
@@ -154,12 +157,30 @@ export function classify(relPath, bytes) {
 
 // ---------- git ----------
 
-export function git(cwd, args) {
+/**
+ * Runs git and returns { out, error }: its output, or null and a plain reason it failed. In unattended mode
+ * git is asked not to take optional locks, so even `git status` leaves the repo's own files alone.
+ */
+export function gitRun(cwd, args) {
+  const pre = isUnattended() ? ['--no-optional-locks'] : [];
   try {
-    return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
-  } catch {
-    return null;
+    return { out: execFileSync('git', [...pre, '-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd(), error: null };
+  } catch (e) {
+    if (e.code === 'ENOENT') return { out: null, error: 'git is not installed, or not on PATH' };
+    const said = String(e.stderr || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    return { out: null, error: said.find((l) => /^(fatal|error):/.test(l)) || said[0] || String(e.message || e) };
   }
+}
+
+export function git(cwd, args) {
+  return gitRun(cwd, args).out;
+}
+
+/** A likely cause and fix for a git failure, in plain words, for the scan's report. */
+export function explainGitError(error, dir) {
+  if (/not installed|not on PATH/.test(error)) return 'git is not installed here, or not on PATH. Install git, then scan again.';
+  if (/dubious ownership|safe\.directory/.test(error)) return `git refuses this checkout because a different user owns the folder ("dubious ownership"), which is common in containers. Mark it safe, then scan again: git config --global --add safe.directory "${toPosix(dir)}"`;
+  return `git could not read this repo (${error}).`;
 }
 
 export function gitInfo(dir) {
@@ -171,9 +192,14 @@ export function gitInfo(dir) {
 
 /** Files git considers part of the repo: tracked + untracked-but-not-ignored. */
 export function gitFiles(dir) {
-  const out = git(dir, ['ls-files', '-co', '--exclude-standard', '-z']);
-  if (out == null) return null;
-  return [...new Set(out.split('\0').filter(Boolean))].map(toPosix);
+  return listGitFiles(dir).files;
+}
+
+/** Like gitFiles, but says why when git can't list them: { files, error }. */
+export function listGitFiles(dir) {
+  const { out, error } = gitRun(dir, ['ls-files', '-co', '--exclude-standard', '-z']);
+  if (out == null) return { files: null, error };
+  return { files: [...new Set(out.split('\0').filter(Boolean))].map(toPosix), error: null };
 }
 
 /** If dir/.git is a file pointing into another repo's worktrees/, return that repo's working dir. */
@@ -258,6 +284,9 @@ export function readJsonLoose(file) {
   }
 }
 
+// flags that never take a value, so `--json <root>` still reads <root> as the codebase root
+const SWITCHES = new Set(['json', 'unattended']);
+
 export function parseArgs(argv, defaults = {}) {
   const out = { _: [], ...defaults };
   for (let i = 0; i < argv.length; i++) {
@@ -265,11 +294,36 @@ export function parseArgs(argv, defaults = {}) {
     if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=');
       if (v !== undefined) out[k] = v;
-      else if (argv[i + 1] && !argv[i + 1].startsWith('--')) out[k] = argv[++i];
+      else if (!SWITCHES.has(k) && argv[i + 1] && !argv[i + 1].startsWith('--')) out[k] = argv[++i];
       else out[k] = true;
     } else out._.push(a);
   }
   return out;
+}
+
+// ---------- running without an agent session ----------
+
+/**
+ * Unattended mode: Floorplan run in CI, from a script or from your own tooling, with nobody there to ask.
+ * FLOORPLAN_UNATTENDED=1 switches it on. It's an environment variable so it reaches the scripts another
+ * script runs (refresh.mjs runs scan.mjs and build.mjs). In unattended mode nothing is written outside the
+ * map folder, the map names no agent, and failures exit non-zero. See docs/unattended.md.
+ */
+export const isUnattended = (env = process.env) => /^(1|true|yes|on)$/i.test(String(env.FLOORPLAN_UNATTENDED || '').trim());
+
+/** Reads --unattended (which sets FLOORPLAN_UNATTENDED for this script and the ones it runs); true when on. */
+export function unattendedMode(args = {}, env = process.env) {
+  if (args.unattended === true) env.FLOORPLAN_UNATTENDED = '1';
+  return isUnattended(env);
+}
+
+/**
+ * --json: prints one JSON object on stdout and nothing else there. With `code`, exits with it once the
+ * output has been written (a pipe may still be taking it when process.exit would cut it short).
+ */
+export async function printJson(obj, code) {
+  await new Promise((resolve) => process.stdout.write(JSON.stringify(obj, null, 2) + '\n', resolve));
+  if (code !== undefined) process.exit(code);
 }
 
 export const fmtNum = (n) => n >= 10000 ? (n / 1000).toFixed(0) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);

@@ -5,19 +5,25 @@
 // usage: node describe.mjs [root]                  write worksheets + description skeletons, print an index
 //        node describe.mjs [root] --all            include entries that already have descriptions
 //        node describe.mjs [root] --max-files 40   files per worksheet before splitting into parts
+//        node describe.mjs [root] --json           the index as one JSON object (floorplan/describe-result@1)
 //
 // Run build.mjs first: worksheets are generated from floorplan/graph.json.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseArgs, fmtNum, mapDir } from './lib/common.mjs';
+import { parseArgs, fmtNum, mapDir, toPosix, unattendedMode, printJson } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 
 const args = parseArgs(process.argv.slice(2));
+unattendedMode(args);
 const root = path.resolve(args._[0] || '.');
 const outDir = mapDir(root);
 const graphFile = path.join(outDir, 'graph.json');
-if (!fs.existsSync(graphFile)) { console.error('✗ No floorplan/graph.json. Run build.mjs first.'); process.exit(1); }
+const SCHEMA = 'floorplan/describe-result@1';
+if (!fs.existsSync(graphFile)) {
+  if (args.json) await printJson({ schema: SCHEMA, ok: false, errors: ['No floorplan/graph.json. Run build.mjs first.'] }, 1);
+  console.error('✗ No floorplan/graph.json. Run build.mjs first.'); process.exit(1);
+}
 const g = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
 const maxFiles = Number(args['max-files']) || 40;
 const wsDir = path.join(outDir, '.cache', 'worksheets');
@@ -120,12 +126,22 @@ changed: ${f.review}`);
     }
     if (!Object.keys(skel.routes).length) delete skel.routes;
     fs.writeFileSync(descFile, JSON.stringify(skel, null, 2) + '\n');
-    index.push({ key, node: n?.label || nid, files: chunk.length, routes: routeCount, loc: chunk.reduce((s, f) => s + f.loc, 0) });
+    index.push({ key, node: n?.label || nid, nodeId: nid, part: parts > 1 ? i + 1 : null, parts, files: chunk.length, routes: routeCount, loc: chunk.reduce((s, f) => s + f.loc, 0),
+      worksheet: toPosix(path.relative(root, path.join(wsDir, `${key}.md`))), descriptions: toPosix(path.relative(root, descFile)) });
   }
 }
 
-if (!index.length) { console.log('✓ Every file and route already has a description. Use --all to regenerate worksheets for everything.'); process.exit(0); }
 const totals = index.reduce((s, w) => ({ files: s.files + w.files, routes: s.routes + w.routes }), { files: 0, routes: 0 });
+if (args.json) {
+  // "nothing to do" is success: every file and route already has a description
+  await printJson({
+    schema: SCHEMA, ok: true, nothingToDo: !index.length, audience, style: `Audience: ${audience}. Write in ${STYLE}`,
+    worksheetsDir: toPosix(path.relative(root, wsDir)), descriptionsDir: toPosix(path.relative(root, descDir)),
+    totals: { worksheets: index.length, ...totals },
+    worksheets: index.sort((a, b) => b.files - a.files || a.key.localeCompare(b.key)),
+  }, 0);
+}
+if (!index.length) { console.log('✓ Every file and route already has a description. Use --all to regenerate worksheets for everything.'); process.exit(0); }
 console.log(`${index.length} worksheet(s) in floorplan/.cache/worksheets/ covering ${totals.files} files and ${totals.routes} routes still to describe.`);
 console.log('Each has a matching skeleton in floorplan/descriptions/<key>.json. Fill those in, then run build.mjs.');
 console.log(`Audience: ${audience}. Write in ${STYLE}\n`);

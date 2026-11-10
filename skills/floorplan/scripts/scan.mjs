@@ -3,12 +3,15 @@
 // symbols and HTTP routes/calls, resolve them, and write floorplan/.cache/scan.json.
 // Prints a compact summary meant to be read by Claude (the JSON itself can be large).
 //
-// usage: node scan.mjs [root] [--out <file>] [--include-worktrees] [--max-file-kb 2048]
+// usage: node scan.mjs [root] [--out <file>] [--include-worktrees] [--max-file-kb 2048] [--json] [--unattended]
+//
+// --json prints one JSON object (floorplan/scan-result@1) instead of the summary; the summary is in it as
+// "summary". In unattended mode a repo git can't list, or finding no files at all, is an error (exit 1).
 
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { discover, gitFiles, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit } from './lib/common.mjs';
+import { discover, listGitFiles, explainGitError, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson } from './lib/common.mjs';
 import { extract, callableCallsVia } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
@@ -16,6 +19,7 @@ import { createResolver } from './lib/resolve.mjs';
 import { resolveRoutes, matchCalls } from './lib/routes.mjs';
 
 const args = parseArgs(process.argv.slice(2));
+const unattended = unattendedMode(args);
 const root = path.resolve(args._[0] || '.');
 const outDir = args.out ? path.dirname(path.dirname(path.resolve(args.out))) : mapDir(root);
 const outFile = path.resolve(args.out || path.join(outDir, '.cache', 'scan.json'));
@@ -42,8 +46,12 @@ const inMap = (p) => {
 };
 const ignoredByDir = (p) => p.split('/').some((seg) => HARD_IGNORE_DIRS.has(seg)) || inMap(p);
 
+// A repo git can't list (git missing, or refusing the checkout) would otherwise add nothing to the map
+// without a word, so each one is recorded as a problem: reported in the summary, and an error in unattended mode.
+const problems = [];
 for (const r of found.repos) {
-  const listed = gitFiles(r.abs);
+  const { files: listed, error } = listGitFiles(r.abs);
+  if (listed == null) problems.push({ code: 'git_failed', repo: r.path, message: `${r.path === '.' ? path.basename(root) : r.path}: ${explainGitError(error, r.abs)} Until then it adds no files to the map.`, error });
   const info = gitInfo(r.abs);
   const prefix = r.path === '.' ? '' : r.path + '/';
   let count = 0;
@@ -54,9 +62,17 @@ for (const r of found.repos) {
     fileList.push({ path: p, repo: r.path });
     count++;
   }
-  repos.push({ path: r.path, name: path.basename(r.abs), ...info, files: count, ...(r.worktreeOf ? { worktreeOf: toPosix(r.worktreeOf) } : {}) });
+  repos.push({ path: r.path, name: path.basename(r.abs), ...info, files: count, ...(listed == null ? { listed: false } : {}), ...(r.worktreeOf ? { worktreeOf: toPosix(r.worktreeOf) } : {}) });
 }
 for (const p of found.loose) if (!seen.has(p) && !inMap(p)) { seen.add(p); fileList.push({ path: p, repo: null }); }
+if (!fileList.length) problems.push({ code: 'no_files', message: `No files found under ${toPosix(root)}${found.repos.length ? '' : ' (no git repos, and no loose files)'}, so the map would be empty. Check the path${problems.length ? ' and the git problems above' : ''}.` });
+// unattended: stop before writing anything, so a broken scan never stands in for a real one
+if (unattended && problems.length) {
+  const errors = problems.map((p) => p.message);
+  if (args.json) await printJson({ schema: 'floorplan/scan-result@1', ok: false, root: toPosix(root), errors, problems, warnings: [] }, 1);
+  for (const e of errors) console.error(`✗ ${e}`);
+  process.exit(1);
+}
 
 // ---------- 2. classify, read, extract ----------
 const files = [];
@@ -201,7 +217,7 @@ const line = (s = '') => out.push(s);
 line(`Floorplan scan of ${scan.rootName}  (${((Date.now() - t0) / 1000).toFixed(1)}s) -> ${toPosix(path.relative(root, outFile))}`);
 line();
 line(`REPOS (${repos.length})`);
-for (const r of repos) line(`  ${r.path.padEnd(40)} ${String(r.files).padStart(6)} files  ${r.branch || '-'}@${(r.head || '').slice(0, 8)}${r.worktreeOf ? '  (worktree)' : ''}`);
+for (const r of repos) line(`  ${r.path.padEnd(40)} ${String(r.files).padStart(6)} files  ${r.branch || '-'}@${(r.head || '').slice(0, 8)}${r.worktreeOf ? '  (worktree)' : ''}${r.listed === false ? '  ! git could not list its files' : ''}`);
 const looseCount = scan.files.filter((f) => f.repo === null).length;
 if (looseCount) line(`  (outside any repo)${''.padEnd(22)} ${String(looseCount).padStart(6)} files`);
 const wts = found.skipped.filter((s) => s.reason.includes('worktree'));
@@ -209,6 +225,11 @@ if (wts.length) line(`  skipped ${wts.length} duplicate worktree(s), e.g. ${wts.
 const dumps = found.skipped.filter((s) => s.reason.includes('data dump'));
 if (dumps.length) line(`  skipped ${dumps.length} large non-git dir(s), e.g. ${dumps.slice(0, 2).map((s) => s.path).join(', ')}`);
 line();
+if (problems.length) {
+  line(`! PROBLEMS (${problems.length}): the map will be missing files until these are fixed`);
+  for (const p of problems) line(`  ! ${p.message}`);
+  line();
+}
 
 const byCat = {};
 for (const f of scan.files) byCat[f.category] = (byCat[f.category] || 0) + 1;
@@ -313,4 +334,33 @@ if (unread.length) {
   line();
 }
 line('Next: read references/schema.md, explore entrypoints, then write floorplan/architecture.json and run build.mjs.');
-console.log(out.join('\n'));
+if (!args.json) console.log(out.join('\n'));
+else {
+  await printJson({
+    schema: 'floorplan/scan-result@1',
+    ok: true,
+    root: toPosix(root),
+    rootName: scan.rootName,
+    scanFile: toPosix(path.relative(root, outFile)),
+    seconds: Number(((Date.now() - t0) / 1000).toFixed(1)),
+    repos: repos.map((r) => ({ path: r.path, name: r.name, branch: r.branch, head: r.head, files: r.files, listed: r.listed !== false, ...(r.worktreeOf ? { worktreeOf: r.worktreeOf } : {}) })),
+    skipped: found.skipped,
+    counts: {
+      files: scan.files.length,
+      outsideRepos: looseCount,
+      byCategory: byCat,
+      code: { files: code.length, loc: code.reduce((s, f) => s + f.loc, 0) },
+      byLanguage: byLang,
+      routes: routes.length,
+      httpMatches: http.length,
+      importEdges: scan.edges.length,
+      unresolvedImports: unresolved,
+      externalPackages: scan.externals.length,
+      notRead: unread.length,
+    },
+    errors: [],
+    warnings: problems.map((p) => p.message),
+    problems,
+    summary: out.join('\n'),
+  });
+}

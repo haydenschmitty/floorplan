@@ -2,12 +2,15 @@
 // floorplan builder: validate floorplan/architecture.json against the scan, assign every file to a
 // node, attach import/HTTP/external edges, and write floorplan/graph.json + floorplan/index.html.
 //
-// usage: node build.mjs [root] [--arch <file>] [--scan <file>] [--out <dir>] [--check]
+// usage: node build.mjs [root] [--arch <file>] [--scan <file>] [--out <dir>] [--check] [--json] [--unattended]
+//
+// --json prints one JSON object (floorplan/build-result@1) instead of the report; the report is in it as
+// "report". Exits 1 on errors either way.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit } from './lib/common.mjs';
+import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit, toPosix, unattendedMode, printJson } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 import { buildHealth, withDismissed, dismissalFor } from './lib/health.mjs';
 import { buildPlanHealth } from './lib/blueprint.mjs';
@@ -18,6 +21,7 @@ import { detectAgent } from './lib/agent.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(HERE, '..');
 const args = parseArgs(process.argv.slice(2));
+const unattended = unattendedMode(args);
 const agent = detectAgent(args);
 const root = path.resolve(args._[0] || '.');
 const outDir = path.resolve(args.out || mapDir(root));
@@ -32,12 +36,15 @@ const warnings = [];
 const err = (msg) => errors.push(msg);
 const warn = (msg) => warnings.push(msg);
 
-const fail = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
-if (!fs.existsSync(scanFile)) fail(`No scan at ${scanFile}. Run: node ${path.join(SKILL_DIR, 'scripts', 'scan.mjs')} "${root}"`);
-if (!fs.existsSync(archFile)) fail(`No architecture file at ${archFile}. Write it first (see references/schema.md).`);
+const fail = async (msg) => {
+  if (args.json) await printJson({ schema: 'floorplan/build-result@1', ok: false, errors: [msg], warnings: [], report: `✗ ${msg}` }, 1);
+  console.error(`✗ ${msg}`); process.exit(1);
+};
+if (!fs.existsSync(scanFile)) await fail(`No scan at ${scanFile}. Run: node ${path.join(SKILL_DIR, 'scripts', 'scan.mjs')} "${root}"`);
+if (!fs.existsSync(archFile)) await fail(`No architecture file at ${archFile}. Write it first (see references/schema.md).`);
 const scan = JSON.parse(fs.readFileSync(scanFile, 'utf8'));
 let arch;
-try { arch = JSON.parse(fs.readFileSync(archFile, 'utf8')); } catch (e) { fail(`architecture.json is not valid JSON: ${e.message}`); }
+try { arch = JSON.parse(fs.readFileSync(archFile, 'utf8')); } catch (e) { await fail(`architecture.json is not valid JSON: ${e.message}`); }
 
 // ---------- validate shape ----------
 const isStr = (v) => typeof v === 'string' && v.length > 0;
@@ -60,7 +67,7 @@ function lev(a, b) {
 }
 const didYouMean = (w, opts) => { const c = closest(w, opts); return c ? ` — did you mean "${c}"?` : ''; };
 
-if (!arch || typeof arch !== 'object') fail('architecture.json must be an object');
+if (!arch || typeof arch !== 'object') await fail('architecture.json must be an object');
 if (!arch.project || !isStr(arch.project.name)) err('project.name is required');
 if (!Array.isArray(arch.nodes) || !arch.nodes.length) err('nodes must be a non-empty array');
 const nodes = Array.isArray(arch.nodes) ? arch.nodes : [];
@@ -352,11 +359,12 @@ for (const n of nodes.filter((n) => n?.id && !n.parent)) {
   const s = stats.get(n.id);
   report.push(`  ${n.id.padEnd(28)} ${String(s.files).padStart(5)} files ${scan.blueprint ? '' : `${fmtNum(s.loc).padStart(6)} loc  `}[${n.kind}]`);
 }
+const unassignedDirs = new Map();
+for (const f of unassigned) { const d = f.path.split('/').slice(0, -1).join('/') || '.'; unassignedDirs.set(d, (unassignedDirs.get(d) || 0) + 1); }
+const unassignedByDir = [...unassignedDirs.entries()].sort((a, b) => b[1] - a[1]);
 if (unassigned.length) {
-  const byDir = new Map();
-  for (const f of unassigned) { const d = f.path.split('/').slice(0, -1).join('/') || '.'; byDir.set(d, (byDir.get(d) || 0) + 1); }
   report.push(`  unassigned, by directory:`);
-  for (const [d, c] of [...byDir.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) report.push(`    ${String(c).padStart(4)}  ${d}/`);
+  for (const [d, c] of unassignedByDir.slice(0, 15)) report.push(`    ${String(c).padStart(4)}  ${d}/`);
 }
 const byKind = {};
 for (const l of links.values()) byKind[l.k] = (byKind[l.k] || 0) + 1;
@@ -369,8 +377,35 @@ report.push(`DESCRIPTIONS  files ${describedFiles}/${included.length} · routes 
 if (noSummary.length) report.push(`  modules without a summary: ${noSummary.slice(0, 12).join(', ')}${noSummary.length > 12 ? '…' : ''}`);
 if (describedFiles < included.length || describedRoutes < routesIn.length || reviewCount) report.push(`  Run describe.mjs to get worksheets for the ${included.length - describedFiles} file(s) and ${routesIn.length - describedRoutes} route(s) still missing descriptions.`);
 
-if (errors.length) { console.log(report.join('\n')); console.log('\nFix the errors above and run build again.'); process.exit(1); }
-if (args.check) { console.log(report.join('\n')); process.exit(0); }
+// --json: the same facts as the report, as data a program can rely on (documented in docs/unattended.md)
+const relPath = (f) => toPosix(path.relative(root, f));
+const result = (extra) => ({
+  schema: 'floorplan/build-result@1',
+  ok: !errors.length,
+  check: !!args.check,
+  errors, warnings,
+  agent, audience, blueprint: !!scan.blueprint, unattended,
+  files: { total: included.length, unassigned: unassigned.length, unassignedPercent: Number(pct.toFixed(1)), include },
+  unassignedByDirectory: unassignedByDir.map(([dir, files]) => ({ dir, files })),
+  nodes: nodes.filter((n) => n?.id && !n.parent && stats.has(n.id)).map((n) => ({ id: n.id, kind: n.kind, files: stats.get(n.id).files, loc: stats.get(n.id).loc })),
+  links: { total: links.size, byKind },
+  descriptions: {
+    files: { described: describedFiles, total: included.length },
+    routes: { described: describedRoutes, total: routesIn.length },
+    modules: { withSummary: nodes.length - noSummary.length, total: nodes.length, missing: noSummary },
+    review: reviewCount,
+    complete: describedFiles === included.length && describedRoutes === routesIn.length && !reviewCount,
+  },
+  ...extra,
+});
+if (errors.length) {
+  if (args.json) await printJson(result({ wrote: [], report: `${report.join('\n')}\n\nFix the errors above and run build again.` }), 1);
+  console.log(report.join('\n')); console.log('\nFix the errors above and run build again.'); process.exit(1);
+}
+if (args.check) {
+  if (args.json) await printJson(result({ wrote: [], report: report.join('\n') }), 0);
+  console.log(report.join('\n')); process.exit(0);
+}
 
 // ---------- write graph.json + index.html ----------
 const graph = {
@@ -478,12 +513,36 @@ report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
   : `RECENT WORK  none highlighted${fs.existsSync(recentFile) ? '' : ' (no recent-work.json)'}`);
 // point future Claude Code sessions in this project at the map. Codex has no personal, uncommitted
-// equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone.
+// equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone,
+// and so does a map made without an agent session. Unattended mode never writes outside the map folder.
 if (agent === 'codex') report.push('AGENT  Codex: questions on the map run through Codex');
+if (agent === 'none') report.push("AGENT  none: made without an agent session, so the map's prompts don't name one");
+let claudeNote = null;
 if (scan.blueprint) report.push('BLUEPRINT  planned, not built yet: drawn from floorplan/plan.json');
-else if (agent !== 'codex' && !args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${writeClaudeMd(root, outDir, { add: !!args['claude-md'] })}`);
+else if (unattended) report.push(`CLAUDE.LOCAL.MD  ${claudeNote = 'left alone (unattended mode writes only inside the map folder)'}`);
+else if (agent === 'claude' && !args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${claudeNote = writeClaudeMd(root, outDir, { add: !!args['claude-md'] })}`);
 report.push(trackedWarning ? `GIT  ! ${trackedWarning}` : 'GIT  floorplan/ is kept out of git (it ignores itself)');
 report.push('');
 report.push(`✓ wrote ${path.relative(root, path.join(outDir, 'index.html'))} (${fmtNum(Math.round(html.length / 1024))} KB) and graph.json`);
 if (pct > 10) report.push(`  Unassigned is ${pct.toFixed(0)}%: add nodes or globs for the directories above (or "ignore" them) and rebuild.`);
-console.log(report.join('\n'));
+if (!args.json) console.log(report.join('\n'));
+else {
+  await printJson(result({
+    health: hs ? {
+      kind: scan.blueprint ? 'design-review' : 'health',
+      high: hs.high, medium: hs.medium, low: hs.low,
+      important: graph.health.issues.filter((x) => x.severity !== 'low' && !dismissalFor(x, graph.health.dismissed)).map((i) => ({ severity: i.severity, kind: i.kind, title: i.title })),
+    } : null,
+    screens: graph.screens?.length || 0,
+    recentWork: { cards: graph.recent?.items.length || 0, tasks: graph.recent?.tasks.length || 0, file: fs.existsSync(recentFile) },
+    notes: { claudeLocalMd: claudeNote, git: trackedWarning || null },
+    // files written in the map folder; anything outside it is described in notes.claudeLocalMd (never in unattended mode)
+    wrote: [
+      path.join(outDir, '.gitignore'), path.join(outDir, 'graph.json'), path.join(outDir, 'index.html'),
+      ...(args.artifact ? [path.join(outDir, 'artifact.html')] : []),
+      path.join(outDir, 'query.mjs'), path.join(outDir, 'serve.mjs'),
+      ...(scan.blueprint ? [path.join(outDir, '.cache', 'skill.json')] : []),
+    ].map(relPath),
+    report: report.join('\n'),
+  }));
+}

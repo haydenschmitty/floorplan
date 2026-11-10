@@ -613,10 +613,15 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
 (() => {
 'use strict';
 const G = window.FLOORPLAN;
-// who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map
-const AGENT = (window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G.meta.agent) === 'codex'
+// who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map.
+// A map made without an agent session (meta.agent "none", e.g. in CI) and opened without the server names none.
+const AGENT_ID = window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G?.meta.agent;
+const AGENT = AGENT_ID === 'codex'
   ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
       signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
+  : AGENT_ID === 'none'
+  ? { id: 'none', name: 'AI', app: 'your AI coding agent', cli: 'the Claude Code CLI or Codex', docs: 'https://github.com/haydenschmitty/floorplan#install',
+      signIn: 'Sign in to it in a terminal, then ask again.' }
   : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
       signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
