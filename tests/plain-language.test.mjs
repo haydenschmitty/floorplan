@@ -35,6 +35,23 @@ test('the words it catches, each once, and the product names it leaves alone', a
   assert.deepEqual(terms('Prisma Accelerate', { frameworks: false }), []);
 });
 
+test('screen words count only where they mean screens: hooks, components and shells', async () => {
+  const { jargonIn } = await lib('names.mjs');
+  const terms = (s, o) => jargonIn(s, o).map((j) => j.term);
+  // a React-style hook is jargon
+  assert.deepEqual(terms('Custom hooks for the cart'), ['Custom hooks']);
+  assert.deepEqual(terms('The useCart hook keeps totals'), ['useCart hook']);
+  assert.deepEqual(terms('Shared hooks and context providers'), ['Shared hooks', 'context providers']);
+  // near misses: hooks that aren't screen logic, which "shared screen logic" would describe wrongly
+  for (const fine of ['Runs the project template\'s set-up hooks', 'Git hooks that check commits before they\'re saved', 'Hooks into the shipping service', 'Fishing hooks and lures', 'A shell script that backs up the files', 'Cryptographic primitives for signing']) {
+    assert.deepEqual(terms(fine, { screens: false }), [], fine);
+  }
+  // "component" is a screen word on a part that is screens, and an ordinary word elsewhere
+  assert.deepEqual(terms('Shared components', { screens: true }), ['components']);
+  assert.deepEqual(terms('The billing component of the server', { screens: false }), []);
+  assert.deepEqual(terms('UI components for the server\'s admin pages', { screens: false }), ['UI components']);
+});
+
 test('the list of words is the guide\'s: every entry points at a row of the "Jargon → plain" table', async () => {
   const { JARGON } = await lib('names.mjs');
   const guide = fs.readFileSync(path.join(SKILL, 'references', 'writing-descriptions.md'), 'utf8');

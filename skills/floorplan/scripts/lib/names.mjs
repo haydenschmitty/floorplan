@@ -54,8 +54,13 @@ export const JARGON = [
   { re: /\bAPI clients?\b|\bclient librar(?:y|ies)\b|\bSDKs?\b/g, row: 'SDK, client library, API client', say: 'ready-made code for talking to a service ("talks to Stripe", "server connection")' },
   { re: /\bAPI keys?\b|\baccess tokens?\b|\bJWTs?\b/g, row: 'secret, API key, token', say: 'a password for a service, or a sign-in pass' },
   { re: /\bAPIs?\b/g, row: 'API', say: '"the main server", or what it asks another service for' },
-  { re: /\bUI kit\b|\bprimitives\b|\bcomponents?\b/gi, row: 'component, UI kit, primitives', say: 'building blocks of the screens (buttons, tables, dialogs)' },
-  { re: /\b(?:app |UI )?shell\b/gi, row: 'shell, app shell', say: 'the frame around the screens (menu, header)' },
+  // "component" and "primitives" mean screen building blocks only on a part that is screens; elsewhere they're
+  // ordinary words ("the billing component of the server", "cryptographic primitives"). Said outright
+  // ("UI components", "React component") they count anywhere.
+  { re: /\bUI (?:kit|components?|primitives)\b|\b(?:React|Vue|Svelte|Angular) components?\b/gi, row: 'component, UI kit, primitives', say: 'building blocks of the screens (buttons, tables, dialogs)' },
+  { re: /\bprimitives\b|\bcomponents?\b/gi, screens: true, row: 'component, UI kit, primitives', say: 'building blocks of the screens (buttons, tables, dialogs)' },
+  // only the screens' frame: a "shell script" or "the command shell" is something else
+  { re: /\b(?:app|UI) shell\b/gi, row: 'shell, app shell', say: 'the frame around the screens (menu, header)' },
   { re: /\btoast (?:messages?|notifications?)\b|\btoasts\b|\bmodals?\b|\bpopovers?\b/gi, row: 'toast, modal, popover', say: 'a pop-up message, or a pop-up window' },
   { re: /\bendpoints?\b|\broute handlers?\b|\bAPI routes?\b/gi, row: 'endpoint, route (backend)', say: 'a request the app can receive' },
   { re: /\brouters?\b/gi, row: 'blueprint, router, controller', say: 'a group of related requests ("order requests")' },
@@ -75,7 +80,9 @@ export const JARGON = [
   { re: /\benv(?:ironment)? var(?:iable)?s?\b|\bconfigs?\b/gi, row: 'env var, config', say: 'settings' },
   { re: /\bauth\b|\bauthentication\b/gi, row: 'auth, authentication', say: 'sign-in' },
   { re: /\bauthorization\b|\bRBAC\b/gi, row: 'authorization, roles, permissions, RBAC', say: 'who is allowed to do what' },
-  { re: /\bhooks?\b|\bcontext providers?\b/gi, row: 'hook, context, provider (React)', say: 'shared screen logic' },
+  // a React-style hook only: "React hooks", "custom hook", "the useCart hook". A project template's set-up
+  // hooks, git hooks or a payment service's hooks are something else, and "shared screen logic" would be wrong.
+  { re: /\b(?:React|[Cc]ustom|[Ss]hared) [Hh]ooks?\b|\buse[A-Z][A-Za-z0-9]* [Hh]ooks?\b|\b[Cc]ontext [Pp]roviders?\b|\bReact [Cc]ontext\b/g, row: 'hook, context, provider (React)', say: 'shared screen logic' },
   { re: /\bstate management\b/gi, row: 'state', say: 'what the screen currently remembers' },
   { re: /\bCI(?:\/CD)?\b/g, row: 'deploy, CI/CD', say: 'automatic checks, or putting a new version live' },
   { re: /\bdeploy(?:s|ed|ing|ments?)?\b/gi, row: 'deploy, CI/CD', say: 'putting a new version live' },
@@ -94,9 +101,10 @@ export const FRAMEWORK_SAY = "a framework or library's name: say what the part d
 
 /**
  * The developer words in a label or summary: [{ term, say }], each word once. With frameworks: false,
- * framework names are allowed (an outside service's own node is named after the product).
+ * framework names are allowed (an outside service's own node is named after the product). With screens: false
+ * (a part that isn't screens), words that are jargon only about screens ("component") are allowed.
  */
-export function jargonIn(text, { frameworks = true } = {}) {
+export function jargonIn(text, { frameworks = true, screens = true } = {}) {
   if (typeof text !== 'string' || !text) return [];
   let rest = text;
   const out = [];
@@ -106,6 +114,6 @@ export function jargonIn(text, { frameworks = true } = {}) {
     rest = rest.replace(re, (m) => ' '.repeat(m.length));
   };
   if (frameworks) take(FRAMEWORKS, FRAMEWORK_SAY);
-  for (const j of JARGON) take(j.re, j.say);
+  for (const j of JARGON) if (screens || !j.screens) take(j.re, j.say);
   return out.sort((a, b) => a.at - b.at).map(({ term, say }) => ({ term, say }));
 }

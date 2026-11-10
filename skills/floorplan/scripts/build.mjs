@@ -416,7 +416,7 @@ const plainItems = [];
 if (audience === 'everyone') {
   for (const n of nodes) {
     if (!n?.id) continue;
-    const found = ['label', 'summary'].flatMap((field) => jargonIn(n[field], { frameworks: n.kind !== 'external' }).map((j) => ({ node: n.id, field, ...j })));
+    const found = ['label', 'summary'].flatMap((field) => jargonIn(n[field], { frameworks: n.kind !== 'external', screens: ['ui', 'feature'].includes(n.kind) }).map((j) => ({ node: n.id, field, ...j })));
     if (!found.length) continue;
     plainItems.push(...found);
     warn(`plain language: node "${n.id}" uses developer words: ${found.map((f) => `"${f.term}" in its ${f.field} (${f.say})`).join('; ')}. This map is for everyone, so reword them ("Jargon → plain" in references/writing-descriptions.md).`);
