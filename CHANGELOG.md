@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.7.2 (2026-11-10)
 
 - **A second build no longer fails when Floorplan is installed read-only:** the build puts two of its own files next to the map (`serve.mjs` and `page-safety.mjs`), and it copied them, permissions included. Where the plugin's files are read-only (some package managers, system-wide installs and locked-down machines install them that way), the copies were read-only too, so the next build stopped with a permission error (`EACCES` or `EPERM`) when it tried to replace them. They're now written fresh, so they can always be replaced, and a read-only copy left by an earlier version is replaced too.
 - **`build.mjs --json` always prints its JSON object:** when the build stopped on something it didn't expect, it exited 1 with nothing on stdout, so a program reading the result couldn't tell what had happened. It now prints the usual object with `ok: false` and one error, like `build stopped unexpectedly (EACCES); see stderr`. The details still go to stderr, and never into the object, because they can quote your files.
-- **A description file that isn't an object is reported, not a crash:** a file in `floorplan/descriptions/` holding `null` stopped the build, a refresh and `describe.mjs` with a stack trace. Now a file that holds `null`, a list or plain text, or whose `files` or `routes` isn't an object, is a build error that names it, like `descriptions/api.json must be an object like { "files": { … }, "routes": { … } }, not null`. `describe.mjs` treats such a file as empty and writes a fresh one to fill in, and a refresh leaves it for the build to name.
+- **A description file that isn't an object is reported, not a crash:** a file in `floorplan/descriptions/` holding `null` stopped the build, a refresh and `describe.mjs` with a stack trace. Now a file that holds `null`, a list or plain text, or whose `files` or `routes` holds a list, a number or text, is a build error that names it, like `descriptions/api.json must be an object like { "files": { … }, "routes": { … } }, not null`. `describe.mjs` treats such a file as empty and writes a fresh one to fill in, and a refresh leaves it for the build to name.
 - **A tsconfig that extends itself no longer crashes the scan:** a `tsconfig.json` or `jsconfig.json` whose `extends` led back to itself, directly or through other configs, sent the scan round in circles until it ran out of stack. The loop now simply ends there.
 
 ## 0.7.1 (2026-11-10)
