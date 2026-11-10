@@ -644,8 +644,71 @@ const KIND_LABEL = new Proxy({}, { get: (_, k) => (technical() ? KIND_TECH : KIN
 let technicalFlag = false;
 const technical = () => technicalFlag;
 const METHODS = { GET: 1, POST: 1, PUT: 1, PATCH: 1, DELETE: 1, CALL: 1 };
-const store = { get(k, d) { try { return JSON.parse(localStorage.getItem('floorplan:' + k) ?? localStorage.getItem('show-code:' + k)) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem('floorplan:' + k, JSON.stringify(v)); } catch {} } };
 const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// ---------- when the browser says no ----------
+// A map embedded in a sandboxed frame, opened in a private window or under strict settings may get no storage,
+// no clipboard and no new windows. These helpers behave the same either way, and say so plainly when they can't.
+// Settings the browser won't save are kept in memory instead, so they still hold until the page is closed;
+// store.persistent says whether they will last beyond that.
+const store = (() => {
+  const mem = new Map(); // JSON text, only for what the browser refused to save
+  let persistent = (() => { try { localStorage.getItem('floorplan:panel'); return true; } catch { return false; } })();
+  return {
+    get(k, d) {
+      if (mem.has(k)) { try { return JSON.parse(mem.get(k)) ?? d; } catch { return d; } }
+      try { return JSON.parse(localStorage.getItem('floorplan:' + k) ?? localStorage.getItem('show-code:' + k)) ?? d; } catch { return d; }
+    },
+    set(k, v) {
+      try { localStorage.setItem('floorplan:' + k, JSON.stringify(v)); mem.delete(k); } catch { persistent = false; mem.set(k, JSON.stringify(v)); }
+    },
+    get persistent() { return persistent; },
+  };
+})();
+function selectText(el) { try { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } catch {} }
+// the older way to copy, for browsers that refuse the clipboard API (an embedding page has to allow it) or lack it
+function copyByCommand(text) {
+  let ok = false;
+  const ta = document.createElement('textarea'), was = document.activeElement;
+  ta.value = text; ta.setAttribute('readonly', ''); ta.setAttribute('aria-hidden', 'true');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
+  try { document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy') === true; } catch {}
+  ta.remove();
+  try { if (was && was !== document.body) was.focus({ preventScroll: true }); } catch {}
+  return ok;
+}
+/** Shows text the browser wouldn't copy, selected so it can be copied by hand: where it already is on screen (`shown`), or in a small window. */
+function copyByHand(text, shown) {
+  if (shown && shown.isConnected) { selectText(shown); toast('This browser blocked copying. The text is selected, ready to copy.'); return; }
+  const m = showModal({ title: 'Copy it yourself', html: `<p>This browser didn’t let the map use the clipboard. The text is selected below, ready to copy.</p><pre>${h(text)}</pre>` });
+  selectText(m.el.querySelector('pre'));
+}
+/** Copies text. Resolves true only when it really was copied; otherwise shows it to copy by hand (unless quiet) and resolves false. */
+function copy(text, { select: shown = null, quiet = false } = {}) {
+  text = String(text ?? '');
+  let p = null;
+  try { p = navigator.clipboard?.writeText(text) || null; } catch {}
+  const done = p ? Promise.resolve(p).then(() => true, () => copyByCommand(text)) : Promise.resolve(copyByCommand(text));
+  return done.then((ok) => { if (!ok && !quiet) copyByHand(text, shown); return ok; });
+}
+/** An address the browser wouldn't open in a new window, shown to copy and open by hand. */
+function showAddress(url) {
+  const m = showModal({ title: 'Open this address', html: `<p>This browser didn’t let the map open a new window. Copy the address and open it yourself:</p><pre>${h(url)}</pre>`,
+    actions: [{ label: 'Copy address', primary: true, icon: 'copy', keepOpen: true, onClick: () => { copy(url, { select: pre }).then((ok) => { if (ok) toast('Copied'); }); } }] });
+  const pre = m.el.querySelector('pre');
+  selectText(pre);
+}
+/** Opens an address in a new window, with no way back to this page. True if it opened; if the browser blocked it, shows the address instead (unless quiet). */
+function openWindow(url, { quiet = false } = {}) {
+  url = String(url);
+  let w = null;
+  try { w = window.open('', '_blank'); } catch {}
+  if (w) {
+    try { w.opener = null; w.location.href = url; return true; } catch { try { w.close(); } catch {} }
+  }
+  if (!quiet) showAddress(url);
+  return false;
+}
+// ---------- end: when the browser says no ----------
 const fmt = (n) => n >= 10000 ? Math.round(n / 1000) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
 const dirname = (p) => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -1196,7 +1259,6 @@ function openMenu(ev, items) {
   ctxEl.style.transformOrigin = `${ev.clientX - x}px ${ev.clientY - y}px`;
 }
 function closeMenu() { ctxEl.hidden = true; }
-const copy = (text) => navigator.clipboard?.writeText(text).catch(() => {});
 function itemMenu(id) {
   const real = id.startsWith('x:') ? connEntity(id) : id.startsWith('m:') ? 'f:' + id.slice(2) : id;
   const i = info(real);
@@ -1344,6 +1406,8 @@ $('#z-fit').onclick = () => fit(true);
 function setHash(container, sel) {
   if (container.startsWith('q:')) return; // answer views are transient
   const p = new URLSearchParams();
+  const tour = new URLSearchParams(location.hash.slice(1)).get('tour'); // a page embedding the map can say tour=0; keep it while moving around
+  if (tour !== null) p.set('tour', tour);
   if (container !== 'root') p.set('v', container);
   if (sel && typeof sel === 'string') p.set('s', sel);
   const s = p.toString();
@@ -1551,7 +1615,7 @@ function renderPanel() {
   panel.querySelectorAll('[data-flow]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); startFlow(a.dataset.flow); }));
   panel.querySelectorAll('[data-sel]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); select(a.dataset.sel); centerOn(a.dataset.sel); }));
   panel.querySelector('[data-goroot]')?.addEventListener('click', () => go('root'));
-  panel.querySelectorAll('[data-copy]').forEach((a) => a.addEventListener('click', () => { navigator.clipboard?.writeText(a.dataset.copy); a.textContent = '✓'; }));
+  panel.querySelectorAll('[data-copy]').forEach((a) => a.addEventListener('click', () => { copy(a.dataset.copy, { select: a.previousElementSibling }).then((ok) => { if (ok) a.textContent = '✓'; }); }));
   emit('panel', { selected: sel, container: state.container });
 }
 
@@ -1917,7 +1981,7 @@ function setWarning(code) {
   if (!code) return;
   warn.innerHTML = `<svg class="i" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>${WARNINGS[code] || h(code)}</span>${code === 'no_engine' ? '<button type="button" data-copycmd>Copy command</button>' : code === 'cli_tip' ? '<button type="button" data-dismiss>Got it</button>' : ''}`;
   warn.querySelector('[data-dismiss]')?.addEventListener('click', () => setWarning(null));
-  warn.querySelector('[data-copycmd]')?.addEventListener('click', (e) => { navigator.clipboard?.writeText('node floorplan/serve.mjs'); e.target.textContent = 'Copied'; });
+  warn.querySelector('[data-copycmd]')?.addEventListener('click', (e) => { const b = e.currentTarget; copy('node floorplan/serve.mjs', { select: warn.querySelector('code') }).then((ok) => { if (ok) b.textContent = 'Copied'; }); });
 }
 function setEngine(engine, label, warning) {
   askState.engine = engine;
@@ -2208,6 +2272,17 @@ if (EXPORTED) {
   $('#stage').appendChild(made);
 }
 document.title = `${G.project.name} map`;
+// Links that open a new window. Where the browser keeps storage they work as they always have. Where it doesn't
+// (usually a sandboxed frame, which tends to block new windows too) they go through openWindow, which can tell
+// when a window was blocked and shows the address instead of nothing happening. Ctrl-, ⌘-, Shift- and
+// middle-clicks are always left to the browser.
+document.addEventListener('click', (ev) => {
+  if (store.persistent) return;
+  const a = ev.target?.closest?.('a[target="_blank"][href]');
+  if (!a || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+  ev.preventDefault();
+  openWindow(a.href);
+});
 $('#btn-up').onclick = up;
 // drag the panel's left edge to resize it; the width sticks between visits
 const setPanelWidth = (w) => { document.documentElement.style.setProperty('--panel-w', `${clamp(Math.round(w), 300, Math.min(720, innerWidth - 360))}px`); };
@@ -2372,7 +2447,7 @@ window.Floorplan = Object.freeze({
   addPanelSection(where, fn) { (ext.sections[where] ||= []).push(fn); },
   showPanel(html, bind) { custom.panel = { html, bind }; setPanel(true); renderPanel(); },
   closePanel() { custom.panel = null; renderPanel(); },
-  modal: showModal, toast, copy: (text) => copy(text),
+  modal: showModal, toast, copy: (text, o) => copy(text, o), openWindow: (url, o) => openWindow(url, o), showAddress: (url) => showAddress(url),
   icons: P,
   technical, setTechnical,
   store,
