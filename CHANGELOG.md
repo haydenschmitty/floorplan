@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-11-09)
 
 - **Run Floorplan without an agent session:** in CI, in a script, or from your own tooling, with any model that can read files and return JSON. See [Running without an agent session](docs/unattended.md).
   - **Unattended mode** (`FLOORPLAN_UNATTENDED=1`, or `--unattended`): nothing is written outside `floorplan/` (no `CLAUDE.local.md`, no `.git/info/exclude`, no moving an old section out of `CLAUDE.md`), the map names no agent, `open.mjs` starts nothing, and a refresh whose build fails, or that finds no map, exits with an error.
