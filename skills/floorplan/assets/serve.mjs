@@ -65,6 +65,7 @@ function exportMap(include, extraFlows = []) {
     meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on } },
     flows: on.includes('flows') ? [...g.flows, ...extraFlows.filter((f) => !g.flows.some((x) => x.id === f.id))] : [],
     tour: on.includes('flows') ? g.tour : [],
+    quiz: on.includes('flows') ? g.quiz || [] : [],
     files: on.includes('notes') ? g.files : g.files.map(({ note, ...f }) => f),
   };
   if (!on.includes('recent')) delete out.recent;
@@ -92,7 +93,7 @@ if (has('export')) {
     const file = path.resolve(dest && !dest.startsWith('--') ? dest : path.join(here, x.name));
     fs.writeFileSync(file, x.html);
     console.log(`Exported the map to ${file}`);
-    const label = { flows: 'flows and the tour', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
+    const label = { flows: 'flows, the tour and the quiz', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
     console.log(`Includes: the map${x.include.map((p) => ', ' + label[p]).join('')}. One file that opens in any browser, with no Ask bar.`);
     if (x.include.includes('health') && !x.plan) console.log('It includes the health check: which endpoints are open and where secrets sit in the code (never their values). Share it only with people you trust.');
     process.exit(0);
@@ -189,16 +190,17 @@ function load() {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
   const g = JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8'));
   const coreSrc = fs.readFileSync(path.join(here, 'query.mjs'), 'utf8').split('// ---- cli ----')[0];
-  const c = new Function(`${coreSrc.replace(/^import .*$/gm, '')}; return { FLOORPLAN_ANSWER_SCHEMA, FLOORPLAN_FLOW_SCHEMA, FLOORPLAN_CHANGE_SCHEMA, floorplanAskInstructions, floorplanFlowInstructions, floorplanChangeInstructions, createGraphQuery };`)();
+  const c = new Function(`${coreSrc.replace(/^import .*$/gm, '')}; return { FLOORPLAN_ANSWER_SCHEMA, FLOORPLAN_FLOW_SCHEMA, FLOORPLAN_QUIZ_SCHEMA, FLOORPLAN_CHANGE_SCHEMA, floorplanAskInstructions, floorplanFlowInstructions, floorplanQuizInstructions, floorplanChangeInstructions, createGraphQuery };`)();
   c.q = c.createGraphQuery(g);
   // the served page's policy covers this script too, and lets the page talk to this server and nothing else
   page = withPolicy(html.replace('</head>', inject + '</head>'), 'local');
   G = g; core = c;
-  // kinds of request: a question (answer + board), a new guided flow, and for a blueprint, a change to the
-  // plan. Codex reads its schema from a file.
+  // kinds of request: a question (answer + board), a new guided flow, more quiz questions, and for a
+  // blueprint, a change to the plan. Codex reads its schema from a file.
   MODES = {
     ask: { instructions: core.floorplanAskInstructions(G, 'cli'), schema: core.FLOORPLAN_ANSWER_SCHEMA, file: path.join(here, '.cache', 'answer-schema.json') },
     flow: { instructions: core.floorplanFlowInstructions(G, 'cli'), schema: core.FLOORPLAN_FLOW_SCHEMA, file: path.join(here, '.cache', 'flow-schema.json') },
+    quiz: { instructions: core.floorplanQuizInstructions(G, 'cli'), schema: core.FLOORPLAN_QUIZ_SCHEMA, file: path.join(here, '.cache', 'quiz-schema.json') },
     ...(G.meta?.blueprint && canChange ? { change: { instructions: core.floorplanChangeInstructions(G), schema: core.FLOORPLAN_CHANGE_SCHEMA, file: path.join(here, '.cache', 'change-schema.json') } } : {}),
   };
   if (ENGINES[engine]?.schemaFile) {

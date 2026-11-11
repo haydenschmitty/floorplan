@@ -1280,6 +1280,7 @@ function itemMenu(id) {
       : drillable(real) && state.container !== real ? { label: 'Open', icon: 'drill', hint: '2×click', run: () => open(real) } : null,
     state.container === 'q:answer' && !id.startsWith('x:') ? { label: 'Show on the map', icon: 'external', run: () => reveal(real) } : null,
     EXPORTED ? null : { label: 'Ask about this', icon: 'spark', run: () => addAskContext(real) },
+    ...ext.menu.map((fn) => { try { return fn(real); } catch (e) { console.error('floorplan extension', e); return null; } }),
     { label: 'Show details', icon: 'panel', run: () => { setPanel(true); if (id.startsWith('x:')) reveal(real); else select(id); } },
     '-',
     path ? { label: i.type === 'route' ? 'Copy endpoint' : 'Copy path', icon: 'copy', run: () => copy(path) } : null,
@@ -1331,8 +1332,16 @@ function freeArea() {
   const sheet = isPhone(); // on a phone the details panel is a sheet at the bottom, not a column at the side
   const panelW = open && !sheet ? $('#panel').offsetWidth + 32 : 0;
   const top = ($('header').offsetHeight || 64) + 8 + Math.min(130, $('#context').offsetHeight);
-  const bottom = open && sheet ? $('#panel').offsetHeight + 24 : $('#ask').offsetHeight + 36;
-  return { x: 16, y: top, w: Math.max(200, r.width - panelW - 32), h: Math.max(140, r.height - top - bottom) };
+  let bottom = open && sheet ? $('#panel').offsetHeight + 24 : $('#ask').offsetHeight + 36;
+  let x = 16, w = r.width - panelW - 32;
+  // a card an extension keeps open over the map (data-floats, like the quiz): what it points at stays
+  // out from under it, beside it when there's room and otherwise above it (a phone)
+  const fl = [...document.querySelectorAll('[data-floats]')].find((e) => !e.hidden)?.getBoundingClientRect();
+  if (fl?.width) {
+    if (r.width - panelW - fl.right >= 320) { x = fl.right + 16; w = r.width - panelW - fl.right - 32; }
+    else bottom = Math.max(bottom, r.height - fl.top + 8);
+  }
+  return { x, y: top, w: Math.max(200, w), h: Math.max(140, r.height - top - bottom) };
 }
 function fit(animate) {
   const b = state.bounds; if (!b) return;
@@ -2202,13 +2211,27 @@ async function askViaApp(question, progress, mode = 'ask') {
       inputSchema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] },
       execute: ({ from, to }) => { progress('Tracing a dependency path'); return clip(Q.path(String(from), String(to))); } },
   ];
-  const flow = mode === 'flow';
-  const rules = `${flow ? floorplanFlowInstructions(G, 'app') : floorplanAskInstructions(G, 'app')}\nThe JSON must match this schema:\n${JSON.stringify(flow ? FLOORPLAN_FLOW_SCHEMA : FLOORPLAN_ANSWER_SCHEMA)}\n\nMap overview:\n${clip(Q.overview())}`;
-  const turns = [{ role: 'user', content: rules }, ...(flow ? [] : askState.turns.slice(-6)), { role: 'user', content: question }];
+  // a flow or quiz request stands alone: it gets no earlier questions, and isn't added to them
+  const [instructions, schema] = { flow: [floorplanFlowInstructions, FLOORPLAN_FLOW_SCHEMA], quiz: [floorplanQuizInstructions, FLOORPLAN_QUIZ_SCHEMA] }[mode] || [floorplanAskInstructions, FLOORPLAN_ANSWER_SCHEMA];
+  const own = mode !== 'ask';
+  const rules = `${instructions(G, 'app')}\nThe JSON must match this schema:\n${JSON.stringify(schema)}\n\nMap overview:\n${clip(Q.overview())}`;
+  const turns = [{ role: 'user', content: rules }, ...(own ? [] : askState.turns.slice(-6)), { role: 'user', content: question }];
   const answer = await askState.sample.json(turns, { tools, signal: askState.ctl.signal });
-  if (flow) return answer || {};
+  if (own) return answer || {};
   askState.turns.push({ role: 'user', content: question }, { role: 'assistant', content: JSON.stringify({ title: answer?.title, answer: answer?.answer }) });
   return answer || {};
+}
+
+/** An extension's own request to the agent in one of its modes ('quiz'): the raw JSON answer. The Ask bar's
+ *  Stop button cancels it, which rejects with an AbortError. */
+async function requestAgent(mode, prompt, progress = () => {}) {
+  if (!askState.engine) throw { code: window.FLOORPLAN_SERVER ? 'cli_missing' : 'no_engine' };
+  // never cut off a question the person is waiting on: they can stop it themselves
+  if (askState.busy) throw { code: 'busy', message: `${AGENT.name} is still working on another request. Wait for it, or press Stop in the Ask bar.` };
+  setBusy(true);
+  const ctl = askState.ctl = new AbortController();
+  try { return askState.engine === 'cli' ? await askViaCli(prompt, progress, mode) : await askViaApp(prompt, progress, mode); }
+  finally { if (askState.ctl === ctl) setBusy(false); } // a newer request (a flow, a question) keeps its own Stop
 }
 
 askState.context = [];
@@ -2237,6 +2260,8 @@ async function submitAsk() {
   askInput.value = '';
   askState.context = []; renderChips();
   if (askState.mode === 'change') return requestChange(ctxIds.length ? `${question}\n\nThis is about: ${ctxIds.map((id) => `${id} (${info(id).name})`).join(', ')}.` : question);
+  // an extension can take a request it handles itself ("quiz me on payments" opens the quiz)
+  for (const fn of ext.ask) { try { if (fn(question, ctxIds)) return; } catch (e) { console.error('floorplan extension', e); } }
   const shown = question;
   // what Claude sees: the question plus the pinned items, by id, so it starts from them
   if (ctxIds.length) question += `\n\nFocus on these map items: ${ctxIds.map((id) => `${id} (${info(id).name})`).join(', ')}.`;
@@ -2414,7 +2439,7 @@ function playFlow({ title = 'Tour', description = '', steps = [], inPlace = fals
   state.flow = { f: { id: 'tmp-' + Date.now(), title, description, steps: st }, i: 0, inPlace };
   flowStep();
 }
-const ext = { sections: { overview: [], item: [] }, listeners: {} };
+const ext = { sections: { overview: [], item: [] }, listeners: {}, menu: [], ask: [] };
 const custom = { panel: null };
 function emit(event, data) { for (const fn of ext.listeners[event] || []) { try { fn(data); } catch (e) { console.error('floorplan extension', e); } } }
 window.Floorplan = Object.freeze({
@@ -2432,6 +2457,7 @@ window.Floorplan = Object.freeze({
   closeMenus: () => { closeMenu(); fm.classList.remove('open'); legendEl.classList.remove('open'); },
   // asking
   addAskContext, ask: (text) => { closeSheet(); askInput.value = text; submitAsk(); }, askEngine: () => askState.engine,
+  requestAgent, cancelAgent: () => { if (askState.busy) cancelAsk(); },
   // a blueprint's Change mode: whether it's available here, and putting a request in the Ask bar to finish and send
   canChange: () => canChange(),
   draftChange(text) {
@@ -2454,6 +2480,10 @@ window.Floorplan = Object.freeze({
     return b;
   },
   addPanelSection(where, fn) { (ext.sections[where] ||= []).push(fn); },
+  // a card's right-click menu: fn(id) returns { label, icon, run } or null, shown after "Ask about this"
+  addMenuItem(fn) { ext.menu.push(fn); },
+  // a request typed in the Ask bar: fn(text, pinnedIds) returns true when it handled it, so it isn't asked as a question
+  onAsk(fn) { ext.ask.push(fn); },
   showPanel(html, bind) { custom.panel = { html, bind }; setPanel(true); renderPanel(); },
   closePanel() { custom.panel = null; renderPanel(); },
   modal: showModal, toast, copy: (text, o) => copy(text, o), openWindow: (url, o) => openWindow(url, o), showAddress: (url) => showAddress(url),
