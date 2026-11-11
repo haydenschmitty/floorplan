@@ -270,6 +270,10 @@ function bounded(re) {
 const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^guard(?:_|$)|_guard$|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
 const isGuardName = (name) => !!name && !NOT_GUARD.test(name) && GUARD_NAME.test(snake(name));
+// NestJS guards that check the caller (AuthGuard, JwtAuthGuard, RolesGuard), not rate limits or quotas
+const isNestAuthGuard = (name) => isGuardName(name) && !/rate_?limit|throttl|quota|limiter/i.test(snake(name));
+// decorators that open a route past a global NestJS guard
+const NEST_PUBLIC = /@(?:Public|IsPublic|SkipAuth|NoAuth|AllowAnonymous|Anonymous)\s*\(/;
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
 const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_session|sessionmaker)$|(^|_)(db|database|sql\w*|engine|conn|connection|cursor|uow|unit_of_work)(_|$)|session_?(local|maker|factory)/i;
@@ -426,8 +430,13 @@ function pyRoutes(src, f, out) {
 
 function jsRoutes(src, f, out) {
   const routes = f.routes || [];
-  if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path)) return;
+  if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path) && !/\bAPP_GUARD\b/.test(src)) return;
   const lines = src.split('\n');
+  // NestJS: `{ provide: APP_GUARD, useClass: AuthGuard }` guards every route of the app, except the ones a
+  // @Public()-style decorator opens. A rate-limit or quota guard isn't a sign-in check.
+  for (const m of src.matchAll(/\bprovide\s*:\s*APP_GUARD\s*,\s*useClass\s*:\s*([A-Za-z_$][\w$]*)/g)) {
+    if (isNestAuthGuard(m[1])) out.push({ k: 'global-guard', framework: 'nest', name: m[1], line: lineIndex(src)(m.index) });
+  }
   // Next.js middleware.ts protecting the app
   if (/(^|\/)(src\/)?middleware\.(t|j)s$/.test(f.path) && NEXT_MIDDLEWARE_GUARD.test(src)) {
     const matcher = /matcher\s*:\s*([^\n]+)/.exec(src)?.[1] || '';
@@ -445,6 +454,33 @@ function jsRoutes(src, f, out) {
   routes.forEach((r, idx) => {
     if (r.framework === 'table') return; // sign-in is checked by the dispatcher or inside the handler
     const rec = { k: 'route', line: r.line, method: r.method };
+    if (r.framework === 'nest') {
+      // the decorators stacked on this method (above and below the route one, up to the handler), and the
+      // ones on its class (around the nearest @Controller above)
+      const i0 = r.line - 1;
+      let top = i0; while (top > 0 && /^\s*@/.test(lines[top - 1])) top--;
+      let hIdx = i0 + 1;
+      const hRe = r.handler ? new RegExp(`^\\s*(?:(?:public|private|protected|static|async|readonly)\\s+)*${r.handler.replace(/\$/g, '\\$')}\\s*\\(`) : null;
+      while (hIdx < lines.length && hIdx < i0 + 30 && !(hRe && hRe.test(lines[hIdx]))) hIdx++;
+      const methodDecos = lines.slice(top, hIdx).join('\n');
+      let c = i0; while (c >= 0 && !/@Controller\s*\(/.test(lines[c])) c--;
+      let cTop = c, cEnd = c;
+      if (c >= 0) { while (cTop > 0 && /^\s*@/.test(lines[cTop - 1])) cTop--; while (cEnd < lines.length - 1 && !/\bclass\s/.test(lines[cEnd])) cEnd++; }
+      const classDecos = c >= 0 ? lines.slice(cTop, cEnd + 1).join('\n') : '';
+      const decos = methodDecos + '\n' + classDecos;
+      const guards = [...decos.matchAll(/@UseGuards\s*\(([^)]{0,500})\)/g)].flatMap((m) => m[1].match(/[A-Za-z_$][\w$]*/g) || []);
+      const guard = guards.find(isNestAuthGuard);
+      if (NEST_PUBLIC.test(decos)) rec.nestPublic = true;
+      const next = routes.slice(idx + 1).find((x) => x.line > r.line)?.line || r.line + 80;
+      const body = lines.slice(hIdx, Math.min(next - 1, hIdx + 80)).join('\n');
+      if (guard) Object.assign(rec, { guard, via: 'decorator' });
+      else if (rec.nestPublic && INLINE_CHECK.test(body)) rec.via = 'inline';
+      if (SIGNATURE_CHECK.test(body)) rec.signed = true;
+      if (PUBLIC_RESPONSE.test(body)) rec.publicResponse = true;
+      if (r.handler) rec.fn = r.handler;
+      out.push(rec);
+      return;
+    }
     if (r.framework === 'firebase') {
       // a callable checks request.auth (v1: context.auth) or turns on App Check; an onRequest function
       // checks a token or signature itself, like any other handler
@@ -1195,7 +1231,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (!perRepo.has(repo)) perRepo.set(repo, { guarded: 0, total: 0, open: [], misplaced: [], guardCounts: new Map(), fileGuards: new Map(), guardedIn: new Map() });
     const pr = perRepo.get(repo);
     pr.total++;
-    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m));
+    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m) || (g.framework === 'nest' && !fnd.nestPublic));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);

@@ -343,6 +343,7 @@ function extractJs(src, filePath) {
   }
 
   routes.push(...keyedRouteTable(code, at));
+  if (/@nestjs\/common/.test(code) && /@Controller\s*\(/.test(code)) routes.push(...nestRoutes(code, at));
 
   const triggers = /firebase-functions/.test(code) ? firebaseFunctions(code, at, routes, mounts) : [];
 
@@ -562,6 +563,34 @@ function extractPy(src) {
   const routeLine = /^[ \t]*@\w+\.(route|get|post|put|patch|delete)\(/;
   const { calls, hosts } = extractCalls(code, at, { skip: routeLine });
   return { imports, symbols, routes, mounts, calls, hosts, routers };
+}
+
+// ---------- NestJS ----------
+
+/**
+ * NestJS controllers: `@Controller('api/crm')` (or `@Controller({ path: 'api/crm' })`) gives a prefix,
+ * `@Get('wallet/:id')`, `@Post()`… on its methods give the endpoints. Nest paths have no leading slash
+ * and join with one. Each method belongs to the nearest @Controller above it. A global prefix set at
+ * run time (`app.setGlobalPrefix`) isn't seen. Only files importing '@nestjs/common' are read, so other
+ * decorator libraries with a @Get aren't mistaken for routes.
+ */
+function nestRoutes(code, at) {
+  const ctrls = all(/@Controller\s*\(\s*(?:["'`]([^"'`$]*)["'`]|\{[^{}]{0,300}?\bpath\s*:\s*["'`]([^"'`$]*)["'`][^{}]{0,300}\})?\s*\)/g, code)
+    .map((m) => ({ index: m.index, prefix: m[1] ?? m[2] ?? '' }));
+  if (!ctrls.length) return [];
+  const clean = (s) => s.replace(/^\/+|\/+$/g, '');
+  const out = [];
+  for (const m of all(/@(Get|Post|Put|Patch|Delete|All|Options|Head)\s*\(\s*(?:["'`]([^"'`$]*)["'`]\s*)?\)/g, code)) {
+    let ctrl = null;
+    for (const c of ctrls) if (c.index < m.index) ctrl = c;
+    if (!ctrl) continue;
+    const p = '/' + [clean(ctrl.prefix), clean(m[2] || '')].filter(Boolean).join('/');
+    // the handler: the first `name(` that starts a line after this decorator (other decorators start with @)
+    const after = code.slice(m.index + m[0].length, m.index + m[0].length + 2000);
+    const handler = /^[ \t]*(?:(?:public|private|protected|static|async|readonly)\s+)*([A-Za-z_$][\w$]*)\s*\(/m.exec(after)?.[1] || null;
+    out.push({ method: m[1] === 'All' ? 'ANY' : m[1].toUpperCase(), path: p, var: null, line: at(m.index), framework: 'nest', ...(handler ? { handler } : {}) });
+  }
+  return out;
 }
 
 // ---------- Go ----------
