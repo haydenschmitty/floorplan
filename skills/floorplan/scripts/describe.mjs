@@ -285,9 +285,11 @@ changed: ${f.review}`);
     fs.writeFileSync(path.join(wsDir, `${key}.md`), out.join('\n'));
 
     // skeleton: keep anything already written, add missing keys
+    // (a file that holds something other than an object, or whose files or routes do, counts as empty)
+    const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
     let existing = {};
-    try { existing = JSON.parse(fs.readFileSync(descFile, 'utf8')); } catch {}
-    const skel = { files: { ...(existing.files || {}) }, routes: { ...(existing.routes || {}) } };
+    try { existing = obj(JSON.parse(fs.readFileSync(descFile, 'utf8'))); } catch {}
+    const skel = { files: { ...obj(existing.files) }, routes: { ...obj(existing.routes) } };
     for (const f of chunk) {
       if (!skel.files[f.p]) skel.files[f.p] = { name: f.auto ? fallbackFileName(f.p) : f.name, description: f.auto ? '' : f.d };
       for (const r of routesByFile.get(f.p) || []) {

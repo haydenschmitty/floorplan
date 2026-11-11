@@ -650,6 +650,43 @@ test('build --json reports errors as data, and exits 1 like the plain build', ()
   } finally { cleanup(p); }
 });
 
+test('build --json still prints its one object when the build stops on something unexpected', () => {
+  const p = shopApp();
+  const stoppedOn = (r, kind) => {
+    assert.equal(r.code, 1);
+    assert.deepEqual(Object.keys(r.json).sort(), ['errors', 'ok', 'report', 'schema', 'warnings'], 'the shape of a build that could not start');
+    assert.equal(r.json.schema, 'floorplan/build-result@1');
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.errors.length, 1);
+    assert.match(r.json.errors[0], kind);
+    assert.equal(r.json.report, `✗ ${r.json.errors[0]}`);
+  };
+  try {
+    run('scan.mjs', p);
+    assert.equal(unattended('build.mjs', p).code, 0);
+    // a folder where graph.json goes: the build can't write its map, which nothing in it plans for
+    const graphFile = path.join(p, 'floorplan', 'graph.json');
+    fs.rmSync(graphFile);
+    fs.mkdirSync(graphFile);
+    const r = unattended('build.mjs', p);
+    stoppedOn(r, /^build stopped unexpectedly \(E[A-Z]+\); see stderr$/);
+    assert.ok(!r.out.includes(path.basename(p)), 'the error\'s message, which names the folder, stays out of the object');
+    assert.match(r.err, /graph\.json/, 'the whole error is on stderr');
+    fs.rmdirSync(graphFile);
+    // a scan file that isn't JSON: the error's message can quote the file, so the object gives only its kind
+    fs.writeFileSync(path.join(p, 'floorplan', '.cache', 'scan.json'), 'do-not-quote-this {');
+    const s = unattended('build.mjs', p);
+    stoppedOn(s, /^build stopped unexpectedly \(SyntaxError\); see stderr$/);
+    assert.ok(!s.out.includes('do-not-quote-this'));
+    assert.match(s.err, /SyntaxError/);
+    // without --json nothing changes: the error and exit code are Node's own
+    const plain = exec('build.mjs', p);
+    assert.equal(plain.code, 1);
+    assert.equal(plain.out, '');
+    assert.match(plain.err, /SyntaxError/);
+  } finally { cleanup(p); }
+});
+
 test('maskSecrets is a stable export a driver can call on text before writing it (docs/unattended.md)', async () => {
   const { maskSecrets } = await lib('health.mjs');
   assert.equal(typeof maskSecrets, 'function');

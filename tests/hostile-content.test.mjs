@@ -357,6 +357,51 @@ test('a pattern that isn\'t valid is a build error naming where it is, never a c
   } finally { cleanup(root); }
 });
 
+test('a description file that isn\'t an object is a build error naming the file, never a crash', () => {
+  const root = makeProject({ 'api/a.js': 'export const a = 1;\n' }, {
+    arch: { project: { name: 'Shop' }, nodes: [{ id: 'api', label: 'Server', kind: 'service', summary: 'The shop server.', paths: ['api/**'] }] },
+  });
+  const file = path.join(root, 'floorplan', 'descriptions', 'api.json');
+  /** A script's --json result and exit code; it must print one JSON object and no stack trace. */
+  const json = (script, ...args) => {
+    let out, code = 0;
+    try { out = run(script, root, ...args, '--json'); } catch (e) { out = e.stdout; code = e.status; assert.doesNotMatch(e.stderr, /Error/, `${script}: no stack trace`); }
+    return { code, r: JSON.parse(out) };
+  };
+  try {
+    run('scan.mjs', root);
+    run('build.mjs', root, '--no-claude-md');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    for (const [text, says] of [
+      ['null', /^descriptions\/api\.json must be an object like \{ "files": \{ … \}, "routes": \{ … \} \}, not null$/],
+      ['[]', /^descriptions\/api\.json must be an object like .*, not a list$/],
+      ['"words"', /^descriptions\/api\.json must be an object like .*, not text$/],
+      ['7', /^descriptions\/api\.json must be an object like .*, not a number$/],
+      ['{"files": 7}', /^descriptions\/api\.json: "files" must be an object, not a number$/],
+      ['{"files": {}, "routes": ["GET /"]}', /^descriptions\/api\.json: "routes" must be an object, not a list$/],
+    ]) {
+      fs.writeFileSync(file, text);
+      const built = json('build.mjs', '--no-claude-md');
+      assert.equal(built.code, 1, text);
+      assert.equal(built.r.ok, false, text);
+      assert.equal(built.r.errors.length, 1, `${text}\n${built.r.errors.join('\n')}`);
+      assert.match(built.r.errors[0], says);
+      // a refresh leaves the file as it is and passes on what the build says about it
+      const refreshed = json('refresh.mjs');
+      assert.equal(refreshed.r.ok, false, text);
+      assert.match(refreshed.r.errors[0], says);
+      assert.equal(fs.readFileSync(file, 'utf8'), text, 'the refresh left the file alone');
+      // describe.mjs counts it as empty and writes a fresh one to fill in
+      const described = json('describe.mjs');
+      assert.equal(described.code, 0, text);
+      assert.equal(described.r.ok, true, text);
+      assert.deepEqual(Object.keys(readJson(file).files), ['api/a.js'], text);
+    }
+    // the file describe.mjs wrote builds
+    assert.equal(json('build.mjs', '--no-claude-md').code, 0);
+  } finally { cleanup(root); }
+});
+
 test('globs: valid ones still work, and the checks say plainly what is wrong', async () => {
   const { compileGlob, globProblem } = await lib('common.mjs');
   assert.ok(compileGlob('src/**/*.{ts,tsx}').test('src/a/b.tsx'));

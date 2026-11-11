@@ -79,6 +79,8 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | `wrote[]` | the files written in the map folder; empty when there were errors or with `--check` |
 | `report` | the build's report |
 
+If the build stops on something it didn't expect (a file it can't write, say), it still prints one object and exits 1: `ok` is false, and `errors` holds one line like `build stopped unexpectedly (EACCES); see stderr`, with `warnings` (empty) and `report` and none of the other fields. The details are on stderr only, because they can quote your files.
+
 ### describe.mjs: `floorplan/describe-result@1`
 
 | Field | What it is |

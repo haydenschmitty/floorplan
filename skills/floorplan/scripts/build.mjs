@@ -5,7 +5,7 @@
 // usage: node build.mjs [root] [--arch <file>] [--scan <file>] [--out <dir>] [--check] [--json] [--unattended]
 //
 // --json prints one JSON object (floorplan/build-result@1) instead of the report; the report is in it as
-// "report". Exits 1 on errors either way.
+// "report". Exits 1 on errors either way, and still prints the object if the build stops on something unexpected.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,6 +22,22 @@ import { detectAgent } from './lib/agent.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(HERE, '..');
 const args = parseArgs(process.argv.slice(2));
+// what --json prints when the build can't get as far as its report: one error, in the usual shape
+const stopped = (msg) => ({ schema: 'floorplan/build-result@1', ok: false, errors: [msg], warnings: [], report: `✗ ${msg}` });
+// --json promises one JSON object on stdout whatever happens. If the build stops on something nobody planned for
+// (a file it can't write, a bug), the object says so instead of leaving stdout empty. It carries only the error's
+// code or kind, because an error's message can quote a line of someone's file; the whole error goes to stderr.
+if (args.json) {
+  let once = false;
+  process.on('uncaughtException', (e) => {
+    if (once) return;
+    once = true;
+    process.exitCode = 1;
+    console.error(e);
+    const kind = [e?.code, e?.name].find((v) => typeof v === 'string' && /^\w{1,40}$/.test(v)) || 'Error';
+    printJson(stopped(`build stopped unexpectedly (${kind}); see stderr`), 1);
+  });
+}
 const unattended = unattendedMode(args);
 const agent = detectAgent(args);
 const root = path.resolve(args._[0] || '.');
@@ -38,7 +54,7 @@ const err = (msg) => errors.push(msg);
 const warn = (msg) => warnings.push(msg);
 
 const fail = async (msg) => {
-  if (args.json) await printJson({ schema: 'floorplan/build-result@1', ok: false, errors: [msg], warnings: [], report: `✗ ${msg}` }, 1);
+  if (args.json) await printJson(stopped(msg), 1);
   console.error(`✗ ${msg}`); process.exit(1);
 };
 if (!fs.existsSync(scanFile)) await fail(`No scan at ${scanFile}. Run: node ${path.join(SKILL_DIR, 'scripts', 'scan.mjs')} "${root}"`);
@@ -67,8 +83,11 @@ function lev(a, b) {
   return dp[b.length];
 }
 const didYouMean = (w, opts) => { const c = closest(w, opts); return c ? ` — did you mean "${c}"?` : ''; };
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+/** What a value is, in the words an error uses: "null", "a list", "text", "a number". */
+const kindOf = (v) => v === null ? 'null' : Array.isArray(v) ? 'a list' : typeof v === 'string' ? 'text' : `a ${typeof v}`;
 
-if (!arch || typeof arch !== 'object' || Array.isArray(arch)) await fail('architecture.json must be an object');
+if (!isObj(arch)) await fail('architecture.json must be an object');
 
 // ---------- secrets in written text ----------
 // The map never stores a secret's value. Health masks what it finds in code; this masks what was written:
@@ -400,6 +419,12 @@ if (fs.existsSync(descDir)) {
   for (const name of fs.readdirSync(descDir).filter((n) => n.endsWith('.json')).sort()) {
     let d;
     try { d = JSON.parse(fs.readFileSync(path.join(descDir, name), 'utf8')); } catch (e) { err(`descriptions/${name} is not valid JSON: ${e.message}`); continue; }
+    // a file that holds something else (null, a list, text), or whose files or routes hold the wrong kind of thing, is named and left out;
+    // files or routes left empty (missing or null) is fine
+    if (!isObj(d)) { err(`descriptions/${name} must be an object like { "files": { … }, "routes": { … } }, not ${kindOf(d)}`); continue; }
+    const wrong = ['files', 'routes'].filter((k) => d[k] != null && !isObj(d[k]));
+    for (const k of wrong) err(`descriptions/${name}: "${k}" must be an object, not ${kindOf(d[k])}`);
+    if (wrong.length) continue;
     for (const [p, v] of Object.entries(d.files || {})) {
       if (!v || typeof v !== 'object') { err(`descriptions/${name}: files["${p}"] must be { name, description }`); continue; }
       if (!includedSet.has(p)) { staleFiles++; if (staleEx.length < 3) staleEx.push(p); continue; }
@@ -643,8 +668,13 @@ if (args.artifact) fs.writeFileSync(path.join(outDir, 'artifact.html'), page({ .
 fs.writeFileSync(path.join(outDir, 'query.mjs'), `${graphQuery}
 // ---- cli ----
 ${fs.readFileSync(path.join(SKILL_DIR, 'assets', 'query-cli.mjs'), 'utf8')}`);
-fs.copyFileSync(path.join(SKILL_DIR, 'assets', 'serve.mjs'), path.join(outDir, 'serve.mjs'));
-fs.copyFileSync(path.join(SKILL_DIR, 'assets', 'page-safety.mjs'), path.join(outDir, 'page-safety.mjs'));
+// Written fresh, not copied: a copy keeps the original's permissions, so a skill installed read-only left
+// read-only files here and the next build couldn't replace them. Removing first replaces one left that way.
+for (const name of ['serve.mjs', 'page-safety.mjs']) {
+  const bytes = fs.readFileSync(path.join(SKILL_DIR, 'assets', name));
+  fs.rmSync(path.join(outDir, name), { force: true });
+  fs.writeFileSync(path.join(outDir, name), bytes);
+}
 // a blueprint can be changed from the map: serve.mjs redraws it with this skill's plan.mjs and build.mjs
 if (scan.blueprint) { fs.mkdirSync(path.join(outDir, '.cache'), { recursive: true }); fs.writeFileSync(path.join(outDir, '.cache', 'skill.json'), JSON.stringify({ dir: SKILL_DIR })); }
 // the logo and tab icon are inlined so the map stays one self-contained file
