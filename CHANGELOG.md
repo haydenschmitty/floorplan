@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.3 (2026-11-10)
+
+- **A long description no longer covers the map in a short window:** when the map opened in a window that isn’t very tall (a laptop screen, or the map inside a frame), the heading’s description could run over the top row of boxes, because only part of the heading was kept clear when the map was fitted. The whole heading is now kept clear (up to just under half the window), and in a window under 760 pixels tall a long description folds to three lines with a More / Less toggle, as it already did on phones.
+
 ## 0.7.2 (2026-11-10)
 
 - **A second build no longer fails when Floorplan is installed read-only:** the build puts two of its own files next to the map (`serve.mjs` and `page-safety.mjs`), and it copied them, permissions included. Where the plugin's files are read-only (some package managers, system-wide installs and locked-down machines install them that way), the copies were read-only too, so the next build stopped with a permission error (`EACCES` or `EPERM`) when it tried to replace them. They're now written fresh, so they can always be replaced, and a read-only copy left by an earlier version is replaced too.

@@ -150,7 +150,14 @@ body.in-flow #context { opacity: 0; }
 #context::before { content: ""; position: absolute; inset: -28px -60px -28px -40px; background: radial-gradient(closest-side, rgba(var(--bg-rgb), .9), rgba(var(--bg-rgb), 0)); z-index: -1; }
 #context h1 { margin: 6px 0 4px; font-size: 24px; font-weight: 600; letter-spacing: -.025em; }
 #context p { margin: 0; color: var(--text-2); line-height: 1.55; font-size: 14px; }
-.ctx-more { display: none; } /* the More / Less toggle under the description is for phones */
+.ctx-more { display: none; } /* the More / Less toggle under the description is for phones and short windows */
+/* a short window (a laptop with the map in a frame, say): a long description folds to three lines so the boxes keep their room */
+@media (min-width: 701px) and (max-height: 760px) {
+  #context.folded .cd { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+  #context.folded .cx { display: none; }
+  #context .ctx-more:not([hidden]) { display: inline-flex; align-items: center; min-height: 32px; margin: 0 0 -6px -10px; padding: 0 10px; border: 0; border-radius: 999px; background: none; color: var(--text); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; pointer-events: auto; }
+  #context .ctx-more:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+}
 #ask-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* ---------- cards ---------- */
@@ -1330,7 +1337,8 @@ function freeArea() {
   const open = !document.body.classList.contains('no-panel');
   const sheet = isPhone(); // on a phone the details panel is a sheet at the bottom, not a column at the side
   const panelW = open && !sheet ? $('#panel').offsetWidth + 32 : 0;
-  const top = ($('header').offsetHeight || 64) + 8 + Math.min(130, $('#context').offsetHeight);
+  // the whole heading is kept clear (a long description used to run over the boxes), but never more than 45% of the map
+  const top = ($('header').offsetHeight || 64) + 8 + Math.min(r.height * 0.45, $('#context').offsetHeight + 8);
   const bottom = open && sheet ? $('#panel').offsetHeight + 24 : $('#ask').offsetHeight + 36;
   return { x: 16, y: top, w: Math.max(200, r.width - panelW - 32), h: Math.max(140, r.height - top - bottom) };
 }
