@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Hermes: a native plugin with a documented lifecycle.** Floorplan now installs as a native Hermes plugin: root `plugin.yaml`, root `__init__.py`, `hermes/runner.py`, and the same shared skill. `tools/checksums.mjs` lists all three native files, so each release's `CHECKSUMS.txt` fingerprints them, `checksums.mjs --check` fails on a changed, extra or missing Python/YAML file, and the supply-chain tests fail if the root manifest declares a hook, an MCP server, a tool or a pip dependency, or if the Python worker imports a network module or starts a subprocess. Every `os.open` in the confined reader uses `O_NOFOLLOW`.
+- **Install, upgrade, rollback and uninstall tell the truth.** [Floorplan in Hermes](docs/hermes.md) documents installing one profile from a pinned commit SHA with `--ref` and `--no-enable`, verifying with `checksums.mjs --check` and `plugins doctor --ci`, enabling, rebuilding helpers after an upgrade, and disabling or removing without deleting maps, notes, saved flows, dismissals, history or `~/.floorplan/settings.json`. A stale generated server reports `protocol_mismatch`; native Windows Ask reports `unsupported_runtime`.
+- **A two-profile lifecycle harness.** `tests/hermes-lifecycle.test.mjs` uses two disposable Hermes homes: install/enable in one leaves the other byte-identical, a running server restarts when its profile, Hermes CLI or generated helper changes, disable/remove leaves every map file and held/displaced history inode untouched, and rolling back to the recorded release re-checks identical.
+- **Remote viewing stays local.** A same-port SSH tunnel works; `Host: preview.invalid:<port>` and a mismatched `Origin` get 403 even with a valid token. No reverse proxy, no relaxed guards.
+- **Hermes never offers "Use my Claude email".** The waitlist card shows that button only when the map's engine is Claude Code.
+- **CI and the live harness.** Linux Node 24 and a POSIX `python3 -m unittest` step join the matrix. `tests/hermes-live.test.mjs` is opt-in (`FLOORPLAN_LIVE=1`) and fails rather than skips when a prerequisite is missing.
+
 ## 0.7.3 (2026-11-10)
 
 - **A long description no longer covers the map in a short window:** when the map opened in a window that isn’t very tall (a laptop screen, or the map inside a frame), the heading’s description could run over the top row of boxes, because only part of the heading was kept clear when the map was fitted. The whole heading is now kept clear (up to just under half the window), and in a window under 760 pixels tall a long description folds to three lines with a More / Less toggle, as it already did on phones.

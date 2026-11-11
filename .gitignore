@@ -5,6 +5,10 @@ CLAUDE.local.md
 # A floorplan made of this repo itself (root only: skills/floorplan/ is the plugin)
 /floorplan/
 
+# The Hermes plugin's Python half and its test
+__pycache__/
+.pytest_cache/
+
 # OS and editor clutter
 .DS_Store
 Thumbs.db

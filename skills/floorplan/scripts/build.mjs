@@ -648,7 +648,8 @@ fs.writeFileSync(path.join(outDir, 'query.mjs'), `${graphQuery}
 ${fs.readFileSync(path.join(SKILL_DIR, 'assets', 'query-cli.mjs'), 'utf8')}`);
 // Written fresh, not copied: a copy keeps the original's permissions, so a skill installed read-only left
 // read-only files here and the next build couldn't replace them. Removing first replaces one left that way.
-for (const name of ['serve.mjs', 'page-safety.mjs']) {
+// hermes-boundary.mjs is Hermes Ask's deny list, schema validator and read tickets; serve.mjs imports it.
+for (const name of ['serve.mjs', 'page-safety.mjs', 'hermes-boundary.mjs']) {
   const bytes = fs.readFileSync(path.join(SKILL_DIR, 'assets', name));
   fs.rmSync(path.join(outDir, name), { force: true });
   fs.writeFileSync(path.join(outDir, name), bytes);
@@ -669,9 +670,11 @@ report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
   : `RECENT WORK  none highlighted${fs.existsSync(recentFile) ? '' : ' (no recent-work.json)'}`);
 // point future Claude Code sessions in this project at the map. Codex has no personal, uncommitted
-// equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone,
-// and so does a map made without an agent session. Unattended mode never writes outside the map folder.
-if (agent === 'codex') report.push('AGENT  Codex: questions on the map run through Codex');
+// equivalent (AGENTS.md is shared with the team) and Hermes has no such file at all, so a map they built
+// leaves every AGENTS*/CLAUDE* file alone, even one that already carries a Floorplan block; so does a map
+// made without an agent session. Unattended mode never writes outside the map folder.
+const ANSWERS_THROUGH = { codex: 'Codex', hermes: 'Hermes' };
+if (ANSWERS_THROUGH[agent]) report.push(`AGENT  ${ANSWERS_THROUGH[agent]}: questions on the map run through ${ANSWERS_THROUGH[agent]}`);
 if (agent === 'none') report.push("AGENT  none: made without an agent session, so the map's prompts don't name one");
 let claudeNote = null;
 if (scan.blueprint) report.push('BLUEPRINT  planned, not built yet: drawn from floorplan/plan.json');

@@ -512,9 +512,10 @@ test('a map made in unattended mode records agent "none", and its page names no 
     assert.equal(A.id, 'none');
     // the map's server, when it runs, still decides: it names the CLI it found
     assert.equal(agentLabels(html, { agent: 'none', server: { engine: 'codex' } }).name, 'Codex');
-    // and maps made by Claude Code or Codex are labelled as before
+    // and maps made by Claude Code, Codex or Hermes are labelled with its name
     assert.equal(agentLabels(html, { agent: 'claude' }).name, 'Claude');
     assert.equal(agentLabels(html, { agent: 'codex' }).name, 'Codex');
+    assert.equal(agentLabels(html, { agent: 'hermes' }).name, 'Hermes');
   } finally { cleanup(p); }
 });
 

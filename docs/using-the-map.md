@@ -106,7 +106,9 @@ Guided walkthroughs of the app's main jobs, like "Checkout" or "Sign up". A flow
 
 <img src="images/ask.png" alt="An answer board with numbered cards and a written walkthrough">
 
-Type into the Ask bar at the bottom and press **Enter**. Claude or Codex answers in a few sentences and shows an **answer board**: just the cards involved, how they connect, a short note on each, and a numbered walkthrough when the answer is a sequence. Follow-up suggestions appear under the answer. **Back to map** returns to where you were.
+Type into the Ask bar at the bottom and press **Enter**. Claude, Codex or Hermes answers in a few sentences and shows an **answer board**: just the cards involved, how they connect, a short note on each, and a numbered walkthrough when the answer is a sequence. Follow-up suggestions appear under the answer. **Back to map** returns to where you were.
+
+With Hermes, the answer is bounded on this computer: the worker reads only scanned source (plus, on a blueprint, exactly three files: `floorplan/plan.json`, `floorplan/architecture.json` and the one PRD named in the plan), returns at most 200 lines per read, and redacts known secrets. **Stop** kills the local worker and its children within five seconds; it does not cancel provider-side work. See [Floorplan in Hermes](hermes.md#what-the-browser-ask-can-read).
 
 - **Right-click → Ask about this** on any card or line adds it to your question as context.
 - The label in the bar shows what's answering. **Claude Code** means the Claude Code CLI and **Codex** means Codex, both running on your computer and able to read your source code. **Claude** means the map was opened in the Claude app, which answers from the map alone.
@@ -120,7 +122,7 @@ Everything above describes a map of existing code, which is what most maps are. 
 - **Review** replaces Health. It's a design review of the plan: endpoints anyone could use to change data, endpoints with no decision on who may use them, questions the PRD leaves open, and pieces nothing connects to. Each item has **Show on map** and **Resolve on the map**, which switches the Ask bar to Change and fills in a request to settle it. For an open question, type your answer after "My answer:" and press **Enter**. (When the map isn't served, the button is **Resolve with Claude** or **Resolve with Codex**, a request to paste instead.)
 - **Who may use it:** an endpoint's panel says whether anyone, signed-in people (and which ones), your own team, or another service may use it.
 - **Build it:** every part and file has **Build this with Claude** (or Codex), which shows a request to build just that piece the way the plan describes (its files, endpoints, what it relies on and any open questions), ready to copy into Claude Code or Codex.
-- **Ask and Change:** the Ask bar has a switch. **Ask** answers questions from the plan and the PRD. **Change** takes requests like "also plan out refunds" or "drop the admin page". It takes a few minutes; then the map redraws, the new and changed cards are highlighted as recent work, and a summary offers **Show N changes**, **Undo** and suggested next changes.
+- **Ask and Change:** the Ask bar has a switch. **Ask** answers questions from the plan and the PRD. **Change** takes requests like "also plan out refunds" or "drop the admin page". It takes a few minutes; then the map redraws, the new and changed cards are highlighted as recent work, and a summary offers **Show N changes**, **Undo** and suggested next changes. With Hermes, Change is staged and preserve-first: it writes only map-owned files, never application code, and keeps every held or displaced version under `.cache/history/` with a manifest; there is no atomic cross-file transaction. The exact limits are in [Floorplan in Hermes](hermes.md#changing-a-blueprint-from-the-map).
 
 ## Right-click menus
 

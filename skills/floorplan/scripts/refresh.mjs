@@ -21,6 +21,11 @@ const args = parseArgs(process.argv.slice(2));
 const unattended = unattendedMode(args);
 const SCHEMA = 'floorplan/refresh-result@1';
 const root = path.resolve(args._[0] || '.');
+// what build needs to know, values included: a refresh must not reset what the map records (the agent that
+// built it above all). --from-code stays here: it is this script's own switch, and runBuild adds --json itself.
+const forwarded = Object.entries(args)
+  .filter(([k]) => k !== '_' && k !== 'from-code' && k !== 'json')
+  .flatMap(([k, v]) => (v === true ? [`--${k}`] : [`--${k}`, String(v)]));
 const outDir = mapDir(root);
 const graphFile = path.join(outDir, 'graph.json');
 const archFile = path.join(outDir, 'architecture.json');
@@ -52,8 +57,7 @@ if (old.meta?.blueprint && !args['from-code']) {
     if (args.json) await printJson({ schema: SCHEMA, ok: false, map: true, blueprint: true, errors: ['plan.mjs found problems in plan.json'], build: null, next: [{ code: 'fix_plan', text: 'Fix the problems in plan.json above, then run refresh.mjs again.' }], report: String(e.stdout || '') }, 1);
     process.stdout.write(String(e.stdout || '')); process.exit(1);
   }
-  const passed = process.argv.slice(2).filter((a) => a.startsWith('--') && a !== '--json');
-  const b = runBuild(...passed);
+  const b = runBuild(...forwarded);
   if (args.json) await printJson({ schema: SCHEMA, ok: b.ok, map: true, blueprint: true, errors: b.ok ? [] : (b.result?.errors || ['build failed']), build: b.result, next: [{ code: 'blueprint', text: next }], report: planOut + '\n' + b.text }, b.ok ? 0 : 1);
   if (!b.ok) { process.stdout.write(b.text + '\n'); process.exit(1); }
   process.stdout.write(planOut + '\n' + b.text + '\n');
@@ -182,7 +186,7 @@ fs.writeFileSync(path.join(outDir, '.cache', 'changes.json'), JSON.stringify({
 }, null, 2));
 
 // ---------- 5. rebuild (no tokens) ----------
-const built = runBuild();
+const built = runBuild(...forwarded);
 const buildOut = built.text;
 const buildOk = built.ok;
 const B = built.result; // null only if the build crashed before it could report
@@ -194,6 +198,10 @@ L.push(`Floorplan refresh — last map ${since.toLocaleString()}`);
 L.push(`  files   +${created.length} new · −${deleted.length} deleted · ${renames.size} moved/renamed (descriptions carried over) · ${edited.length} edited, ${digestChanged.length} with changed exports/routes`);
 L.push(`  routes  +${newRoutes.size} new · −${goneRoutes.length - routeMoves.size} removed · ${routeMoves.size} re-pathed (descriptions carried over)`);
 L.push(`  descriptions: ${carried + routeCarried} carried over, ${pruned + routePruned} removed, ${flagged} flagged for review`);
+// A body-only edit changes the code but not the exports or routes, so nothing above flags it. Say so: the
+// prose written for that file describes a body nobody re-read.
+const bodyOnly = edited.filter((p) => !digestSet.has(p)).length;
+if (bodyOnly) L.push(`  ${bodyOnly} edited file(s) changed only inside a body or a docstring: their descriptions may now be stale prose, and a refresh cannot see that; re-read them if behaviour changed`);
 if (!before.values().next().value?.h) L.push('  (the previous map predates content fingerprints, so edits since then could not be detected; future refreshes will)');
 for (const p of scanResult?.problems || []) L.push(`  ! ${p.message}`);
 const byDir = new Map();
@@ -204,7 +212,7 @@ if (byDir.size) {
 }
 L.push('');
 L.push('BUILD');
-L.push(buildOut.split('\n').filter((l) => /^(✗|!|  - |ASSIGNMENT|  unassigned|    |DESCRIPTIONS|  Run describe|✓)/.test(l)).slice(0, 40).join('\n'));
+L.push(buildOut.split('\n').filter((l) => /^(✗|!|  - |ASSIGNMENT|  unassigned|    |DESCRIPTIONS|AGENT|  Run describe|✓)/.test(l)).slice(0, 40).join('\n'));
 L.push('');
 // NEXT, with a stable code per item so a program can act on it (see docs/unattended.md)
 const todo = [];

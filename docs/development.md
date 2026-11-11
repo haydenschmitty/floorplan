@@ -12,6 +12,10 @@
   icon.png
 .agents/plugins/
   marketplace.json     this repo as a Codex marketplace
+plugin.yaml            the native Hermes manifest (same version, no hooks, MCP servers, tools or pip dependencies)
+__init__.py            registers one skill and one `hermes floorplan` command
+hermes/
+  runner.py            the model-free probe and the bounded Ask/Change worker (stdlib Python only)
 skills/floorplan/
   SKILL.md             the workflow Claude and Codex follow
   agents/openai.yaml   how Codex lists the skill
@@ -76,7 +80,7 @@ node skills/floorplan/scripts/open.mjs /path/to/project
 npm test
 ```
 
-The tests use Node's built-in test runner, so there's nothing to install (`npm test` is the same as `node --test`). GitHub runs them on every push and pull request on Linux and Windows with Node 18, 20 and 22, and on macOS weekly and on demand (Actions → macOS → Run workflow), since its macOS machines are often all busy.
+The tests use Node's built-in test runner, so there's nothing to install (`npm test` is the same as `node --test`). GitHub runs them on every push and pull request on Linux and Windows with Node 18, 20 and 22, on Linux with Node 24, and on macOS weekly and on demand (Actions → macOS → Run workflow), since its macOS machines are often all busy. A POSIX job also runs the Python worker tests: `python3 -m unittest discover -s tests -p 'hermes_runner_test.py'`.
 
 | File | What it checks |
 |---|---|
@@ -104,8 +108,10 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
 | `unattended.test.mjs` | running without an agent session: a small driver follows `workflow.json` through a first map and a refresh with canned answers, using only `--json` and exit codes; the optional plain-language step (reworded, left alone, rejected for changing more than wording, or failed, with the map completing every time); nothing written outside `floorplan/`, a map that names no agent, git failures that fail loudly, the workflow file's names and schemas, `maskSecrets` as a stable export, and no change without unattended mode |
 | `read-only-install.test.mjs` | a skill whose files are read-only builds a map twice, and the files it puts next to the map stay writable, including over read-only ones an earlier version left (skips itself where read-only doesn't stop the user writing) |
-| `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
-| `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
+| `release.test.mjs` | the version agrees across all three plugin manifests, the README badge, the changelog and `CHECKSUMS.txt`; the safety/privacy pages carry the Hermes limits; Hermes never offers the Claude email button |
+| `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, the Hermes manifest declares none either, the Python worker imports no network module and starts no subprocess, `os.open` always uses `O_NOFOLLOW`, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged, and a changed/extra/missing Python or YAML file fails `checksums.mjs --check` |
+| `hermes-lifecycle.test.mjs` | two disposable Hermes homes: install/enable in one leaves the other unchanged, restart on a profile or CLI or helper change, `protocol_mismatch` for a newer plugin, disable/remove leaving the map and its held/displaced history byte- and inode-identical, and a rollback that re-checks every fingerprint |
+| `hermes-live.test.mjs` | opt-in (`FLOORPLAN_LIVE=1`): a real Hermes install answers source-aware Ask and prints the candidate SHA, runtime version, installed file hashes, profile and the provider/model the host returned |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |
 | `sandboxed.test.mjs` | a map whose browser refuses storage, the clipboard or new windows (a sandboxed frame, strict settings): settings kept in memory for the visit, no tour on its own, `#tour=0`, "Copied" only when it was, the address shown when a window is blocked, and nothing changed where storage works (the page's own code run against a pretend browser, not a real frame) |
 

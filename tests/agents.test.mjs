@@ -1,4 +1,4 @@
-// Claude Code and Codex: the skill notices which one is running it, and the map remembers, so its
+// Claude Code, Codex and Hermes: the skill notices which one is running it, and the map remembers, so its
 // Ask bar and "Fix with …" prompts name the right one. Only Claude Code gets the CLAUDE.local.md note.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,6 +7,7 @@ import path from 'node:path';
 import { lib, shopApp, run, readGraph, readJson, cleanup } from './helpers.mjs';
 
 const { detectAgent } = await lib('agent.mjs');
+const FLOORPLAN_BLOCK = '<!-- floorplan:start -->\nopen floorplan/query.mjs to look things up\n<!-- floorplan:end -->\n';
 
 test('Codex is recognised by the variables it sets for every command', () => {
   assert.equal(detectAgent({}, { CODEX_THREAD_ID: 'abc' }), 'codex');
@@ -72,5 +73,34 @@ test('the copy for the Claude app always says Claude, whoever built the map', ()
     const html = fs.readFileSync(path.join(root, 'floorplan', 'artifact.html'), 'utf8');
     assert.match(html, /"agent":"claude"/);
     assert.equal(readJson(path.join(root, 'floorplan', 'graph.json')).meta.agent, 'codex');
+  } finally { cleanup(root); }
+});
+
+test('Hermes is named explicitly, and that beats an inherited Codex session', () => {
+  assert.equal(detectAgent({ agent: 'hermes' }, { CODEX_THREAD_ID: 'abc' }), 'hermes');
+  assert.equal(detectAgent({ agent: 'Hermes' }, { CODEX_SESSION_ID: 'abc' }), 'hermes');
+  assert.equal(detectAgent({}, { FLOORPLAN_AGENT: 'hermes', CODEX_THREAD_ID: 'abc' }), 'hermes');
+  // nothing to detect it by: Hermes is never guessed at, so the others keep their behaviour
+  assert.equal(detectAgent({}, {}), 'claude');
+  assert.equal(detectAgent({}, { CODEX_THREAD_ID: 'abc' }), 'codex');
+  assert.equal(detectAgent({ agent: 'gpt' }, { FLOORPLAN_AGENT: 'claude' }), 'claude');
+});
+
+test('a map built under Hermes records it, names it, and never touches the project notes', () => {
+  const root = shopApp();
+  const notes = {
+    'AGENTS.md': `# How we work\n\n${FLOORPLAN_BLOCK}`,
+    'CLAUDE.md': `# Claude notes\n\n${FLOORPLAN_BLOCK}`,
+    'CLAUDE.local.md': `my own notes\n\n${FLOORPLAN_BLOCK}`,
+  };
+  try {
+    for (const [name, text] of Object.entries(notes)) fs.writeFileSync(path.join(root, name), text);
+    run('scan.mjs', root);
+    // --claude-md is the "yes, add the note" path: for Hermes there is nothing to add
+    const out = run('build.mjs', root, '--agent', 'hermes', '--claude-md');
+    assert.equal(readGraph(root).meta.agent, 'hermes');
+    assert.match(out, /AGENT {2}Hermes/);
+    assert.doesNotMatch(out, /CLAUDE\.LOCAL\.MD/);
+    for (const [name, text] of Object.entries(notes)) assert.equal(fs.readFileSync(path.join(root, name), 'utf8'), text, `${name} untouched`);
   } finally { cleanup(root); }
 });

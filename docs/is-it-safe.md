@@ -7,9 +7,10 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **No hooks.** Hooks run code automatically on events in every session, which makes them a common hiding place. Floorplan has none.
 - **No MCP servers.** Floorplan has none, so it never starts a server that downloads its newest version with `npx`.
 - **No dependencies, no install scripts.** Nothing comes from npm, at install time or ever. Its `package.json` exists only to run the tests.
-- **Never downloads anything, and never runs code from the internet.** No `eval`, no loading code at run time, no encoded payloads.
+- **Never downloads anything, and never runs code from the internet.** No `eval`, no encoded payloads. It loads two local files and nothing else: the map's lookup code from `floorplan/query.mjs` (which the build wrote) and, for Hermes Ask, the installed skill's own `health.mjs` from the folder the install's model-free probe names.
 - **Never changes your code.** It writes only its own `floorplan/` folder and, in Claude Code and only if you say yes, a marked section of `CLAUDE.local.md`. See [What's in your project](project-files.md).
 - **No analytics or tracking.**
+- **Hermes adds a small native plugin, still nothing that runs on its own.** Three native files are executable surfaces: `plugin.yaml` (the manifest: `provides_hooks: []`, no MCP servers, no tools, no pip dependencies), `__init__.py` (registers one skill and one on-demand command), and `hermes/runner.py` (the model-free probe and the bounded Ask worker). `tools/checksums.mjs` lists them with the rest of the plugin, so each release's `CHECKSUMS.txt` fingerprints them, and the same supply-chain test covers them.
 
 ## Everything it does
 
@@ -21,15 +22,18 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **The page enforces that itself.** Every map carries a Content-Security-Policy: only the page's own scripts run (each is allowed by its SHA-256 hash, computed when the page is written), and images and fonts can only come from inside the file. An **exported copy** may contact nothing at all (`connect-src 'none'`); `floorplan/index.html` and the page the map's server serves may contact only that local server (`connect-src 'self'`), for asking questions, live reload, flows and Export. So even if text from a repository ever slipped past the map's escaping and became script, it couldn't send the map anywhere. The copy made for the Claude app (`--artifact`) has no policy of its own, because the Claude app runs its own code in that page and applies its own rules.
 - **Reporting a false alarm is yours to send.** If you tick the box under **Not a problem** in Health, the map opens a new GitHub issue in your browser with the text filled in, shown to you first. Nothing goes anywhere unless you submit it there.
 
-Asking questions on the map runs Claude Code or Codex, which talk to Anthropic or OpenAI the way they always do, on your account. Floorplan itself sends nothing.
+Asking questions on the map runs Claude Code, Codex or Hermes, which talk to Anthropic, OpenAI or your Hermes model provider the way they always do, on your account. Floorplan itself sends nothing.
+
+With Hermes, the answer is bounded on this computer: the map's server decides which files may be read, refuses `.git`, key and credential files, `.env*`, instruction files (`AGENTS.md`, `SOUL.md`, `CLAUDE*.md`) and symlinks, returns at most 200 lines and 32 KiB per read, and redacts known secrets or refuses the whole file. Both sides check a SHA-256 of the exact bytes before anything is returned, so a file swapped mid-read is refused rather than read.
 
 ### The programs it runs
 
 | Program | When | Why |
 |---|---|---|
 | `git` | scan | Read-only: which files are tracked, the current branch and commit, what changed since the last map |
-| `where` (Windows) or `which` | starting the map's server | Finding the Claude Code or Codex CLI |
+| `where` (Windows) or `which` | starting the map's server | Finding the Claude Code, Codex or Hermes CLI |
 | `claude` or `codex` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, or `codex exec --sandbox read-only` |
+| `hermes` | when you ask a question on the map with Hermes | `hermes floorplan probe` once at start (no model), then `hermes floorplan ask`, which answers through your Hermes profile and asks this server for every read |
 | `node` | throughout | Running Floorplan's own scripts |
 | `cmd /c start`, `open` or `xdg-open` | opening the map | Opening the map's local address in your browser |
 
@@ -51,19 +55,21 @@ In Claude Code, while the skill is in use, it pre-approves one kind of command: 
   tar -xzf elkjs-0.9.3.tgz package/lib/elk.bundled.js
   ```
   Then compare `package/lib/elk.bundled.js` with Floorplan's copy, for example with `sha256sum` (macOS: `shasum -a 256`; Windows PowerShell: `Get-FileHash`).
-- **One `new Function`** in `serve.mjs` loads the map's lookup code from `floorplan/query.mjs`, a file Floorplan's build wrote into your project. It never runs anything from the network.
+- **One `new Function` and one dynamic `import()`** in `serve.mjs`, both local: the map's lookup code from `floorplan/query.mjs` (a file Floorplan's build wrote), and the installed skill's `health.mjs` from the folder the install's model-free probe names. Neither runs anything from the network.
 - **Health reads the middle part of tokens it finds** (it decodes them from base64) to tell what kind of token each is, so it can skip ones that are public by design. It never stores or shows the token itself.
 
 ## Checked on every change
 
 [`tests/supply-chain.test.mjs`](../tests/supply-chain.test.mjs) runs on every push and pull request, on Linux and Windows (and weekly on macOS). It fails if a change would:
 
-- add a hook, an MCP server, a dependency or an install script;
+- add a hook, an MCP server, a dependency or an install script, including one declared in the Hermes manifest;
 - send a request anywhere other than the map's own server and the waitlist;
+- import a network module or start a subprocess from the Python worker, or open a file without `O_NOFOLLOW`;
 - start a program not in the table above, or start one through a shell;
 - use `eval`, load code at run time, or hide a long encoded string in the code;
 - add a script that would run without asking;
-- change the bundled layout engine, or add a vendored file.
+- change the bundled layout engine, or add a vendored file;
+- let `CHECKSUMS.txt` miss a Python or YAML runtime file, or go stale when one changes (a changed, extra or missing file fails the check).
 
 Each check was tested by planting exactly that kind of change and seeing it fail. A change to any of this has to change the test and this page together, in the open.
 
@@ -75,7 +81,7 @@ node --test tests/supply-chain.test.mjs
 
 ## Check that your installed copy is a real release
 
-Every release includes `CHECKSUMS.txt`: a SHA-256 fingerprint of every file the plugin runs from (the skill, the plugin manifests and the marketplace files). To compare your installed copy with the release on GitHub:
+Every release includes `CHECKSUMS.txt`: a SHA-256 fingerprint of every file the plugin runs from (the skill, the native Hermes runtime, the plugin manifests and the marketplace files). To compare your installed copy with the release on GitHub:
 
 ```bash
 git clone --depth 1 --branch floorplan--v<version> https://github.com/haydenschmitty/floorplan floorplan-check

@@ -1,5 +1,5 @@
 // A skill installed read-only: some package managers, system-wide installs and locked-down machines install
-// files nobody may write to. The build puts two of the skill's own files next to the map, and those have to stay
+// files nobody may write to. The build puts three of the skill's own files next to the map, and those have to stay
 // replaceable, or the build after it fails. If this fails, anyone with a read-only install can build a map once
 // and never again.
 import { test } from 'node:test';
@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { SKILL, makeProject, cleanup } from './helpers.mjs';
 
 // the skill's files the build puts in the map folder
-const PLACED = ['serve.mjs', 'page-safety.mjs'];
+const PLACED = ['serve.mjs', 'page-safety.mjs', 'hermes-boundary.mjs'];
 const filesIn = (dir) => fs.readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => path.join(e.parentPath ?? e.path, e.name));
 const canWrite = (file) => { try { fs.closeSync(fs.openSync(file, 'r+')); return true; } catch { return false; } };
 const readOnly = (file) => fs.chmodSync(file, 0o444);

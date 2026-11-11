@@ -9,8 +9,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// what the plugin runs from: the skill, the plugin manifests and the marketplaces that point at them
-const PARTS = ['skills', '.claude-plugin', '.codex-plugin', '.agents', 'package.json'];
+// what the plugin runs from: the skill, the native Hermes runtime, the plugin manifests and the marketplaces that point at them
+const PARTS = ['plugin.yaml', '__init__.py', 'hermes', 'skills', '.claude-plugin', '.codex-plugin', '.agents', 'package.json'];
 const li = process.argv.indexOf('--list');
 const OUT = li > 0 ? path.resolve(process.argv[li + 1]) : path.join(REPO, 'CHECKSUMS.txt');
 
@@ -21,7 +21,11 @@ function list(root) {
     if (!fs.existsSync(p)) continue;
     if (fs.statSync(p).isFile()) { out.push(part); continue; }
     for (const e of fs.readdirSync(p, { recursive: true, withFileTypes: true })) {
-      if (e.isFile()) out.push(path.relative(root, path.join(e.parentPath ?? e.path, e.name)).replace(/\\/g, '/'));
+      if (!e.isFile()) continue;
+      const f = path.relative(root, path.join(e.parentPath ?? e.path, e.name)).replace(/\\/g, '/');
+      // imported Python bytecode is a local artefact, never a release file
+      if (/(^|\/)__pycache__(\/|$)/.test(f) || f.endsWith('.pyc')) continue;
+      out.push(f);
     }
   }
   return out.sort();

@@ -215,11 +215,14 @@ const FLOORPLAN_CHANGE_SCHEMA = {
   required: ['title', 'summary', 'plan', 'architecture', 'changes'],
 };
 
-function floorplanChangeInstructions(G) {
+function floorplanChangeInstructions(G, engine) {
   const src = G.meta?.blueprint?.source;
+  const look = engine === 'hermes'
+    ? `Ask for map lookups instead of running commands: \`read {path, start, end}\` to read floorplan/plan.json, floorplan/architecture.json${src ? ` or ${src}` : ''}, \`find {words}\`, \`show {id}\` and \`path {from, to}\`. There is no shell.`
+    : `You can look things up on the map with \`node floorplan/query.mjs find "<words>"\` and \`show <id>\`, and read floorplan/plan.json${src ? `, floorplan/architecture.json and ${src}` : ' and floorplan/architecture.json'} yourself.`;
   return [
     `You change a blueprint: an interactive map of "${G.project.name}", a system that is planned but not built yet. The person looking at it asks for a change, addition or removal ("also plan out payments", "drop the admin page", "staff should sign in with Google"), and you update the plan.`,
-    `Read floorplan/plan.json and floorplan/architecture.json first${src ? `, and ${src} (the PRD it was planned from) when the request touches what the PRD says` : ''}. You can look things up on the map with \`node floorplan/query.mjs find "<words>"\` and \`show <id>\`.`,
+    `Read floorplan/plan.json and floorplan/architecture.json first${src ? `, and ${src} (the PRD it was planned from) when the request touches what the PRD says` : ''}. ${look}`,
     'plan.json format: { source, stack[], assumptions[], questions[{question, about[]}], files[{path, name, description, screen?, uses[], calls["METHOD /path"], services[node ids], data[node ids]}], endpoints[{method, path, file, name, description, access: public|signed-in|team|webhook|internal, who?, publicBecause?}] }. Every endpoint\'s file is a planned file, every call matches a planned endpoint exactly, and services/data name nodes in architecture.json.',
     'architecture.json: { project, nodes[{id, label, kind, parent?, summary, paths[globs]}], edges[], flows[{id, title, steps[{node, note}]}], tour[] }. Kinds: ui service worker library feature data config test script infra external. External nodes (outside services, the database) own no files. Every planned file must fall under some node\'s paths, so add or widen globs for new folders. Flow and tour steps point at node ids or planned file paths.',
     'Change only what the request needs, the way the rest of the plan is written: same stack and conventions, plain language for everyone, real file paths. Keep every other file, endpoint, id and description exactly as it is. If the PRD or plan already decided something, follow it; record a new choice in assumptions and a real open decision in questions. If the request removes something, remove everything that only it used. If it answers one of plan.json\'s questions, remove that question, build the answer into the plan, and record it in assumptions; if it settles who may use an endpoint, set access (and who or publicBecause). Many requests come from the map\'s design review: settle exactly what it names.',
@@ -231,7 +234,9 @@ function floorplanChangeInstructions(G) {
 function floorplanFlowInstructions(G, engine) {
   return [
     `You build guided flows for an interactive architecture map of the codebase "${G.project.name}". A flow is an ordered walkthrough: each step is one map item (module n:..., file f:..., endpoint r:..., or export s:...) and a note on what happens there.`,
-    engine === 'cli'
+    engine === 'hermes'
+      ? 'Find the items by asking for a find lookup ({words, kind?, limit?}), then show ({id}) and path ({from, to}); ask for a read lookup ({path, start, end}) when you need the source. Those six lookups are the only things you can do: no shell, no writes, no other tools.'
+      : engine === 'cli'
       ? 'Find the items with `node floorplan/query.mjs find "<words>"`, `show <id>` and `path <fromId> <toId>`; read source files when you need to confirm the order of events.'
       : 'Find the items with the tools find_items, get_item and dependency_path.',
     'Trace what the person asks for from its trigger (a user action, webhook, cron job) to its final effect (database write, external call, response).',
@@ -241,7 +246,9 @@ function floorplanFlowInstructions(G, engine) {
 }
 
 function floorplanAskInstructions(G, engine) {
-  const tools = engine === 'cli'
+  const tools = engine === 'hermes'
+    ? `Ask for one lookup at a time: \`overview\` (no args), \`find {words, kind?: module|file|endpoint|symbol, limit?: 1-15}\`, \`show {id}\`, \`path {from, to}\`, \`read {path, start, end}\` and \`search {text, limit?: 1-20}\`. Every result carries map ids. There is no shell, no write and no other tool: these six lookups are your whole reach, and a read outside the map's eligible source comes back denied.`
+    : engine === 'cli'
     ? `Query the map from the shell: \`node floorplan/query.mjs overview\`, \`node floorplan/query.mjs find "<words>" [--kind module|file|endpoint|symbol]\`, \`node floorplan/query.mjs show <id>\`, \`node floorplan/query.mjs path <fromId> <toId>\`. Every result is JSON with ids. Start with the map; read or grep source files when you need specifics the map does not have.`
     : `Use the tools find_items, get_item and dependency_path to explore the map. You cannot read source files, so answer from the map's names, descriptions, endpoints and connections, and say so when a question needs the code itself.`;
   const bp = G.meta?.blueprint;
@@ -249,7 +256,7 @@ function floorplanAskInstructions(G, engine) {
     `You answer questions about the codebase "${G.project.name}" for someone exploring an interactive architecture map of it.`,
     `The map has cards for modules (ids n:...), files (f:<path>), HTTP endpoints (r:<number>) and exported symbols (s:<path>#<number>), each with a human-readable name and description, connected by imports and HTTP calls.`,
     tools,
-    bp ? `This map is a blueprint: a plan of a system that hasn't been built yet, so its files don't exist.${engine === 'cli' ? ` Instead of source files, read floorplan/plan.json${bp.source ? ` and ${bp.source} (what it was planned from)` : ''} when you need more than the map.` : ''} Answer about what would be built and why, and say plainly when the plan doesn't cover something.` : '',
+    bp ? `This map is a blueprint: a plan of a system that hasn't been built yet, so its files don't exist.${engine === 'cli' ? ` Instead of source files, read floorplan/plan.json${bp.source ? ` and ${bp.source} (what it was planned from)` : ''} when you need more than the map.` : engine === 'hermes' ? ` Only floorplan/plan.json${bp.source ? `, ${bp.source}` : ''} and floorplan/architecture.json may be read, and only when the plan itself is what you need.` : ''} Answer about what would be built and why, and say plainly when the plan doesn't cover something.` : '',
     'Use a few lookups, not dozens. Then reply with JSON only: {"title", "answer", "items", "steps", "followups"}.',
     '- answer: Markdown, at most ~180 words, plain and specific. Refer to map items inline as [[id]] (they become clickable).',
     '- items: the 3-14 cards that best show the answer, most important first, each with a note (at most 15 words) on its role.',

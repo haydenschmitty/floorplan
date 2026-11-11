@@ -3,7 +3,10 @@
 // have, planned from a PRD or a description) into floorplan/.cache/scan.json, the same shape scan.mjs
 // writes for real code. build.mjs then draws it as a blueprint: the same map, marked as planned.
 //
-// usage: node plan.mjs [root] [--plan <file>]
+// usage: node plan.mjs [root] [--plan <file>] [--out <dir>]
+//
+// --out writes the derived scan into another folder instead of floorplan/: a Change stages a candidate
+// plan there and validates it without touching the live map.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,7 +15,7 @@ import { planToScan } from './lib/blueprint.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
-const outDir = mapDir(root);
+const outDir = path.resolve(args.out || mapDir(root));
 const planFile = path.resolve(args.plan || path.join(outDir, 'plan.json'));
 const outFile = path.join(outDir, '.cache', 'scan.json');
 

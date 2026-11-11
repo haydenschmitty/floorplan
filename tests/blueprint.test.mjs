@@ -3,6 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { REPO, makeProject, run, readGraph, readJson, writeJson, routeKeys, cleanup } from './helpers.mjs';
 
@@ -169,6 +170,27 @@ test('build.mjs catches a service that is not a node', () => {
     assert.match(out, /error\(s\) in floorplan.architecture\.json or plan\.json/);
     assert.match(out, /names "strpe" in its services, which is not a node id in architecture\.json — did you mean "stripe"\?/);
   } finally { cleanup(r); }
+});
+
+test('plan.mjs --out stages the scan elsewhere and leaves the live map alone', () => {
+  const r = withPlan(() => {});
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'floorplan-stage-'));
+  try {
+    run('plan.mjs', r);
+    run('build.mjs', r, '--no-claude-md');
+    const liveScan = fs.readFileSync(path.join(r, 'floorplan', '.cache', 'scan.json'), 'utf8');
+    fs.copyFileSync(path.join(r, 'floorplan', 'plan.json'), path.join(stage, 'plan.json'));
+    fs.copyFileSync(path.join(r, 'floorplan', 'architecture.json'), path.join(stage, 'architecture.json'));
+    const out = run('plan.mjs', r, '--out', stage, '--plan', path.join(stage, 'plan.json'));
+    assert.match(out, /wrote .*change|wrote /);
+    assert.ok(fs.existsSync(path.join(stage, '.cache', 'scan.json')));
+    assert.equal(fs.readFileSync(path.join(r, 'floorplan', '.cache', 'scan.json'), 'utf8'), liveScan);
+    assert.match(run('build.mjs', r, '--out', stage, '--check'), /ASSIGNMENT/);
+    assert.ok(!fs.existsSync(path.join(stage, 'index.html')), '--check writes nothing');
+  } finally {
+    cleanup(r);
+    cleanup(stage);
+  }
 });
 
 test('refresh redraws a blueprint from plan.json, and --from-code maps the real code instead', () => {
