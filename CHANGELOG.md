@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **NestJS endpoints are on the map:** a NestJS server used to show no endpoints at all, so its requests from the website weren't connected and Health couldn't say which endpoints anyone can call. Endpoints now come from `@Controller('prefix')` (or `@Controller({ path })`) and the `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete`, `@All`, `@Options` and `@Head` decorators on its methods, each with its handler, in files that import `@nestjs/common`. Health reads a global sign-in guard (`{ provide: APP_GUARD, useClass: AuthGuard }`), the `@Public()`-style decorators that open a route past it (a public route that checks a token or signature itself still counts as checked), and `@UseGuards(...)` on a method or its class. Rate-limit and quota guards don't count as sign-in checks. A global prefix set at run time (`app.setGlobalPrefix`) isn't seen yet.
+
 ## 0.7.3 (2026-11-10)
 
 - **A long description no longer covers the map in a short window:** when the map opened in a window that isn’t very tall (a laptop screen, or the map inside a frame), the heading’s description could run over the top row of boxes, because only part of the heading was kept clear when the map was fitted. The whole heading is now kept clear (up to just under half the window), and in a window under 760 pixels tall a long description folds to three lines with a More / Less toggle, as it already did on phones.
