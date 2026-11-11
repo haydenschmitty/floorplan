@@ -86,7 +86,7 @@ A refresh re-reads structure and changed files. A change that only edits prose i
 
 Change is offered only for a blueprint, not for a map of real code. The worker stays read-only: it returns the whole updated plan and architecture, and the map's server validates them with the skill's own `plan.mjs` and `build.mjs`.
 
-Publication writes **only map-owned files**: `plan.json`, `architecture.json`, `recent-work.json`, and the generated map files (`graph.json`, `index.html`, `serve.mjs`, `query.mjs`, `hermes-boundary.mjs`, `.cache/skill.json`, `.cache/scan.json`, `.gitignore`). It never writes application code, never writes outside `floorplan/`, and never overwrites an occupied live path.
+Publication writes **only map-owned files**: `plan.json`, `architecture.json`, `recent-work.json`, and the generated map files (`graph.json`, `index.html`, `serve.mjs`, `query.mjs`, `page-safety.mjs`, `hermes-boundary.mjs`, `.cache/skill.json`, `.cache/scan.json`, `.gitignore`). It never writes application code, never writes outside `floorplan/`, and never overwrites an occupied live path.
 
 The protocol is staged and preserve-first:
 

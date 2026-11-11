@@ -84,7 +84,7 @@ execFileSync(process.execPath, [${JSON.stringify(real)}, ...process.argv.slice(2
 /** Every live write-set member's bytes, or `absent`. */
 function liveHashes(root) {
   const out = {};
-  for (const rel of ['plan.json', 'architecture.json', 'recent-work.json', '.cache/scan.json', 'graph.json', 'query.mjs', 'serve.mjs', 'hermes-boundary.mjs', '.cache/skill.json', '.gitignore', 'index.html']) {
+  for (const rel of ['plan.json', 'architecture.json', 'recent-work.json', '.cache/scan.json', 'graph.json', 'query.mjs', 'serve.mjs', 'page-safety.mjs', 'hermes-boundary.mjs', '.cache/skill.json', '.gitignore', 'index.html']) {
     const p = path.join(root, 'floorplan', rel);
     out[rel] = fs.existsSync(p) ? sha(p) : 'absent';
   }
@@ -184,7 +184,7 @@ t('a Hermes change publishes once, redraws and keeps every replaced inode in his
   assert.equal(manifest.status, 'ok');
   assert.equal(manifest.preservation, true);
   assert.equal(Object.keys(manifest.published).at(-1), 'index.html', 'index.html is published last');
-  assert.equal(fs.readdirSync(path.join(H, 'held')).length, 10, 'every live entry the change replaced is retained');
+  assert.equal(fs.readdirSync(path.join(H, 'held')).length, 11, 'every live entry the change replaced is retained');
   assert.ok(!fs.existsSync(path.join(H, 'held', '03-recent-work.json')), 'the change created recent-work.json; nothing was there to hold');
   assert.ok(fs.existsSync(path.join(H, 'held', '01-plan.json')));
   assert.deepEqual(stageDirs(s.root), [], 'the stage is gone');

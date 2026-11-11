@@ -129,7 +129,8 @@ test('the served map names the engine that answers, and an exported map names it
     run('build.mjs', root, '--agent', 'hermes');
     const html = fs.readFileSync(path.join(root, 'floorplan', 'index.html'), 'utf8');
     const at = html.indexOf('const G = window.FLOORPLAN;');
-    const end = html.indexOf('\n', html.indexOf('const AGENT = ', at));
+    // AGENT is one statement, ending with the Claude entry
+    const end = html.indexOf('\n', html.indexOf("signIn: 'Run <code>claude</code>", html.indexOf('const AGENT = ', at)));
     assert.ok(at > 0 && end > at, 'the viewer picks the agent that answers');
     const source = html.slice(at, end) + '\nglobalThis.picked = AGENT;';
     const picked = (graph, server) => {

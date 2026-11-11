@@ -90,7 +90,7 @@ You choose what goes in:
 Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan".
 
 ### Start here
-Replays the one-minute tour that runs the first time you open a map.
+Replays the one-minute tour that runs the first time you open a map. The tour doesn't start on its own when the address points somewhere on the map, or when the browser won't let the map remember anything (see [Embedding the map](#embedding-the-map-and-locked-down-browsers)); this button always starts it.
 
 ### Flows
 Guided walkthroughs of the app's main jobs, like "Checkout" or "Sign up". A flow moves across the board step by step, with a narration at each stop. Use **←** / **→** or the flow bar's buttons to step through, and **Esc** to stop.
@@ -133,3 +133,34 @@ Everything above describes a map of existing code, which is what most maps are. 
 | the background | Ask about this view · Up one level · Back to overview · Fit to screen · Search |
 
 **Open in editor** opens the file in VS Code (or another editor that handles `vscode://` links) at the right line.
+
+## Links to a place on the map
+
+The address in the browser follows you around the map, so you can bookmark or share a link to any view. The part after `#` says where:
+
+| Address ends with | Opens |
+|---|---|
+| *(nothing)* | the overview |
+| `#v=<view>` | inside a card, for example `#v=n%3Aapi` |
+| `#v=<view>&s=<item>` | inside a card, with one item selected and its details in the panel |
+| `#s=<item>` | the overview, with one card selected |
+
+The easiest way to get one is to go there on the map and copy the address. **Back** and **Forward** in the browser move between the places you've been. An address that names something the map no longer has opens the overview instead.
+
+## Embedding the map and locked-down browsers
+
+A map is one HTML file, so you can show it inside another page with an `<iframe>`, including a sandboxed one such as `<iframe sandbox="allow-scripts" src="floorplan/index.html">`. A sandboxed frame, a private window or strict browser settings can stop the map from saving anything, using the clipboard or opening new windows. The map still works:
+
+- **Settings** (panel width, panel open or closed, connection filters, technical detail, recent-work highlights, the folded description, Health issues marked "Not a problem") hold while the page is open, and start fresh next time.
+- **The tour** doesn't start on its own, because the map can't tell a first visit from the hundredth. **Start here** starts it.
+- **Copy buttons** say "Copied" only when the text really was copied. If the browser blocks copying, the text is selected for you to copy yourself.
+- **Links that open a new window** show the address to copy when the browser blocks the window.
+
+To keep the tour from starting on its own wherever the map is shown, add `tour=0` to the address, alone or with a link to a place:
+
+```
+floorplan/index.html#tour=0
+floorplan/index.html#tour=0&v=n%3Aapi
+```
+
+`tour=0` stays in the address as people move around the map. **Start here** still works.

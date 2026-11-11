@@ -19,6 +19,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+// written next to this file by the build: how data goes into the page, and the page's Content-Security-Policy
+import { scriptJson, withPolicy } from './page-safety.mjs';
 import { Boundary, LIMITS, compileSchema, validateSchema, answerProblems, flowProblems, frameProblem } from './hermes-boundary.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -72,9 +74,10 @@ function exportMap(include, extraFlows = []) {
   if (!on.includes('health')) delete out.health;
   // dismissals made since the last build travel with the copy (the page applies them; no reasons, which are notes to self)
   else if (out.health) { const list = readDismissed().map(({ reason, ...d }) => d); if (list.length) out.health = { ...out.health, dismissed: list }; else delete out.health.dismissed; }
-  const json = JSON.stringify(out).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  const json = scriptJson(out);
   const slug = String(g.project?.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'floorplan';
-  return { html: html.slice(0, a + DATA_START.length) + json + html.slice(b), name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint };
+  // a copy to share talks to nothing: only its own scripts run (by hash), and it can't send anything anywhere
+  return { html: withPolicy(html.slice(0, a + DATA_START.length) + json + html.slice(b), 'export'), name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint };
 }
 /** Flows requested from the map since it was last built, as the page sends them: checked and trimmed. */
 const cleanFlows = (list) => (Array.isArray(list) ? list : []).slice(0, 50)
@@ -230,7 +233,7 @@ if (cli) { try { version = execFileSync(cli.cmd, [...cli.args, '--version'], { e
 
 // The page, the graph, and the instructions and answer schema (from query.mjs's inlined graph-query
 // code). Loaded at start and again whenever the map is rebuilt.
-const inject = `<script>window.FLOORPLAN_SERVER=${JSON.stringify({ token, cli: !!cli, engine, want, version, model: model || null, profile: profile || null, source: engine === 'hermes' ? !!findIssues : null, change: canChange, error: engine ? null : (want === 'hermes' ? hermesFailure : null) })};</script>`;
+const inject = `<script>window.FLOORPLAN_SERVER=${scriptJson({ token, cli: !!cli, engine, want, version, model: model || null, profile: profile || null, source: engine === 'hermes' ? !!findIssues : null, change: canChange, error: engine ? null : (want === 'hermes' ? hermesFailure : null) })};</script>`;
 const ENGINE_LANG = (k) => (k === 'hermes' ? 'hermes' : 'cli');
 // Server-owned follow-up store: a handle is bound to root, the loaded build, graph digest, engine, profile and mode.
 const conversations = new Map();
@@ -252,7 +255,8 @@ function load() {
   c.q = c.createGraphQuery(g);
   // an unsupported assertion in any of the three schemas throws here, at server start, never later
   for (const s of [c.FLOORPLAN_ANSWER_SCHEMA, c.FLOORPLAN_FLOW_SCHEMA, c.FLOORPLAN_CHANGE_SCHEMA]) compileSchema(s);
-  page = html.replace('</head>', inject + '</head>');
+  // the served page's policy covers this script too, and lets the page talk to this server and nothing else
+  page = withPolicy(html.replace('</head>', inject + '</head>'), 'local');
   G = g; core = c;
   const said = ENGINE_LANG(engine);
   conversations.clear();
@@ -754,7 +758,7 @@ function applyChange(data, request, lastTry) {
 // stage, then moves each actual live entry into owned history before installing the staged one only into
 // an empty pathname. That is recovery, not compare-and-swap: the real limits are stated in the failure.
 const LIVE_MEMBERS = ['plan.json', 'architecture.json', 'recent-work.json', '.cache/scan.json', 'graph.json',
-  'query.mjs', 'serve.mjs', 'hermes-boundary.mjs', '.cache/skill.json', '.gitignore', 'index.html'];
+  'query.mjs', 'serve.mjs', 'page-safety.mjs', 'hermes-boundary.mjs', '.cache/skill.json', '.gitignore', 'index.html'];
 const CHANGE_PLAN_FILES = ['plan.json', 'architecture.json', 'recent-work.json'];
 const CHANGE_BUDGET_MS = 300000;
 const showPath = (rel) => `floorplan/${rel}`;
