@@ -88,3 +88,14 @@ test('Express: a check before a named handler counts, and each route is judged o
   // (updateUser) isn't a check, and a check on the next route doesn't protect the one before it
   assert.deepEqual(openEndpoints(graph), ['GET /api/books', 'POST /api/notes', 'PUT /api/users/:id']);
 });
+
+test("Hono routers under arbitrary variable names are scanned, and mounts compose (#98)", () => {
+  const graph = buildFixture("hono-named-routers");
+  const paths = graph.routes.map((r) => `${r.m} ${r.p}`).sort();
+  // routes on frentes/croquis (arbitrary names) appear under their router prefixes
+  for (const suffix of ["frentes/lista", "frentes/vieja", "croquis/mapa", "health"]) {
+    assert.ok(paths.some((p) => p.endsWith(suffix)), `expected a route ending in ${suffix}, got: ${paths}`);
+  }
+  // each module router keeps its own prefix: croquis's mount must not leak onto frentes routes
+  assert.ok(!paths.some((p) => p.endsWith("croquis/lista")), `unexpected cross-router prefix, got: ${paths}`);
+});
