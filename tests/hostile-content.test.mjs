@@ -326,6 +326,16 @@ describe('Content-Security-Policy', () => {
     const page = withPolicy('<!doctype html><html><head>\n<meta charset="utf-8">\n<script>1</script></head></html>', 'export');
     assert.equal(withPolicy(page, 'export'), page, 'adding the policy again replaces it');
   });
+
+  test('a letter that grows when lower-cased (the Turkish "İ") can\'t shift the scripts or their hashes', async () => {
+    const { scriptBlocks, withPolicy } = await pageSafety();
+    const I = String.fromCharCode(0x130); // its toLowerCase() is two characters: "i" and a combining dot
+    const bodies = [`var a = "${I}${I}";`, 'var b = 2;', 'var c = 3;'];
+    const html = `<!doctype html><html><head>\n<meta charset="utf-8">\n<title>${I}</title><script>${bodies[0]}</script>\n<SCRIPT>${bodies[1]}</SCRIPT></head><body>${I}<script>${bodies[2]}</script></body></html>`;
+    assert.deepEqual(scriptBlocks(html).map((x) => x.body), bodies);
+    const want = new Set(bodies.map((b) => `'sha256-${crypto.createHash('sha256').update(b).digest('base64')}'`));
+    assert.deepEqual(new Set(policyOf(withPolicy(html, 'export')).directives['script-src']), want, 'the policy allows exactly the page\'s scripts');
+  });
 });
 
 // ---------- 4. patterns that would crash the build ----------
