@@ -35,7 +35,9 @@ const isEnd = (c) => c === undefined || /[\t\n\f\r />]/.test(c);
  * Returns [{ start, open, end, body, attrs }]: `body` is the text between the tags.
  */
 export function scriptBlocks(html) {
-  const lower = html.toLowerCase();
+  // Only A-Z, as the browser matches tag names: a full toLowerCase() makes some letters longer (the Turkish "İ"
+  // becomes "i" plus a combining dot), which would shift every index below against `html`.
+  const lower = html.replace(/[A-Z]/g, (c) => c.toLowerCase());
   const out = [];
   let i = 0;
   while (i < lower.length) {
