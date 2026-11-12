@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0 (2026-11-12)
+
+- **An embedded map can hand "Ask about this" to the page around it:** an exported copy shown inside another page has no Ask bar, so its right-click menu had no Ask items. The page can now opt in by adding `ask=host` to the map's address. **Ask about this** then appears on cards, lines and the background, and sends that page a `floorplan:ask` message with the chosen items' ids and names, so its own Ask can take the question. Nothing changes for maps opened without it. See [Embedding the map](docs/using-the-map.md#handing-ask-about-this-to-the-page-around-the-map).
+
 ## 0.7.3 (2026-11-10)
 
 - **A long description no longer covers the map in a short window:** when the map opened in a window that isn’t very tall (a laptop screen, or the map inside a frame), the heading’s description could run over the top row of boxes, because only part of the heading was kept clear when the map was fitted. The whole heading is now kept clear (up to just under half the window), and in a window under 760 pixels tall a long description folds to three lines with a More / Less toggle, as it already did on phones.

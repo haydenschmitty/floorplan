@@ -161,6 +161,55 @@ test('#tour=0 in the address keeps the tour from starting on its own, and is kep
   assert.equal(run('#v=n%3Aapi', 'root', null), '/floorplan/index.html');
 });
 
+// ---------- handing "Ask about this" to the page around an exported map ----------
+
+/** HOST_ASK as the page works it out, for an exported copy (or not), framed (or not), with this hash. */
+function hostAsk({ exported = true, framed = true, hash = '' }) {
+  const line = html.split('\n').find((l) => l.startsWith('const HOST_ASK = '));
+  assert.ok(line, 'the built page decides HOST_ASK in one line');
+  const self = {};
+  const ctx = { EXPORTED: exported ? { at: '2026-11-12T00:00:00Z' } : null, location: { hash }, URLSearchParams };
+  ctx.window = framed ? { parent: {} } : self;
+  if (!framed) self.parent = self;
+  return vm.runInNewContext(line.replace('const HOST_ASK =', '') , ctx);
+}
+
+test('an exported copy hands Ask to the page around it only when that page says ask=host', () => {
+  assert.equal(hostAsk({ hash: '#ask=host' }), true);
+  assert.equal(hostAsk({ hash: '#tour=0&ask=host&v=n%3Aapi' }), true);
+  assert.equal(hostAsk({ hash: '' }), false, 'no flag, no Ask items');
+  assert.equal(hostAsk({ hash: '#ask=yes' }), false);
+  assert.equal(hostAsk({ hash: '#ask=host', framed: false }), false, 'a map opened on its own has no page to hand to');
+  assert.equal(hostAsk({ hash: '#ask=host', exported: false }), false, 'a served map keeps its own Ask bar');
+});
+
+test('askHost sends only the chosen items\' ids and names to the page around the map', () => {
+  const posted = [], toasts = [];
+  const names = { 'f:shop-api/server.js': 'Server', 'n:api': 'Shop API' };
+  const ctx = {
+    window: { parent: { postMessage: (msg, origin) => posted.push([msg, origin]) } },
+    Q: { exists: (id) => id in names },
+    info: (id) => ({ name: names[id], path: 'secret/path/' + id }),
+    toast: (t) => toasts.push(t),
+  };
+  vm.runInNewContext(piece('function askHost(ids) {') + "\naskHost(['f:shop-api/server.js', 'nope', 'n:api']); askHost([]);", ctx);
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  assert.deepEqual(plain(posted[0]), [{ type: 'floorplan:ask', items: [{ id: 'f:shop-api/server.js', name: 'Server' }, { id: 'n:api', name: 'Shop API' }] }, '*']);
+  assert.deepEqual(plain(posted[1][0]), { type: 'floorplan:ask', items: [] });
+  assert.deepEqual(plain(toasts), ['Asking about Server and Shop API', 'Ask about this view']);
+});
+
+test('ask=host stays in the address as people move around the map, like tour=0', () => {
+  const run = (hash, container, sel) => {
+    const pushed = [];
+    const ctx = { location: { hash, pathname: '/map.html', search: '' }, history: { pushState: (s, t, u) => pushed.push(u) }, URLSearchParams };
+    vm.runInNewContext(piece('function setHash(container, sel) {') + '\nsetHash(c, s);', Object.assign(ctx, { c: container, s: sel }));
+    return pushed[0];
+  };
+  assert.equal(run('#ask=host', 'n:api', null), '#ask=host&v=n%3Aapi');
+  assert.equal(run('#tour=0&ask=host&v=n%3Aapi', 'root', null), '#tour=0&ask=host');
+});
+
 // ---------- copying ----------
 
 test('a copy the browser allows reports success and shows nothing else (unchanged)', async () => {

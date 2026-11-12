@@ -637,6 +637,8 @@ if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.
 const PLAN = !!G.meta.blueprint;
 // an exported copy (serve.mjs --export, or the Export button): read-only, for people without Claude or Codex
 const EXPORTED = G.meta.exported || null;
+// set when an exported copy is embedded in a page that takes its "Ask about this" (see askHost)
+const HOST_ASK = !!EXPORTED && window.parent !== window && new URLSearchParams(location.hash.slice(1)).get('ask') === 'host';
 if (typeof ELK === 'undefined') { document.body.innerHTML = '<p style="padding:2rem">Could not load the ELK layout engine. Rebuild the map with build.mjs.</p>'; return; }
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -1286,7 +1288,7 @@ function itemMenu(id) {
     id.startsWith('x:') ? { label: `Go to ${i.name}`, icon: 'right', hint: '2×click', run: () => reveal(real) }
       : drillable(real) && state.container !== real ? { label: 'Open', icon: 'drill', hint: '2×click', run: () => open(real) } : null,
     state.container === 'q:answer' && !id.startsWith('x:') ? { label: 'Show on the map', icon: 'external', run: () => reveal(real) } : null,
-    EXPORTED ? null : { label: 'Ask about this', icon: 'spark', run: () => addAskContext(real) },
+    EXPORTED ? (HOST_ASK ? { label: 'Ask about this', icon: 'spark', run: () => askHost([real]) } : null) : { label: 'Ask about this', icon: 'spark', run: () => addAskContext(real) },
     { label: 'Show details', icon: 'panel', run: () => { setPanel(true); if (id.startsWith('x:')) reveal(real); else select(id); } },
     '-',
     path ? { label: i.type === 'route' ? 'Copy endpoint' : 'Copy path', icon: 'copy', run: () => copy(path) } : null,
@@ -1298,7 +1300,7 @@ function edgeMenu(e) {
   const ep = (x) => x.startsWith('x:') ? connEntity(x) : x.startsWith('m:') ? 'f:' + x.slice(2) : x;
   return [
     { title: `${nameOf(e.a)} → ${nameOf(e.b)}` },
-    EXPORTED ? null : { label: 'Ask about this connection', icon: 'spark', run: () => { addAskContext(ep(e.a)); addAskContext(ep(e.b)); } },
+    EXPORTED ? (HOST_ASK ? { label: 'Ask about this connection', icon: 'spark', run: () => askHost([ep(e.a), ep(e.b)]) } : null) : { label: 'Ask about this connection', icon: 'spark', run: () => { addAskContext(ep(e.a)); addAskContext(ep(e.b)); } },
     { label: 'Show details', icon: 'panel', run: () => { setPanel(true); select({ edge: e.id }); } },
     '-',
     { label: `Go to ${nameOf(e.a)}`, icon: 'left', run: () => reveal(ep(e.a)) },
@@ -1312,8 +1314,16 @@ function canvasMenu() {
     state.container !== 'root' ? { label: 'Back to overview', icon: 'home', run: () => go('root') } : null,
     '-',
     { label: 'Search', icon: 'search', hint: '/', run: openPalette },
-    EXPORTED ? null : { label: 'Ask about this view', icon: 'spark', run: () => { if (state.container !== 'root' && state.container !== 'q:answer') addAskContext(state.container); askInput.focus(); } },
+    EXPORTED ? (HOST_ASK ? { label: 'Ask about this view', icon: 'spark', run: () => askHost(state.container !== 'root' && state.container !== 'q:answer' ? [state.container] : []) } : null) : { label: 'Ask about this view', icon: 'spark', run: () => { if (state.container !== 'root' && state.container !== 'q:answer') addAskContext(state.container); askInput.focus(); } },
   ];
+}
+// An exported copy shown inside another page has no Ask bar of its own, but the page around it may have one. That
+// page opts in by opening the map with `ask=host` in the address's hash; then "Ask about this" sends the chosen
+// items (ids and names only) to it as a `floorplan:ask` message. Without the flag, an exported copy sends nothing.
+function askHost(ids) {
+  const items = ids.filter((id) => Q.exists(id)).map((id) => ({ id, name: info(id).name }));
+  window.parent.postMessage({ type: 'floorplan:ask', items }, '*');
+  toast(items.length ? `Asking about ${items.map((x) => x.name).join(' and ')}` : 'Ask about this view');
 }
 svg.addEventListener('contextmenu', (ev) => { ev.preventDefault(); hideTip(); openMenu(ev, canvasMenu()); });
 window.addEventListener('pointerdown', (ev) => { if (!ctxEl.hidden && !ctxEl.contains(ev.target)) closeMenu(); }, true);
@@ -1423,8 +1433,9 @@ $('#z-fit').onclick = () => fit(true);
 function setHash(container, sel) {
   if (container.startsWith('q:')) return; // answer views are transient
   const p = new URLSearchParams();
-  const tour = new URLSearchParams(location.hash.slice(1)).get('tour'); // a page embedding the map can say tour=0; keep it while moving around
-  if (tour !== null) p.set('tour', tour);
+  // a page embedding the map can say tour=0 or ask=host; keep them while moving around
+  const kept = new URLSearchParams(location.hash.slice(1));
+  for (const key of ['tour', 'ask']) if (kept.get(key) !== null) p.set(key, kept.get(key));
   if (container !== 'root') p.set('v', container);
   if (sel && typeof sel === 'string') p.set('s', sel);
   const s = p.toString();

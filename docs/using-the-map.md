@@ -162,3 +162,20 @@ floorplan/index.html#tour=0&v=n%3Aapi
 ```
 
 `tour=0` stays in the address as people move around the map. **Start here** still works.
+
+### Handing "Ask about this" to the page around the map
+
+An exported copy has no Ask bar. If the page you embed it in has its own way to ask questions, it can take over **Ask about this**: add `ask=host` to the address.
+
+```
+map.html#ask=host
+map.html#ask=host&tour=0&v=n%3Aapi
+```
+
+Then right-clicking a card, a line or the background shows **Ask about this**, and choosing it sends the page around the map a message:
+
+```js
+{ type: 'floorplan:ask', items: [{ id: 'f:api/app/auth.py', name: 'Sign-in check' }] }
+```
+
+`items` holds the card, both ends of a line, or the part being viewed (empty at the top level). Ids are the map's own (`n:` part, `f:` file, `r:` endpoint), the same ones `#v=` and `#s=` take. Nothing else is sent, and only when someone chooses it. The page listens with `window.addEventListener('message', …)`; check that `event.source` is the map's frame, since the message is posted to whatever page holds the map. Without `ask=host`, or when the map isn't inside another page, an exported copy sends nothing and shows no Ask items, as before.

@@ -1,6 +1,6 @@
 {
   "name": "floorplan",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "description": "See how your app actually fits together: an interactive map of your codebase where every part, file and web request has a plain-English name and description, with a health check, screens, guided flows, questions answered on the map, and highlights of what was just worked on.",
   "author": {
     "name": "Hayden Smith",
