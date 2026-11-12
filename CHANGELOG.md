@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Asking a question on the map no longer fails with “Prompt is too long”:** the Ask bar lets Claude Code read and search the project, and it could open the map’s own generated `floorplan/index.html` (about 2 MB on one line). One short question could then grow past the context limit and stop with “Prompt is too long”, after using a lot of the person’s allowance. Claude Code is now told not to read that file or the map’s other generated files.
+
 ## 0.7.3 (2026-11-10)
 
 - **A long description no longer covers the map in a short window:** when the map opened in a window that isn’t very tall (a laptop screen, or the map inside a frame), the heading’s description could run over the top row of boxes, because only part of the heading was kept clear when the map was fitted. The whole heading is now kept clear (up to just under half the window), and in a window under 760 pixels tall a long description folds to three lines with a More / Less toggle, as it already did on phones.
