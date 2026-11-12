@@ -1311,7 +1311,11 @@ export function buildHealth({ graph, scan, arch, root }) {
   for (const fl of graph.flows || []) for (const s of fl.steps || []) if (s.ref?.startsWith('f:')) entry.add(s.ref.slice(2));
   const candidates = graph.files.filter((f) => {
     if (incoming.has(f.p) || entry.has(f.p) || routeFiles.has(f.p) || !USED_LANGS.has(f.l)) return false;
-    if (TEST_FILE.test(f.p) || SPECIAL_FILE.test(f.p) || /(^|\/)app\/.*\/(page|layout|route|loading|error|template|default)\.[jt]sx?$/.test(f.p)) return false;
+    if (TEST_FILE.test(f.p) || SPECIAL_FILE.test(f.p)) return false;
+    // Expo Router (and Next's app dir) load every file under an `app/` folder
+    // from the filesystem, imported by nobody (#88) — not just the named
+    // conventions the old regex exempted.
+    if (/(^|\/)app\/.+\.[jt]sx?$/.test(f.p)) return false;
     if (/(^|\/)src\/routes\//.test(f.p) && /\+|\$|\[/.test(f.p.split('/').pop())) return false;
     if (kinds(f.n).some((k) => NOT_USED_KINDS.has(k))) return false;
     if (findings(f.p).some((x) => x.k === 'runnable' || x.k === 'route')) return false;
@@ -1319,7 +1323,15 @@ export function buildHealth({ graph, scan, arch, root }) {
   });
   // Safety net for dynamic loading: skip a file whose name appears in any other source file.
   if (candidates.length) {
-    const want = new Map(candidates.map((f) => [stemOf(f.p), f.p]));
+    const want = new Map();
+    for (const f of candidates) {
+      const stem = stemOf(f.p);
+      want.set(stem, f.p);
+      // Nest-style dotted stems (`users.service`) split into tokens at the dot,
+      // so a mention of `users` anywhere never matched them (#89).
+      const dot = stem.indexOf('.');
+      if (dot > 0) want.set(stem.slice(0, dot), f.p);
+    }
     const mentioned = new Set();
     for (const f of scan.files) {
       if (!['code', 'config', 'docs'].includes(f.category) || f.tooLarge) continue;

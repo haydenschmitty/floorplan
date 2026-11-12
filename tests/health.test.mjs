@@ -88,3 +88,18 @@ test('Express: a check before a named handler counts, and each route is judged o
   // (updateUser) isn't a check, and a check on the next route doesn't protect the one before it
   assert.deepEqual(openEndpoints(graph), ['GET /api/books', 'POST /api/notes', 'PUT /api/users/:id']);
 });
+
+test("unused-file: Expo Router files under app/ are route entries, not orphans (#88)", () => {
+  const graph = buildFixture("expo-router-files");
+  const unused = graph.health.issues.filter((i) => i.kind === "unused-file");
+  const listed = unused.flatMap((i) => i.items.map((id) => id.slice(2)));
+  assert.ok(!listed.some((p) => p.includes("/app/")), `expected app/ files exempt, got: ${listed}`);
+  assert.ok(listed.some((p) => p.endsWith("lib/orphan.ts")), `expected the control orphan still flagged, got: ${listed}`);
+});
+
+test("unused-file: a dotted stem is quieted when its first segment is mentioned (#89)", () => {
+  const graph = buildFixture("nest-dotted-stem");
+  const unused = graph.health.issues.filter((i) => i.kind === "unused-file");
+  const listed = unused.flatMap((i) => i.items.map((id) => id.slice(2)));
+  assert.ok(!listed.some((p) => p.endsWith("sched.service.ts")), `expected sched.service.ts quieted by the 'sched' mention, got: ${listed}`);
+});
