@@ -81,6 +81,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | File | What it checks |
 |---|---|
 | `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework |
+| `tsconfig-inheritance.test.mjs` | local configuration inheritance: arrays and single bases, alias links, relative paths, overrides, legacy baseUrl and cycles |
 | `helpers-lib.test.mjs` | globs, file types, command-line flags, fallback names |
 | `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
 | `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI and Express samples in `fixtures/`) |
