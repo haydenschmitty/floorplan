@@ -9,9 +9,26 @@ export const rel = (from, to) => toPosix(path.relative(from, to)) || '.';
 // ---------- globs ----------
 
 const GLOB_CHARS = /[*?{[]/;
+// Limits on a pattern, so a careless or hostile one can't make matching slow: its length, its wildcards and
+// its {a,b} groups (each adds alternatives every path is tried against)
+export const GLOB_LIMITS = { length: 300, wildcards: 12, braces: 8 };
+
+/** Why a glob can't be used, in plain words, or null when it's fine. */
+export function globProblem(glob) {
+  if (typeof glob !== 'string') return 'it is not text';
+  if (glob.length > GLOB_LIMITS.length) return `it is longer than ${GLOB_LIMITS.length} characters`;
+  const g = tidyGlob(glob);
+  if ((g.match(/\*+|\?/g) || []).length > GLOB_LIMITS.wildcards) return `it has more than ${GLOB_LIMITS.wildcards} wildcards (* or ?)`;
+  if ((g.match(/\{/g) || []).length > GLOB_LIMITS.braces) return `it has more than ${GLOB_LIMITS.braces} {…} groups`;
+  try { globToRegExp(g); globToRegExp(g + '/**'); } catch (e) { return e.globProblem || 'it is not a pattern this map understands'; }
+  return null;
+}
+/** The glob as matched: forward slashes, no leading ./ or trailing /, and repeated ** segments folded into one. */
+const tidyGlob = (glob) => toPosix(glob).replace(/^\.\//, '').replace(/\/$/, '').replace(/(^|\/)\*\*(?:\/\*\*)+(?=\/|$)/g, '$1**').replace(/\*{3,}/g, '**');
+const globError = (msg) => Object.assign(new Error(msg), { globProblem: msg });
 
 export function globToRegExp(glob) {
-  const g = toPosix(glob).replace(/^\.\//, '').replace(/\/$/, '');
+  const g = tidyGlob(glob);
   let re = '';
   let braces = 0;
   for (let i = 0; i < g.length; ) {
@@ -41,17 +58,27 @@ export function globToRegExp(glob) {
     }
     if (c === '[') {
       const j = g.indexOf(']', i + 1);
-      if (j > i) { re += '[' + g.slice(i + 1, j).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = j + 1; continue; }
+      if (j < 0) throw globError('it has a "[" with no "]" to close it');
+      const set = g.slice(i + 1, j).replace(/^!/, '^');
+      if (!set || set === '^') throw globError('it has an empty [] set');
+      for (const [, a, b] of set.matchAll(/(.)-(.)/g)) if (a > b) throw globError(`its range [${a}-${b}] runs backwards`);
+      re += '[' + set.replace(/\\/g, '\\\\').replace(/\[/g, '\\[') + ']'; i = j + 1; continue;
     }
-    re += c.replace(/[.+^$()|\\\]]/g, '\\$&');
+    re += c.replace(/[.+^$()|\\\][]/g, '\\$&');
     i++;
   }
-  return new RegExp('^' + re + '$');
+  if (braces) throw globError('it has a "{" with no "}" to close it');
+  try { return new RegExp('^' + re + '$'); } catch { throw globError('it is not a pattern this map understands'); }
 }
 
-/** Compile a glob. A pattern with no wildcards also matches everything under it as a directory. */
+/**
+ * Compile a glob. A pattern with no wildcards also matches everything under it as a directory. Throws an error
+ * whose message says what's wrong (globProblem) when the pattern can't be used.
+ */
 export function compileGlob(glob) {
-  const g = toPosix(glob).replace(/^\.\//, '').replace(/\/$/, '');
+  const problem = globProblem(glob);
+  if (problem) throw globError(`"${String(glob).slice(0, 60)}" is not a valid pattern: ${problem}`);
+  const g = tidyGlob(glob);
   const literalPrefix = g.split(GLOB_CHARS)[0];
   if (!GLOB_CHARS.test(g)) {
     return { glob, specificity: g.length, test: (p) => p === g || p.startsWith(g + '/') };
@@ -117,8 +144,11 @@ export function keepOutOfGit(dir) {
   return `${tracked.length} file(s) in ${rel}/ were committed to git before; they stay tracked until you run: git rm -r --cached ${rel}  (this keeps the files on disk)`;
 }
 
-/** The map folder for a codebase root. Moves an old show-code/ map into place unless migrate is false. */
-export function mapDir(root, { migrate = true } = {}) {
+/**
+ * The map folder for a codebase root. Moves an old show-code/ map into place unless migrate is false,
+ * or in unattended mode, which never writes outside the map folder.
+ */
+export function mapDir(root, { migrate = !isUnattended() } = {}) {
   const dir = path.join(root, MAP_DIR);
   const old = path.join(root, LEGACY_MAP_DIR);
   if (migrate && !fs.existsSync(dir) && isMapDir(old)) {
@@ -154,12 +184,30 @@ export function classify(relPath, bytes) {
 
 // ---------- git ----------
 
-export function git(cwd, args) {
+/**
+ * Runs git and returns { out, error }: its output, or null and a plain reason it failed. In unattended mode
+ * git is asked not to take optional locks, so even `git status` leaves the repo's own files alone.
+ */
+export function gitRun(cwd, args) {
+  const pre = isUnattended() ? ['--no-optional-locks'] : [];
   try {
-    return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
-  } catch {
-    return null;
+    return { out: execFileSync('git', [...pre, '-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd(), error: null };
+  } catch (e) {
+    if (e.code === 'ENOENT') return { out: null, error: 'git is not installed, or not on PATH' };
+    const said = String(e.stderr || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    return { out: null, error: said.find((l) => /^(fatal|error):/.test(l)) || said[0] || String(e.message || e) };
   }
+}
+
+export function git(cwd, args) {
+  return gitRun(cwd, args).out;
+}
+
+/** A likely cause and fix for a git failure, in plain words, for the scan's report. */
+export function explainGitError(error, dir) {
+  if (/not installed|not on PATH/.test(error)) return 'git is not installed here, or not on PATH. Install git, then scan again.';
+  if (/dubious ownership|safe\.directory/.test(error)) return `git refuses this checkout because a different user owns the folder ("dubious ownership"), which is common in containers. Mark it safe, then scan again: git config --global --add safe.directory "${toPosix(dir)}"`;
+  return `git could not read this repo (${error}).`;
 }
 
 export function gitInfo(dir) {
@@ -171,9 +219,14 @@ export function gitInfo(dir) {
 
 /** Files git considers part of the repo: tracked + untracked-but-not-ignored. */
 export function gitFiles(dir) {
-  const out = git(dir, ['ls-files', '-co', '--exclude-standard', '-z']);
-  if (out == null) return null;
-  return [...new Set(out.split('\0').filter(Boolean))].map(toPosix);
+  return listGitFiles(dir).files;
+}
+
+/** Like gitFiles, but says why when git can't list them: { files, error }. */
+export function listGitFiles(dir) {
+  const { out, error } = gitRun(dir, ['ls-files', '-co', '--exclude-standard', '-z']);
+  if (out == null) return { files: null, error };
+  return { files: [...new Set(out.split('\0').filter(Boolean))].map(toPosix), error: null };
 }
 
 /** If dir/.git is a file pointing into another repo's worktrees/, return that repo's working dir. */
@@ -246,17 +299,144 @@ export function discover(root, { includeWorktrees = false, maxLooseFiles = 5000 
 
 // ---------- misc ----------
 
+/**
+ * JSON with comments and trailing commas (tsconfig.json, jsconfig.json…) as plain JSON text, in one pass over
+ * the text: strings are kept as they are, comments and the commas before a closing } or ] are dropped. An
+ * unclosed comment runs to the end, as it would for the tools that read these files.
+ */
+export function stripJsonComments(text) {
+  const out = [];
+  let i = 0, start = 0, lastComma = -1;
+  const n = text.length;
+  const flush = (to) => { if (to > start) out.push(text.slice(start, to)); };
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    if (c === 34) { // a string: copy through its closing quote
+      i++;
+      while (i < n) { const d = text.charCodeAt(i); if (d === 92) i += 2; else if (d === 34) { i++; break; } else i++; }
+      lastComma = -1;
+    } else if (c === 47 && text.charCodeAt(i + 1) === 42) { // /* … */
+      flush(i);
+      const e = text.indexOf('*/', i + 2);
+      i = e < 0 ? n : e + 2;
+      start = i;
+    } else if (c === 47 && text.charCodeAt(i + 1) === 47) { // // …
+      flush(i);
+      const e = text.indexOf('\n', i + 2);
+      i = e < 0 ? n : e;
+      start = i;
+    } else if (c === 44) { // a comma: remember where, in case a } or ] comes next
+      flush(i); start = i; lastComma = out.length; out.push(','); i++; start = i;
+    } else if (c === 125 || c === 93) { // } or ]: a comma just before it (past whitespace and comments) goes
+      if (lastComma >= 0) out[lastComma] = '';
+      lastComma = -1; i++;
+    } else {
+      if (!(c === 32 || c === 9 || c === 10 || c === 13)) lastComma = -1;
+      i++;
+    }
+  }
+  flush(n);
+  return out.join('');
+}
+
+/**
+ * [start, end] of every /* … *\/ comment, in one pass; an unclosed one runs to the end. (A lazy regex like
+ * /\/\*[\s\S]*?\*\//g looks for the end again from every later "/*", which takes quadratic time.)
+ */
+export function blockComments(src) {
+  const out = [];
+  for (let i = src.indexOf('/*'); i >= 0;) {
+    const e = src.indexOf('*/', i + 2);
+    const end = e < 0 ? src.length : e + 2;
+    out.push([i, end]);
+    i = e < 0 ? -1 : src.indexOf('/*', end);
+  }
+  return out;
+}
+/** The text with every /* … *\/ comment blanked to spaces (line breaks kept, so offsets and lines stay put). */
+export function blankBlockComments(src) {
+  let out = '', from = 0;
+  for (const [a, b] of blockComments(src)) { out += src.slice(from, a) + src.slice(a, b).replace(/[^\n]/g, ' '); from = b; }
+  return out + src.slice(from);
+}
+
+/**
+ * s.indexOf(ch, from) for searches that start further along the text each time, as a scan from top to bottom
+ * does: an answer still ahead of the next start is the answer again, so all the searches together read the text
+ * once. (Searching afresh from every start would read a file of a thousand "{" and no "}" a thousand times;
+ * capping each search instead loses anything longer than the cap.) A start behind the last one searches afresh.
+ */
+export function forwardIndexOf(s, ch) {
+  let from0 = Infinity, found = -1;
+  return (from) => {
+    if (from >= from0 && (found < 0 || found >= from)) return found;
+    from0 = from;
+    return (found = s.indexOf(ch, from));
+  };
+}
+
+const SPACE = /\s/;
+/**
+ * `import … from '…'` statements, as [{ index, clause, spec, end }], in time linear in the text's length however
+ * long their lists of names are. One starts where `head` (a global pattern) matches, and the word import must end
+ * the match. Its clause runs from there to the first ' " or ; and must end in `from` right before a quote; the
+ * quoted module name follows. `spaced`: `from` has whitespace on both sides and the name stays on one line, as in
+ * /import\s+(clause)\s+from\s+["']([^"'\n]+)["']/; otherwise /import\s+(clause)\s*from\s*["']([^"']+)["']/.
+ * A statement that starts inside the one before it is skipped, as a regular expression's matches would be.
+ */
+export function importStatements(code, head, { spaced = true } = {}) {
+  const out = [];
+  const next = ["'", '"', ';'].map((ch) => forwardIndexOf(code, ch));
+  const n = code.length;
+  // what follows the clause that ends at `stop` (statements that start further back but end at the same
+  // place share it, so it's worked out once)
+  const tail = (stop) => {
+    if (code[stop] === ';') return null;
+    let e = stop + 1;
+    while (e < n && code[e] !== '"' && code[e] !== "'" && (!spaced || code[e] !== '\n')) e++;
+    if (e === stop + 1 || e >= n || code[e] === '\n') return null;
+    let s = stop;
+    while (s > 0 && SPACE.test(code[s - 1])) s--;
+    if ((spaced && s === stop) || s < 4 || code.slice(s - 4, s) !== 'from') return null;
+    let t = s - 4;
+    while (t > 0 && SPACE.test(code[t - 1])) t--;
+    if (spaced && t === s - 4) return null;
+    return { clauseEnd: t, spec: code.slice(stop + 1, e), end: e + 1 };
+  };
+  let end = 0, memoAt = -1, memo = null;
+  for (const h of code.matchAll(head)) {
+    if (h.index < end) continue;
+    let p = h.index + h[0].length;
+    if (!SPACE.test(code[p] ?? '')) continue;
+    while (p < n && SPACE.test(code[p])) p++;
+    if (code[p] === '(') continue; // a dynamic import, which loads a module when it runs
+    let stop = -1;
+    for (const f of next) { const i = f(p); if (i >= 0 && (stop < 0 || i < stop)) stop = i; }
+    if (stop < 0) break;
+    if (stop !== memoAt) { memoAt = stop; memo = tail(stop); }
+    if (!memo || memo.clauseEnd <= p) continue;
+    out.push({ index: h.index, clause: code.slice(p, memo.clauseEnd), spec: memo.spec, end: memo.end });
+    end = memo.end;
+  }
+  return out;
+}
+
+/** Config files bigger than this aren't read: no real tsconfig.json or package.json comes close. */
+export const MAX_CONFIG_BYTES = 1024 * 1024;
+/** Config files readJsonLoose left unread because of their size, as { path, bytes } (the scan reports them). */
+export const skippedConfigs = [];
 export function readJsonLoose(file) {
   try {
-    const txt = fs.readFileSync(file, 'utf8')
-      .replace(/^﻿/, '')
-      .replace(/("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m, str) => str ?? '')
-      .replace(/,(\s*[}\]])/g, '$1');
-    return JSON.parse(txt);
+    const bytes = fs.statSync(file).size;
+    if (bytes > MAX_CONFIG_BYTES) { skippedConfigs.push({ path: file, bytes }); return null; }
+    return JSON.parse(stripJsonComments(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')));
   } catch {
     return null;
   }
 }
+
+// flags that never take a value, so `--json <root>` still reads <root> as the codebase root
+const SWITCHES = new Set(['json', 'unattended']);
 
 export function parseArgs(argv, defaults = {}) {
   const out = { _: [], ...defaults };
@@ -265,11 +445,36 @@ export function parseArgs(argv, defaults = {}) {
     if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=');
       if (v !== undefined) out[k] = v;
-      else if (argv[i + 1] && !argv[i + 1].startsWith('--')) out[k] = argv[++i];
+      else if (!SWITCHES.has(k) && argv[i + 1] && !argv[i + 1].startsWith('--')) out[k] = argv[++i];
       else out[k] = true;
     } else out._.push(a);
   }
   return out;
+}
+
+// ---------- running without an agent session ----------
+
+/**
+ * Unattended mode: Floorplan run in CI, from a script or from your own tooling, with nobody there to ask.
+ * FLOORPLAN_UNATTENDED=1 switches it on. It's an environment variable so it reaches the scripts another
+ * script runs (refresh.mjs runs scan.mjs and build.mjs). In unattended mode nothing is written outside the
+ * map folder, the map names no agent, and failures exit non-zero. See docs/unattended.md.
+ */
+export const isUnattended = (env = process.env) => /^(1|true|yes|on)$/i.test(String(env.FLOORPLAN_UNATTENDED || '').trim());
+
+/** Reads --unattended (which sets FLOORPLAN_UNATTENDED for this script and the ones it runs); true when on. */
+export function unattendedMode(args = {}, env = process.env) {
+  if (args.unattended === true) env.FLOORPLAN_UNATTENDED = '1';
+  return isUnattended(env);
+}
+
+/**
+ * --json: prints one JSON object on stdout and nothing else there. With `code`, exits with it once the
+ * output has been written (a pipe may still be taking it when process.exit would cut it short).
+ */
+export async function printJson(obj, code) {
+  await new Promise((resolve) => process.stdout.write(JSON.stringify(obj, null, 2) + '\n', resolve));
+  if (code !== undefined) process.exit(code);
 }
 
 export const fmtNum = (n) => n >= 10000 ? (n / 1000).toFixed(0) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);

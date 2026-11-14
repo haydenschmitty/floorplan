@@ -122,7 +122,7 @@
     SC.modal({
       title: `${FIX} with ${A.name}`,
       html: `<p class="hc-hint">Copy this request and paste it into <b>${A.app}</b>, opened in your project folder. It explains what to change and asks before anything risky.</p><pre>${h(issue.fix)}</pre>`,
-      actions: [{ label: 'Copy prompt', primary: true, icon: 'copy', onClick: () => { SC.copy(issue.fix); SC.toast(`Copied. Paste it into ${A.app}.`); } }],
+      actions: [{ label: 'Copy prompt', primary: true, icon: 'copy', onClick: () => { SC.copy(issue.fix).then((ok) => { if (ok) SC.toast(`Copied. Paste it into ${A.app}.`); }); } }],
     });
   }
   // The report is a GitHub issue the person reads and sends themselves: which check fired, its title (which
@@ -145,11 +145,17 @@
       actions: [{ label: 'Mark as not a problem', primary: true, icon: 'check', keepOpen: true, onClick: async (close) => {
         const reason = m.el.querySelector('.hc-why').value.trim();
         const report = m.el.querySelector('.hc-rep-on').checked;
-        if (report) window.open(`${ISSUES_URL}?title=${encodeURIComponent(`False positive: ${issue.kind}`)}&body=${encodeURIComponent(reportText(issue, reason))}`, '_blank', 'noopener');
+        const url = `${ISSUES_URL}?title=${encodeURIComponent(`False positive: ${issue.kind}`)}&body=${encodeURIComponent(reportText(issue, reason))}`;
+        // opened before anything is awaited, while the browser still counts it as the click's; where storage is
+        // refused (often a sandboxed frame, which may block new windows too) a blocked window is noticed, and the
+        // report's address is shown once the dismissal is saved
+        let opened = false;
+        if (report) { if (SC.store.persistent === false && SC.openWindow) opened = SC.openWindow(url, { quiet: true }); else { window.open(url, '_blank', 'noopener'); opened = true; } }
         if (!(await saveDismissal(issue, reason))) return;
         close();
         refresh();
-        SC.toast(report ? 'Marked as not a problem. Thanks for the report.' : 'Marked as not a problem.');
+        SC.toast(report && opened ? 'Marked as not a problem. Thanks for the report.' : 'Marked as not a problem.');
+        if (report && !opened) SC.showAddress(url);
       } }],
     });
     const why = m.el.querySelector('.hc-why'), on = m.el.querySelector('.hc-rep-on'), prev = m.el.querySelector('.hc-prev');

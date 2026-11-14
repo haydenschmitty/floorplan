@@ -7,10 +7,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { parseArgs, mapDir } from './lib/common.mjs';
+import { parseArgs, mapDir, unattendedMode } from './lib/common.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
+// unattended: nobody is there to look, so start nothing and open nothing
+if (unattendedMode(args)) {
+  console.log('Unattended mode: not starting the map\'s server or opening a browser. The map is floorplan/index.html; to look around in it with Ask, run node floorplan/serve.mjs in the codebase.');
+  process.exit(0);
+}
 const dir = mapDir(root);
 const serveFile = path.join(dir, 'serve.mjs');
 const stateFile = path.join(dir, '.cache', 'server.json');

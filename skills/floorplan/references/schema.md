@@ -55,6 +55,7 @@ Kinds, briefly:
 - A whole folder name in brackets, like `[id]`, `[...slug]` or `[[...slug]]` (Next.js, SvelteKit), matches that folder literally: `app/orders/[id]/**`. Elsewhere, `[abc]` matches one of those characters.
 - A pattern with no wildcard also matches as a directory: `backend/app` equals `backend/app/**`.
 - Paths are relative to the codebase root. In a multi-repo root they start with the repo folder.
+- A pattern must be valid (every `[` and `{` closed, ranges like `[a-z]` in order) and modest: at most 300 characters, 12 wildcards and 8 `{…}` groups, and at most 500 patterns in one list. Anything else is a build error naming the field, e.g. `nodes[3] ("web").paths[0] "[evil" is not a valid pattern: it has a "[" with no "]" to close it`.
 
 ### How files get assigned
 Every included file goes to exactly one node:

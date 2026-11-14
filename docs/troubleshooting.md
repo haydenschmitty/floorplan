@@ -59,6 +59,13 @@ Floorplan finds most web requests and imports by reading the code, but not all o
 ### A file is in the wrong part, or under "Unassigned"
 Ask Claude to move it, or edit the `paths` patterns in `floorplan/architecture.json` and ask for an update.
 
+### A repo is missing from the map, or the scan lists PROBLEMS
+The scan lists each repo git couldn't list files for, with the likely fix. The usual causes:
+- **git isn't installed**, or isn't on the PATH of whatever runs Floorplan;
+- **"dubious ownership"**: git refuses a checkout owned by a different user, which is common in containers and shared folders. Mark it safe with `git config --global --add safe.directory <folder>`, then update the floorplan.
+
+If you run Floorplan from CI or a script, [unattended mode](unattended.md) turns these into errors, so a map with a repo missing can't slip through.
+
 ### "floorplan/ already exists here and isn't a map"
 Your project has its own folder called `floorplan`, which Floorplan won't write into. Rename your folder, or ask Claude to build the map somewhere else; the scan and build scripts accept `--out <folder>`.
 
