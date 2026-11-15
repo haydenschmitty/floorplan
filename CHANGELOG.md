@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Imports stay linked when TypeScript settings come from several files:** local arrays in `tsconfig.json`'s `extends` now preserve inherited path aliases. Later configurations and the project's own settings take precedence, and relative paths keep the correct starting directory.
+- **Imports through package.json "imports" are linked:** projects that import with Node subpath imports, like `import { money } from '#lib/money'` mapped by `"imports": { "#*": "./src/*" }`, had almost no links between their own files, so the map showed parts that seemed unconnected and Health listed most files as unused. Floorplan now follows the `imports` field of the nearest package.json the way Node does: an exact key first, then the most specific `*` key, trying each target and condition in turn (`types` last, since Node never picks it). tsconfig `paths` still apply when package.json has no match.
 
 ## 0.8.0 (2026-11-12)
 
