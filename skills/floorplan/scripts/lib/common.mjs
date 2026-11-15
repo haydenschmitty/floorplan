@@ -421,6 +421,29 @@ export function importStatements(code, head, { spaced = true } = {}) {
   return out;
 }
 
+/**
+ * The top-level arguments of a JavaScript call whose "(" ends just before `start`, as strings: commas and
+ * brackets inside strings, nested calls, objects and arrays don't split them. null when the call isn't
+ * closed within `limit` characters (or a bracket doesn't match), so a stray "(" costs at most that much.
+ */
+export function callArgs(src, start, limit = 4000) {
+  const args = [];
+  let depth = 0, quote = '', from = start;
+  for (let i = start; i < Math.min(src.length, start + limit); i++) {
+    const c = src[i];
+    if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; continue; }
+    if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      if (depth) { depth--; continue; }
+      if (c !== ')') return null;
+      args.push(src.slice(from, i));
+      return args.filter((a) => a.trim());
+    } else if (c === ',' && !depth) { args.push(src.slice(from, i)); from = i + 1; }
+  }
+  return null;
+}
+
 /** Config files bigger than this aren't read: no real tsconfig.json or package.json comes close. */
 export const MAX_CONFIG_BYTES = 1024 * 1024;
 /** Config files readJsonLoose left unread because of their size, as { path, bytes } (the scan reports them). */

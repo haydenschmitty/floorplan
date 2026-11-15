@@ -198,12 +198,17 @@
   const breakdown = () => `<div class="hc-sub">${ORDER.filter(count).map((s) => `<span><i class="dot" style="background:${SEV[s].color}"></i>${count(s)} ${SEV[s].word}</span>`).join('')}</div>`;
   const headColor = () => urgent() ? SEV[count('high') ? 'high' : 'medium'].color : 'var(--ok)';
 
+  // app-wide checks that alone clear some endpoints: named, so a clean result shows what it rests on
+  const appWide = (!PLAN && SC.graph.health && SC.graph.health.appWide) || [];
+  const appWideHtml = () => appWide.length ? `<p class="pd">${appWide.map((g) => `${SC.plural(g.endpoints, 'endpoint')} ${g.endpoints === 1 ? 'counts' : 'count'} as protected only because of <b>${h(g.name)}</b>, a check in ${h(g.file)} (line ${h(String(g.line))}) that runs before every request.`).join(' ')} If it lets some requests through, those endpoints are open to anyone.</p>` : '';
+
   function listHtml() {
     const live = active(), off = issues.filter(dismissalOf);
     const top = `<div class="sec">
         <div class="ph"><span class="ico" style="--c:${headColor()}">${SC.icon('health')}</span><span class="kindlabel">${PLAN ? 'Design review' : 'Health check'}</span></div>
         <h2 class="pt">${h(headline())}</h2>
         <p class="pd">${PLAN ? 'We checked the plan for parts anyone on the internet could use, decisions the PRD leaves open, and pieces nothing connects to. Settling these now is cheaper than after it’s built.' : 'We looked for keys left in the code or sent to the browser, data and parts of your app anyone on the internet can reach (Supabase tables, Firebase rules, Stripe webhooks, endpoints), leftover files and files too big to edit safely. It’s a quick check, not a security audit.'}</p>
+        ${appWideHtml()}
         ${live.length ? breakdown() : `<div class="hc-calm">${off.length ? `Nothing left to look at: you marked ${SC.plural(off.length, 'item')} as not a problem.` : `Nothing stood out.`} This is a quick automatic check, not a full ${PLAN ? 'design' : 'security'} review.</div>`}
         <div class="actions"><button class="btn soft" data-hc-back>${SC.iconI('left')}Back</button></div>
       </div>`;

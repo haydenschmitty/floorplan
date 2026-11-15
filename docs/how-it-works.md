@@ -31,7 +31,7 @@ Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro 
 The most useful lines on the map connect a screen's web requests to the server code that answers them, often across repos. Floorplan:
 
 - **Finds endpoints** in Express, Fastify (plugin prefixes included), Koa, Hono, Next.js (route files and API routes), Firebase Cloud Functions, Flask, FastAPI, Django, Go (net/http, Gin, Echo, chi, Fiber), Actix, Axum and Spring, and in route tables keyed by method and path (`"GET /api/orders": listOrders`) in JavaScript and Python.
-- **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express routers mounted with `app.use('/api/users', usersRouter)`, including routers mounted inside other routers and mounts with middleware in front.
+- **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express and Hono routers mounted with `app.use('/api/users', usersRouter)` or `app.route('/api', api)`, whatever the router is called, including routers mounted inside other routers (in the same file or another), routers passed on by an index file (`export { default as authRoutes } from './auth.routes.js'`) or made by a function (`app.use('/billing', createBillingRoutes())`), and mounts with middleware in front.
 - **Finds requests** made with `fetch`, axios, ky, `requests` and similar, including:
   - addresses built in a variable first: `const url = …; api.get(url)`;
   - template strings with nested parts;

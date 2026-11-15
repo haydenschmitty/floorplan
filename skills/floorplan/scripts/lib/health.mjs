@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, compileGlob, blockComments, blankBlockComments, forwardIndexOf } from './common.mjs';
+import { git, compileGlob, blockComments, blankBlockComments, forwardIndexOf, callArgs } from './common.mjs';
 
 export const lineIndex = (src) => {
   const starts = [0];
@@ -270,30 +270,46 @@ function bounded(re) {
 const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^guard(?:_|$)|_guard$|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
 const isGuardName = (name) => !!name && !NOT_GUARD.test(name) && GUARD_NAME.test(snake(name));
-// Express middleware that never checks the caller, matched on the snake_case name of the call in .use(...)
-const NOT_GUARD_MIDDLEWARE = /^(cors|helmet|compression|morgan|cookie_parser|body_parser|json|urlencoded|raw|text|static|serve_static|favicon|method_override|response_time|timeout|express_session|session|cookie_session|rate_limit|slow_down|hpp|csurf|nocache|pino_http|request_id)$/;
-// A .use() guard protects every route after it, so "guard" alone isn't enough (createShutdownGuard):
-// the name must say what it checks (authGuard, requireUser, verifyToken)
-const isUseGuard = (name) => isGuardName(name) && GUARD_NAME.test(snake(name).replace(/(^|_)guard(?=_|$)/g, ''));
+// JavaScript checks GUARD_NAME doesn't spell out: passport.authenticate('jwt'), expressjwt({ … }), isLoggedIn
+const JS_GUARD_NAME = /(^|_)authenticate(_|$)|^express_?jwt$|(^|_)logged_in(_|$)/;
+const isJsGuardName = (name) => isGuardName(name) || (!!name && !NOT_GUARD.test(name) && JS_GUARD_NAME.test(snake(name)));
+// Middleware that never turns anyone away, matched on the snake_case name of what app.use() is handed
+const NOT_GUARD_MIDDLEWARE = /^(cors|helmet|compression|morgan|cookie_parser|body_parser|json|urlencoded|raw|text|static|serve_static|favicon|method_override|response_time|timeout|express_session|session|cookie_session|rate_limit|slow_down|hpp|csurf|nocache|pino_http|request_id|logger|secure_headers|etag|pretty_json|initialize)$/;
+// words that say the middleware only loads or prepares something (loadUser, optionalAuth, attachSession,
+// withAuth), or protects against something other than strangers (xssProtection)
+const NOT_A_CHECK = /(^|_)(optional|maybe|soft|load|loads|attach|attaches|populate|parse|parser|extract|deserialize|current|context|with|init|setup|xss|ddos|csrf|xsrf|brute|spam|clickjacking)(_|$)/;
+// words that add nothing to what a name checks (authMiddleware is auth, createShutdownGuard is shutdown)
+const FILLER = /(^|_)(guard|guards|middleware|middlewares|mw|handler|create|make|build|get|use|express|hono|koa|fastify|plugin|global|app)(?=_|$)/g;
+// on their own, these name a session, a cookie or a user being made available, not checked
+const NOT_ENOUGH = /^(session|sessions|cookie|cookies|user|users|store|device|member|members)(_(session|sessions|cookie|cookies|user|users|store))*$/;
+/**
+ * Whether middleware handed to app.use() / router.use() checks the caller. It protects every route after it, so
+ * this is stricter than a check on one route (#72): the name must say what it checks (authGuard, requireUser,
+ * verifyToken, passport.authenticate), not just "guard" (createShutdownGuard) or "session" (sessionMiddleware),
+ * and a router (authRoutes, adminRouter) or middleware that turns no one away (cors, helmet) doesn't count.
+ */
+const isUseGuard = (name) => {
+  if (!name || NOT_GUARD.test(name)) return false;
+  const s = snake(name);
+  if (NOT_GUARD_MIDDLEWARE.test(s) || NOT_A_CHECK.test(s) || /(^|_)(router|routes|route|routing|controller|controllers|endpoints|api|server)$/.test(s)) return false;
+  const core = s.replace(FILLER, '').replace(/__+/g, '_').replace(/^_|_$/g, '');
+  return !!core && !NOT_ENOUGH.test(core) && (GUARD_NAME.test(core) || JS_GUARD_NAME.test(core));
+};
 const JS_STRING = /(['"`])(?:\\[\s\S]|(?!\1)[^\\])*\1/g;
-// The top-level arguments of a call whose "(" ends just before `start`, skipping brackets and commas
-// inside strings and nested calls. null when the call isn't closed within a reasonable distance.
-function jsArgs(src, start) {
-  const args = [];
-  let depth = 0, quote = '', from = start;
-  for (let i = start; i < Math.min(src.length, start + 4000); i++) {
-    const c = src[i];
-    if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; continue; }
-    if (c === '"' || c === "'" || c === '`') quote = c;
-    else if (c === '(' || c === '[' || c === '{') depth++;
-    else if (c === ')' || c === ']' || c === '}') {
-      if (depth) { depth--; continue; }
-      if (c !== ')') return null;
-      args.push(src.slice(from, i));
-      return args.filter((a) => a.trim());
-    } else if (c === ',' && !depth) { args.push(src.slice(from, i)); from = i + 1; }
-  }
-  return null;
+/**
+ * The name to judge for one argument of app.use(…), with strings and comments removed: the call or name
+ * itself (cors({ exposedHeaders: ['X-Refreshed-Token'] }) is cors, passport.authenticate('jwt') is
+ * authenticate), never a word inside its options. null for anything else (an inline function, an object).
+ */
+function useArgName(arg) {
+  const code = arg.replace(JS_STRING, '""').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ').trim();
+  const m = /^(?:await\s+)?([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(\(|<|$)/.exec(code);
+  if (!m || /^(async|function|new|class)$/.test(m[1])) return null;
+  const segs = m[1].replace(/\s+/g, '').split('.');
+  const last = segs[segs.length - 1];
+  // the last part is what runs: passport.session() loads a session whatever passport is
+  if (NOT_GUARD_MIDDLEWARE.test(snake(last)) || NOT_A_CHECK.test(snake(last))) return null;
+  return [...segs].reverse().find(isUseGuard) || null;
 }
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
@@ -460,20 +476,16 @@ function jsRoutes(src, f, out) {
   }
   // app.use(auth) / router.use(requireAuth) without a path guards everything registered after it.
   // That turns off the open-endpoint check for every route behind it, so the evidence must be the
-  // middleware itself: words inside strings (a header named 'X-Refreshed-Token') don't count, nor
-  // do options of middleware that never checks the caller (cors, helmet, express-session…)
+  // middleware itself (#72): words inside strings (a header named 'X-Refreshed-Token') and options
+  // don't count, nor does middleware that never checks the caller (cors, helmet, express-session…)
   const uses = [];
   const lineOf = lineIndex(src);
   for (const m of src.matchAll(/(?<![\w$])(\w+)\.use\(/g)) {
-    const args = jsArgs(src, m.index + m[0].length);
+    const before = src.slice(Math.max(0, m.index - 300), m.index);
+    if (/(^|[^:])\/\//.test(before.slice(before.lastIndexOf('\n') + 1))) continue; // commented out
+    const args = callArgs(src, m.index + m[0].length);
     if (!args?.length || /^\s*['"`]/.test(args[0])) continue; // a path first: mounted, not app-wide
-    let name;
-    for (const arg of args) {
-      const code = arg.replace(JS_STRING, '""');
-      const callee = /^\s*([A-Za-z_$][\w$.]*)\s*\(/.exec(code)?.[1].split('.').pop();
-      if (callee && NOT_GUARD_MIDDLEWARE.test(snake(callee))) continue;
-      if ((name = (code.match(/[A-Za-z_$][\w$]*/g) || []).find(isUseGuard))) break;
-    }
+    const name = args.map(useArgName).find(Boolean);
     if (name) uses.push({ v: m[1], line: lineOf(m.index), name });
   }
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
@@ -515,7 +527,8 @@ function jsRoutes(src, f, out) {
       const fn = /(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(own);
       args = fn ? own.slice(0, fn.index) : own.slice(0, Math.max(0, own.lastIndexOf(',')));
     }
-    const mw = (args.match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isGuardName);
+    // (names, not words inside strings: cache('user-token') isn't a check)
+    const mw = (args.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isJsGuardName);
     const next = routes[idx + 1]?.line || r.line + 60;
     const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
     const prior = uses.find((u) => u.v === r.var && u.line < r.line);
@@ -1171,7 +1184,13 @@ export function buildHealth({ graph, scan, arch, root }) {
   }
   // a sign-in check applied where the route's router is mounted: app.use('/admin', requireStaff, adminRouter),
   // or app.include_router(admin.router, dependencies=[Depends(require_admin)]) (a database session isn't one)
-  const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isGuardDep)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardDep)]));
+  // In JavaScript that includes app.use('/api/*', auth) and router.use(requireAuth) above a mounted router, judged
+  // like app-wide middleware since they cover every route behind them (app.use('/api', cors()) isn't one), and a
+  // route served at two paths (mounted twice, or under /api and outside it) is open if either is.
+  const isPy = (r) => scanByPath.get(r.file)?.lang === 'python';
+  const mountCheck = (r) => r.mountMw?.find(isPy(r) ? isGuardDep : isUseGuard);
+  const mountGuard = new Map((scan.routes || []).filter(mountCheck).map((r) => [`${r.file}|${r.line}|${r.method}`, mountCheck(r)]));
+  for (const r of scan.routes || []) if (!isPy(r) && !mountCheck(r)) mountGuard.delete(`${r.file}|${r.line}|${r.method}`);
   const sourceOf = new Map();
   const readSource = (p) => {
     if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
@@ -1222,6 +1241,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     return !!fnd.nextGet && (marksPublic(r.f) || readsNothingPrivate(r.f, /\[/.test(r.p)));
   };
   const perRepo = new Map(); // repo -> { guarded, open: [], guardCounts }
+  const appWide = new Map(); // `${file}|${line}` -> an app-wide check and how many endpoints only it protects
   graph.routes.forEach((r, i) => {
     const fnd = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
     if (!fnd) return; // framework we don't analyse: say nothing
@@ -1241,6 +1261,12 @@ export function buildHealth({ graph, scan, arch, root }) {
       (verifiedHelpers.get(repo)?.get(name) || []).some((helper) => helperImported(r.f, helper, name)));
     if (fnd.via || global || viaWrapper || mounted || viaAlias || viaSignatureHelper) {
       pr.guarded++; pr.guardedIn.set(r.f, (pr.guardedIn.get(r.f) || 0) + 1);
+      // what the result rests on when only an app-wide check clears an endpoint, so the panel can name it (#72)
+      if (global && !fnd.via && !viaWrapper && !viaAlias && !viaSignatureHelper && (!mounted || mounted === global.name)) {
+        const k = `${global.file}|${global.line}`;
+        if (!appWide.has(k)) appWide.set(k, { ...(repo && repo !== '.' ? { repo } : {}), name: global.name || global.file.split('/').pop(), file: global.file, line: global.line, endpoints: 0 });
+        appWide.get(k).endpoints++;
+      }
       const name = fnd.guard || viaWrapper || mounted || viaAlias;
       if (name) {
         pr.guardCounts.set(name, (pr.guardCounts.get(name) || 0) + 1);
@@ -1423,7 +1449,8 @@ export function buildHealth({ graph, scan, arch, root }) {
   const kept = issues.slice(0, 40);
   const summary = { high: 0, medium: 0, low: 0 };
   for (const i of kept) summary[i.severity]++;
-  return { summary, issues: kept };
+  // appWide: [{ repo?, name, file, line, endpoints }], the app-wide checks some endpoints count as protected by alone
+  return { summary, issues: kept, ...(appWide.size ? { appWide: [...appWide.values()] } : {}) };
 }
 
 // ---------- "not a problem": issues people dismissed from the Health panel ----------

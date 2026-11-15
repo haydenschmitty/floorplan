@@ -84,6 +84,8 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `helpers-lib.test.mjs` | globs, file types, command-line flags, fallback names |
 | `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
 | `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI and Express samples in `fixtures/`) |
+| `express-global-guard.test.mjs` | which Express and Hono middleware counts as a login check for the endpoints behind it (app-wide, for a path, or on a router), with look-alikes that must not (`cors`, a header name in a string, a session, a router named `authRoutes`), and Health naming the app-wide check a clean result rests on |
+| `express-mounts.test.mjs` | Express and Hono routes: routers under any name, mounts followed through index files, factories, `require()` and namespace imports, routers nested in one file, names handed to `app.use()` that aren't routers, and a check on a mount landing on the right endpoints (samples in `fixtures/`) |
 | `public-by-design.test.mjs` | what Health leaves alone because it's public on purpose (feeds, addresses a project publishes, cached responses, routes with nothing private, Payload CMS, tracker tokens, files a tool opens), each with a near miss it must still report |
 | `stack-health.test.mjs` | Health's checks for Supabase row-level security, Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
 | `django.test.mjs` | Django: an app's `urls.py` included under a prefix, and the website's requests matched to it |

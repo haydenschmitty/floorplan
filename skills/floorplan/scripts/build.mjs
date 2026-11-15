@@ -664,6 +664,8 @@ if (hs && (hs.high || hs.medium || hs.low)) {
   report.push(`${scan.blueprint ? 'DESIGN REVIEW' : 'HEALTH'}  ${hs.high} important · ${hs.medium} worth fixing · ${hs.low} minor`);
   for (const i of graph.health.issues.filter((x) => x.severity !== 'low' && !dismissalFor(x, graph.health.dismissed)).slice(0, 8)) report.push(`  [${i.severity}] ${i.title}`);
 }
+// what "no open endpoints" rests on, when an app-wide check is all that protects some of them
+for (const g of graph.health?.appWide || []) report.push(`APP-WIDE CHECK  ${g.name} (${g.file}:${g.line}) is the only login check Health saw on ${g.endpoints} endpoint${g.endpoints === 1 ? '' : 's'}`);
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
