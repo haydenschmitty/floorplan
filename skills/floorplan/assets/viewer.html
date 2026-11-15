@@ -774,7 +774,7 @@ const P = {
 };
 const icon = (k) => `<svg viewBox="0 0 24 24">${P[k] || P.file}</svg>`;
 const iconI = (k) => `<svg class="i" viewBox="0 0 24 24">${P[k] || P.file}</svg>`;
-const symIcon = (kind) => (['class', 'interface', 'struct', 'type', 'enum', 'record', 'trait', 'object'].includes(kind) ? 'class' : 'function');
+const symIcon = (kind) => (['class', 'interface', 'protocol', 'actor', 'struct', 'type', 'enum', 'record', 'trait', 'object'].includes(kind) ? 'class' : 'function');
 
 // ======================= model =======================
 const nodes = new Map(G.nodes.map((n) => [n.id, n]));

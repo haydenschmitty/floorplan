@@ -642,31 +642,46 @@ function extractGo(src) {
 
 // Swift imports name a module, not a file: `import Core`, `@testable import Core`,
 // `import struct Core.Settings`. The resolver maps the module to its Swift package target.
+const SWIFT_ATTRS = String.raw`(?:@\w+(?:\([^)\n]{0,300}\))?[ \t]+){0,10}`;
+const SWIFT_MODS = String.raw`(?:(?:public|open|internal|package|fileprivate|private|final|indirect|nonisolated|static|(?:private|fileprivate|internal|public)\(set\))[ \t]+){0,10}`;
+const SWIFT_IMPORT = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRS}import[ \t]+(?:(?:typealias|struct|class|enum|protocol|let|var|func|actor)[ \t]+)?([A-Za-z_]\w*)`, 'gm');
+const SWIFT_TYPE = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRS}${SWIFT_MODS}(class|struct|enum|protocol|actor)[ \t]+([A-Za-z_]\w*)`, 'gm');
+// Top-level declarations other files of the module (and of the modules importing it) can use: written
+// at the start of a line, so a type's members and nested types (Kind, State, Row…) aren't among them
+const SWIFT_TOP = new RegExp(String.raw`^${SWIFT_ATTRS}(${SWIFT_MODS})(class|struct|enum|protocol|actor|typealias|func|let|var)[ \t]+([A-Za-z_]\w*)`, 'gm');
+
 function extractSwift(src) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
-  const imports = [];
-  const IMPORT = /^[ \t]*(?:@[\w]+(?:\([^)\n]*\))?[ \t]+)*import[ \t]+(?:(?:typealias|struct|class|enum|protocol|let|var|func|actor)[ \t]+)?([A-Za-z_]\w*)/gm;
-  for (const m of all(IMPORT, code)) imports.push({ spec: m[1], names: [], line: at(m.index) });
+  const imports = all(SWIFT_IMPORT, code).map((m) => ({ spec: m[1], names: [], line: at(m.index) }));
+  // Files of one module use each other's code without importing it, as if each imported its own module
+  imports.push({ spec: '.', names: [], line: 1, implicit: true });
   const symbols = [];
-  const DECL = /^[ \t]*(?:@[\w]+(?:\([^)\n]*\))?[ \t]+)*(?:(?:public|open|internal|package|fileprivate|private|final|indirect|nonisolated|(?:private|fileprivate|internal|public)\(set\))[ \t]+)*(class|struct|enum|protocol|actor)[ \t]+([A-Za-z_]\w*)/gm;
-  for (const m of all(DECL, code)) {
+  for (const m of all(SWIFT_TYPE, code)) {
     if (m[1] === 'class' && /^(func|var|let)$/.test(m[2])) continue; // `class func`, `class var`
-    // Nested types (Row, Kind, State…) repeat across files and are named through their parent, and
-    // private ones can't be seen from other files: only the rest link files together.
-    const local = /^[ \t]/.test(m[0]) || /\b(?:private|fileprivate)\b(?!\(set\))/.test(m[0]);
-    symbols.push({ name: m[2], kind: m[1], line: at(m.index), ...(local ? { local: true } : {}) });
+    symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
   }
-  // Files of one module see each other's types without importing them, so the type names a file
-  // mentions are what links it to the files that declare them, in its own module and in the ones it imports.
-  const declared = new Set(symbols.map((s) => s.name));
-  const uses = [...new Set(all(/\b([A-Z][A-Za-z0-9_]*)\b/g, stripStrings(code)).map((m) => m[1]))].filter((n) => !declared.has(n));
-  imports.push({ spec: '.', kind: 'own-module', names: [], line: 1, uses });
-  for (const imp of imports) imp.uses = uses;
+  const decls = [];
+  for (const m of all(SWIFT_TOP, code)) {
+    if (/\b(?:private|fileprivate)[ \t]/.test(m[1])) continue; // can't be seen from other files
+    if (!decls.includes(m[3])) decls.push(m[3]);
+  }
   const { calls, hosts } = extractCalls(code, at);
-  return { imports, symbols, routes: [], mounts: [], calls, hosts };
+  return { imports, symbols, routes: [], mounts: [], calls, hosts, decls, mentions: swiftMentions(code) };
 }
-const stripStrings = (code) => code.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+
+/** Every name the file's code mentions outside strings and import lines, as one space-separated string, minus the names it declares itself. */
+function swiftMentions(code) {
+  const text = stripJvmStrings(code).replace(/^[ \t]*(?:@\w+[ \t]+)*import[ \t][^\n]*/gm, '');
+  const own = new Set();
+  for (const m of text.matchAll(/\b(?:class|struct|enum|protocol|actor|typealias|associatedtype|func|let|var|case)[ \t]+`?([A-Za-z_]\w*)/g)) own.add(m[1]);
+  const seen = new Set();
+  for (const m of text.matchAll(/[A-Za-z_]\w{0,99}/g)) {
+    if (seen.size >= 20000) break;
+    if (!own.has(m[0])) seen.add(m[0]);
+  }
+  return [...seen].join(' ');
+}
 
 // ---------- Rust ----------
 

@@ -1,7 +1,7 @@
 // Resolve import specifiers to files in the codebase, or to named external packages.
 import fs from 'node:fs';
 import path from 'node:path';
-import { readJsonLoose } from './common.mjs';
+import { readJsonLoose, stripJsonComments, MAX_CONFIG_BYTES } from './common.mjs';
 
 const P = path.posix;
 
@@ -379,15 +379,19 @@ export function createResolver(root, files) {
   };
 
   // ---- Swift ----
-  // A Swift import names a module (a Swift package target), so it links to that target's folder,
-  // the way a Go import links to its package. Targets come from every Package.swift: `path:` when
-  // given, else Sources/<name> (Tests/<name> for test targets). Xcode-only code without a package
-  // falls back to a folder named like the module.
+  // A Swift import names a module (a Swift package target), and the files of one module use each other's
+  // code without importing anything. So a file links to the files declaring the top-level names it uses,
+  // in its own module and in the modules it imports. Targets come from every Package.swift: `path:` when
+  // given, else Sources/<name> (Tests/<name> for test targets). Code outside every package is one module
+  // per Xcode project (else per repo), and an import no target answers falls back to a folder named like it.
   const swiftModules = new Map();
   for (const dir of dirsWith('Package.swift')) {
     let txt;
-    try { txt = fs.readFileSync(path.join(root, dir, 'Package.swift'), 'utf8'); } catch { continue; }
-    txt = txt.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:"\\])\/\/[^\n]*/g, '$1');
+    try {
+      const file = path.join(root, dir, 'Package.swift');
+      if (fs.statSync(file).size > MAX_CONFIG_BYTES) continue;
+      txt = stripJsonComments(fs.readFileSync(file, 'utf8'));
+    } catch { continue; }
     let skipUntil = -1; // `.target(name: "B")` inside another target's dependencies is a reference, not a target
     for (const m of txt.matchAll(/\.(target|executableTarget|testTarget|macro|plugin|systemLibrary|binaryTarget)\s*\(/g)) {
       if (m.index < skipUntil) continue;
@@ -400,68 +404,64 @@ export function createResolver(root, files) {
       swiftModules.set(name, P.normalize(P.join(dir, given ?? `${base}/${name}`)));
     }
   }
+  const swiftFiles = files.filter((f) => f.lang === 'swift');
   const swiftDirByName = new Map();
-  for (const f of files) if (f.path.endsWith('.swift')) {
+  for (const f of swiftFiles) {
     for (let d = P.dirname(f.path); d && d !== '.'; d = P.dirname(d)) {
       const b = P.basename(d);
       if (!swiftDirByName.has(b)) swiftDirByName.set(b, d);
       else if (swiftDirByName.get(b) !== d) swiftDirByName.set(b, null);
     }
   }
-  const moduleFile = new Map();
-  const fileForDir = (dir, name) => {
-    if (moduleFile.has(dir)) return moduleFile.get(dir);
-    const inside = files.map((f) => f.path).filter((p) => p.startsWith(dir + '/'));
-    const swift = inside.filter((p) => p.endsWith('.swift'));
-    const list = swift.length ? swift : inside;
-    const pick = list.find((p) => P.basename(p, '.swift') === name)
-      || list.sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b))[0] || null;
-    moduleFile.set(dir, pick);
-    return pick;
-  };
-  // type name -> files declaring it, per module folder
-  const typeIndex = new Map();
-  const inPackage = (p) => (sortedDirs ??= moduleDirs()).some((d) => p.startsWith(d + '/'));
-  const typesIn = (dir) => {
-    if (typeIndex.has(dir)) return typeIndex.get(dir);
-    const idx = new Map();
-    const app = !swiftModulesDirs().has(dir); // an Xcode app or loose code: its files, minus the packages'
-    for (const f of files) if (f.lang === 'swift' && (dir === '.' || f.path.startsWith(dir + '/')) && !(app && inPackage(f.path))) for (const s of f.symbols || []) if (!s.local) {
-      if (!idx.has(s.name)) idx.set(s.name, []);
-      idx.get(s.name).push(f.path);
-    }
-    typeIndex.set(dir, idx);
-    return idx;
-  };
-  // The files of `dir` declaring a type this file mentions; else, for an import, the module's main file.
-  const linkModule = (from, dir, imp, name) => {
-    const idx = typesIn(dir);
-    const hits = [...new Set((imp.uses || []).flatMap((n) => idx.get(n) || []))].filter((p) => p !== from);
-    if (hits.length) return { files: hits.sort() };
-    if (imp.kind === 'own-module') return { builtin: true };
-    const file = fileForDir(dir, name);
-    return file ? { file } : { unresolved: true };
-  };
-  const swiftModulesDirs = () => new Set(swiftModules.values());
-  const moduleDirs = () => [...swiftModulesDirs()].sort((a, b) => b.length - a.length);
-  let sortedDirs = null;
+  const targetDirs = [...new Set(swiftModules.values())].sort((a, b) => b.length - a.length);
+  const isTarget = new Set(targetDirs);
+  const under = (p, dir) => dir === '.' || p.startsWith(dir + '/');
   // Code outside any package belongs to the Xcode project around it (the folder holding the
   // .xcodeproj), else to its repo: a whole app target is one module, whatever its folders.
   const xcodeRoots = files.map((f) => /^(?:(.*)\/)?[^/]+\.xcodeproj\/project\.pbxproj$/.exec(f.path)).filter(Boolean)
     .map((m) => m[1] || '.').sort((a, b) => b.length - a.length);
-  const resolveSwift = (from, imp) => {
-    const spec = imp.spec;
-    if (imp.kind === 'own-module') {
-      const own = (sortedDirs ??= moduleDirs()).find((d) => from.startsWith(d + '/'))
-        || xcodeRoots.find((d) => d === '.' || from.startsWith(d + '/'))
-        || byPath.get(from)?.repo || '.';
-      return linkModule(from, own, imp, P.basename(own));
+  const ownModule = (file) => targetDirs.find((d) => under(file.path, d)) || xcodeRoots.find((d) => under(file.path, d)) || file.repo || '.';
+  // module folder -> top-level name -> the files declaring it
+  const swiftNames = new Map();
+  const namesIn = (dir) => {
+    if (swiftNames.has(dir)) return swiftNames.get(dir);
+    const names = new Map();
+    // a target is its folder; an Xcode app or loose code is its folder minus the packages inside it
+    for (const f of swiftFiles) if (under(f.path, dir) && (isTarget.has(dir) || !targetDirs.some((d) => under(f.path, d)))) {
+      for (const n of f.decls || []) { if (!names.has(n)) names.set(n, []); names.get(n).push(f.path); }
     }
-    if (swiftModules.has(spec)) return linkModule(from, swiftModules.get(spec), imp, spec);
-    if (SWIFT_SYSTEM.has(spec) || spec.startsWith('_')) return { builtin: true };
-    const dir = swiftDirByName.get(spec);
-    if (dir) return linkModule(from, dir, imp, spec);
-    return { external: spec, eco: 'swiftpm' };
+    swiftNames.set(dir, names);
+    return names;
+  };
+  // Tests see the code they test, but nothing outside them sees a test's helpers (in an Xcode app, the
+  // test folders sit in the same module as the app)
+  const SWIFT_TEST = /(^|\/)(Tests|\w+Tests)\/|Tests?\.swift$/;
+  /** The files of module `dir` declaring names `file` mentions; `shadow`: a module whose names win (the file's own). */
+  const swiftMentioned = (file, dir, shadow) => {
+    const names = namesIn(dir);
+    if (!names.size || !file.mentions) return [];
+    const own = shadow ? namesIn(shadow) : null;
+    const fromTest = SWIFT_TEST.test(file.path);
+    const out = new Set();
+    for (const n of file.mentions.split(' ')) {
+      const hits = names.get(n);
+      if (!hits || own?.has(n)) continue;
+      for (const h of hits) if (h !== file.path && (fromTest || !SWIFT_TEST.test(h))) out.add(h);
+    }
+    return [...out].sort();
+  };
+  const resolveSwift = (file, imp) => {
+    const own = ownModule(file);
+    // A module of the project's own is linked to what's used from it, and never listed as an outside
+    // package. Nothing used from it (only its extensions or nested types, say) means no link: no one file
+    // stands for a whole module.
+    const link = (dir) => { const hits = swiftMentioned(file, dir, dir === own ? null : own); return hits.length ? { files: hits } : { internal: true }; };
+    if (imp.implicit) return link(own);
+    if (swiftModules.has(imp.spec)) return link(swiftModules.get(imp.spec));
+    if (SWIFT_SYSTEM.has(imp.spec) || imp.spec.startsWith('_')) return { builtin: true };
+    const dir = swiftDirByName.get(imp.spec);
+    if (dir) return link(dir);
+    return { external: imp.spec, eco: 'swiftpm' };
   };
 
   // ---- generic relative (C, Ruby, PHP, CSS) ----
@@ -483,7 +483,7 @@ export function createResolver(root, files) {
       case 'go': return resolveGo(file.path, imp.spec);
       case 'rust': return resolveRust(file.path, imp);
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file, imp);
-      case 'swift': return resolveSwift(file.path, imp);
+      case 'swift': return resolveSwift(file, imp);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
