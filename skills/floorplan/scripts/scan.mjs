@@ -17,6 +17,7 @@ import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
 import { createResolver } from './lib/resolve.mjs';
 import { resolveRoutes, matchCalls } from './lib/routes.mjs';
+import { nuxtAutoImports } from './lib/nuxt.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const unattended = unattendedMode(args);
@@ -149,6 +150,9 @@ for (const f of files) {
     } else if (res.unresolved) unresolved++;
   }
 }
+// Nuxt's auto-imports: components and composables a file uses with no import line (lib/nuxt.mjs)
+const nuxt = nuxtAutoImports(root, files);
+for (const e of nuxt.edges) edges.push(e);
 // merge duplicate edges (same from/to)
 const edgeMap = new Map();
 for (const e of edges) {
@@ -294,6 +298,12 @@ for (const e of scan.edges) {
 line(`IMPORT EDGES  ${scan.edges.length} file->file resolved, ${unresolved} unresolved. Heaviest directory->directory:`);
 for (const [k, v] of [...dirEdges.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25)) line(`  ${String(v).padStart(5)}  ${k}`);
 line();
+for (const a of nuxt.apps) {
+  line(`NUXT  ${a.dir}: ${a.files} file(s) linked to the components and composables they use without importing them (${a.links} links), ${a.source === '.nuxt'
+    ? 'from .nuxt/components.d.ts and .nuxt/imports.d.ts'
+    : `${a.source === 'mixed' ? 'partly ' : ''}from Nuxt's folder conventions (components/, composables/, utils/), since .nuxt/ has no ${a.source === 'mixed' ? 'complete ' : ''}name lists until the app has been built or started once`}`);
+  line();
+}
 
 line(`HTTP  ${routes.length} route definitions, ${http.length} call->route matches (cross-file links not visible to imports)`);
 const httpDir = new Map();
@@ -358,6 +368,7 @@ else {
       routes: routes.length,
       httpMatches: http.length,
       importEdges: scan.edges.length,
+      autoImportLinks: nuxt.edges.length,
       unresolvedImports: unresolved,
       externalPackages: scan.externals.length,
       notRead: unread.length,

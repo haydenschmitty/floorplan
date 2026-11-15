@@ -19,6 +19,7 @@ flowchart TD
 `scan.mjs` finds every git repository under the folder you point it at (one repo, a monorepo, or several repos side by side), skipping duplicate worktrees. It lists files with git, so your `.gitignore` is respected, then extracts from each file:
 
 - **imports**, resolved to real files: TypeScript path aliases, Python packages, Go modules, Rust crates, JVM packages;
+- in a **Nuxt** app, the components and composables a file uses with no import line (Nuxt's auto-imports), matched by name. When the app has been built or started once, the scan reads just the two name lists Nuxt writes, `.nuxt/components.d.ts` and `.nuxt/imports.d.ts`; otherwise it follows Nuxt's folder conventions (`components/`, with folder names as prefixes, `composables/` and `utils/`). Nothing else in `.nuxt/` is read, and it's never part of the map;
 - **exported definitions** and their doc comments;
 - **endpoints** the server defines;
 - **web requests** the code makes;

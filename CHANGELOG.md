@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Nuxt pages connect to the components and composables they use:** Nuxt auto-imports them, so pages had no import lines to follow and most Screens boards showed only the page itself. The scan now links a file to the components its template uses (`<WorkspaceTeam />`, `<workspace-team>`, `Lazy…`) and the composables and utils it calls, from the name lists Nuxt writes to `.nuxt/components.d.ts` and `.nuxt/imports.d.ts` (only those two files are read, and `.nuxt/` stays off the map), or from Nuxt's folder conventions when the app hasn't been built yet. Names a file imports or defines itself are left alone. Reported by @deniskern in #121.
+
 ## 0.8.0 (2026-11-12)
 
 - **An embedded map can hand "Ask about this" to the page around it:** an exported copy shown inside another page has no Ask bar, so its right-click menu had no Ask items. The page can now opt in by adding `ask=host` to the map's address. **Ask about this** then appears on cards, lines and the background, and sends that page a `floorplan:ask` message with the chosen items' ids and names, so its own Ask can take the question. Nothing changes for maps opened without it. See [Embedding the map](docs/using-the-map.md#handing-ask-about-this-to-the-page-around-the-map).

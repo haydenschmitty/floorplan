@@ -52,7 +52,7 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | Field | What it is |
 |---|---|
 | `repos[]` | `path`, `name`, `branch`, `head`, `files`, and `listed`: false when git couldn't list it |
-| `counts` | `files`, `outsideRepos`, `byCategory` (code, config, docs…), `code` ({ files, loc }), `byLanguage`, `routes`, `httpMatches`, `importEdges`, `unresolvedImports`, `externalPackages`, `notRead` |
+| `counts` | `files`, `outsideRepos`, `byCategory` (code, config, docs…), `code` ({ files, loc }), `byLanguage`, `routes`, `httpMatches`, `importEdges`, `autoImportLinks` (Nuxt components and composables used without an import), `unresolvedImports`, `externalPackages`, `notRead` |
 | `problems[]` | `{ code, message }`: `git_failed` (with `repo` and git's own `error`) or `no_files` |
 | `warnings[]` | the problems' messages, when they aren't errors |
 | `summary` | the summary a model maps from: the same text the scan prints |
