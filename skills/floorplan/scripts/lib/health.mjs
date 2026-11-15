@@ -374,6 +374,8 @@ function useArgName(arg) {
 }
 // NestJS guards that check the caller (AuthGuard, JwtAuthGuard, RolesGuard), not rate limits or quotas
 const isNestAuthGuard = (name) => isGuardName(name) && !/rate_?limit|throttl|quota|limiter/i.test(snake(name));
+// an app-wide one also needs a name that says what it checks, past the word "guard" (see isUseGuard)
+const isNestGlobalGuard = (name) => isNestAuthGuard(name) && isUseGuard(name);
 // decorators that open a route past a global NestJS guard
 const NEST_PUBLIC = /@(?:Public|IsPublic|SkipAuth|NoAuth|AllowAnonymous|Anonymous)\s*\(/;
 // FastAPI dependencies that hand over a database session rather than check the caller
@@ -621,12 +623,21 @@ function pyRoutes(src, f, out) {
 
 function jsRoutes(src, f, out) {
   const routes = f.routes || [];
-  if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path) && !/\bAPP_GUARD\b/.test(src)) return;
+  if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path) && !/\bAPP_GUARD\b|\.useGlobalGuards\s*\(/.test(src)) return;
   const lines = src.split('\n');
-  // NestJS: `{ provide: APP_GUARD, useClass: AuthGuard }` guards every route of the app, except the ones a
-  // @Public()-style decorator opens. A rate-limit or quota guard isn't a sign-in check.
+  // NestJS: `{ provide: APP_GUARD, useClass: AuthGuard }` in a module, or `app.useGlobalGuards(new JwtAuthGuard())`
+  // in main.ts, guards every Nest route of the app, except the ones a @Public()-style decorator opens. It turns
+  // off the open-endpoint check for all of them, so its name must say what it checks, as for app.use() (#72):
+  // a rate-limit or quota guard, or one named only "guard" (MaintenanceGuard), isn't a sign-in check.
+  const commented = (i) => { const before = src.slice(Math.max(0, i - 300), i); return /(^|[^:])\/\//.test(before.slice(before.lastIndexOf('\n') + 1)); };
   for (const m of src.matchAll(/\bprovide\s*:\s*APP_GUARD\s*,\s*useClass\s*:\s*([A-Za-z_$][\w$]*)/g)) {
-    if (isNestAuthGuard(m[1])) out.push({ k: 'global-guard', framework: 'nest', name: m[1], line: lineIndex(src)(m.index) });
+    if (!commented(m.index) && isNestGlobalGuard(m[1])) out.push({ k: 'global-guard', framework: 'nest', name: m[1], line: lineIndex(src)(m.index) });
+  }
+  for (const m of src.matchAll(/(?<![\w$])[A-Za-z_$][\w$]*\.useGlobalGuards\s*\(/g)) {
+    if (commented(m.index)) continue;
+    const names = (callArgs(src, m.index + m[0].length) || []).map((a) => /^(?:new\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/.exec(a.replace(JS_STRING, '""').trim())?.[1]?.split('.').pop());
+    const name = names.find(isNestGlobalGuard);
+    if (name) out.push({ k: 'global-guard', framework: 'nest', name, line: lineIndex(src)(m.index) });
   }
   // Next.js middleware.ts protecting the app
   if (/(^|\/)(src\/)?middleware\.(t|j)s$/.test(f.path) && NEXT_MIDDLEWARE_GUARD.test(src)) {
@@ -668,6 +679,7 @@ function jsRoutes(src, f, out) {
       const decos = methodDecos + '\n' + classDecos;
       const guards = [...decos.matchAll(/@UseGuards\s*\(([^)]{0,500})\)/g)].flatMap((m) => m[1].match(/[A-Za-z_$][\w$]*/g) || []);
       const guard = guards.find(isNestAuthGuard);
+      rec.nest = true; // only Nest routes are behind a Nest app-wide guard
       if (NEST_PUBLIC.test(decos)) rec.nestPublic = true;
       const next = routes.slice(idx + 1).find((x) => x.line > r.line)?.line || r.line + 80;
       const body = lines.slice(hIdx, Math.min(next - 1, hIdx + 80)).join('\n');
@@ -1610,8 +1622,9 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (!perRepo.has(repo)) perRepo.set(repo, { guarded: 0, total: 0, open: [], misplaced: [], guardCounts: new Map(), fileGuards: new Map(), guardedIn: new Map() });
     const pr = perRepo.get(repo);
     pr.total++;
-    // a Flask before_request or FastAPI middleware guards that Python app, not a JavaScript server beside it
-    const global = (globalGuards.get(repo) || []).find((g) => ((g.framework === 'flask' || g.framework === 'fastapi') && /\.py$/.test(r.f)) || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m) || (g.framework === 'nest' && !fnd.nestPublic));
+    // a Flask before_request or FastAPI middleware guards that Python app, not a JavaScript server beside it,
+    // and a Nest APP_GUARD or useGlobalGuards() guards Nest's controllers, not an Express or Next.js server beside it
+    const global = (globalGuards.get(repo) || []).find((g) => ((g.framework === 'flask' || g.framework === 'fastapi') && /\.py$/.test(r.f)) || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m) || (g.framework === 'nest' && fnd.nest && !fnd.nestPublic));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);
