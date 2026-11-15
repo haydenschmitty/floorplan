@@ -12,7 +12,8 @@
 //
 // Supported: Next.js (app + pages router), React Router (JSX <Route> and route objects, v5–v7 incl.
 // routes.ts config), Vue Router, Angular routes, TanStack Router (createFileRoute), SvelteKit, Remix
-// (flat + nested routes), Nuxt, Astro, Expo Router.
+// (flat + nested routes), Nuxt, Astro, Expo Router; Inertia pages come from scan.mjs (routes.mjs inertiaLinks),
+// as hints on the controller that renders them.
 
 import fs from 'node:fs';
 import path from 'node:path';
