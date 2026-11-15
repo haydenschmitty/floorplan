@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Swift apps get their connections:** Swift files used to show no links at all, because a Swift `import` names a module rather than a file. Now Floorplan reads every `Package.swift`, finds the folder of each target (its `path:`, or `Sources/<name>` and `Tests/<name>`), and links each file to the files that declare the types it uses, both in the modules it imports (including `@testable import`) and in its own module, where files use each other's types without importing anything. An Xcode app with no package counts as one module, so its folders link to each other too. Types nested inside another type and private ones are left out, so common names like `Kind` or `State` don't link unrelated files. Apple's frameworks are left off the map, and other packages (like Sparkle) show up as outside packages. Classes, structs, enums, protocols and actors are listed on each file's card.
+
 ## 0.9.0 (2026-11-14)
 
 - **Flask login checks are recognised:** routes protected by `@login_required`, `@login_required_json` or `@logged_in_required` were reported as open, because names starting with "log" were taken for logging decorators. Logging decorators such as `@log_call` still do not count as login checks, and a login decorator placed above the route remains a warning. Reported by @SmmSrg in #123, fixed by @daniyyell-dev in #125.
