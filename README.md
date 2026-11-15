@@ -193,6 +193,16 @@ codex plugin add floorplan@floorplan
 
 Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask bar runs on your own Codex sign-in, with no API key. More in [Floorplan in Codex](docs/codex.md).
 
+### Cursor
+
+You need [Node.js 18+](https://nodejs.org). Copy `skills/floorplan` into `.cursor/skills/floorplan/` or `.agents/skills/floorplan/`, or install it from this repo:
+
+```bash
+npx skills add haydenschmitty/floorplan --skill floorplan -a cursor
+```
+
+Start a new chat and ask for a floorplan, or type `/floorplan`. The same scripts run. On a map made here, the Ask bar waits for that Cursor chat: leave `ask-poll.mjs` running beside the map, as [Floorplan in Cursor](docs/cursor.md) describes. `--engine claude` or `--engine codex` answers with one of those instead.
+
 ## Quick start
 
 1. Open your project in Claude Code or Codex. For a frontend and backend in separate repos, open the folder that holds both.
@@ -262,6 +272,7 @@ More in [Privacy and security](docs/privacy-and-security.md). Wondering whether 
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, first map, updating, planning from a PRD, removing |
 | [Floorplan in Codex](docs/codex.md) | Installing and using it in Codex |
+| [Floorplan in Cursor](docs/cursor.md) | Installing and using it in Cursor |
 | [Using the map](docs/using-the-map.md) | Every button, view, shortcut and menu |
 | [How it works](docs/how-it-works.md) | The pipeline, connection matching, refreshes |
 | [What's in your project](docs/project-files.md) | Every file Floorplan creates, and how to edit it |
@@ -331,6 +342,12 @@ Yes. Point it at a monorepo, a subfolder of one, or a plain folder that holds se
 <summary><b>How is this different from Archify or Understand Anything?</b></summary>
 
 Archify draws diagrams of anything, and Understand Anything builds a developer's knowledge graph of a codebase. Floorplan maps the app you built, in plain English, and tells you what's risky and what your AI just changed. See [Floorplan, Archify or Understand Anything?](#floorplan-archify-or-understand-anything)
+</details>
+
+<details>
+<summary><b>Does it work in Cursor?</b></summary>
+
+Yes. Copy the skill into `.cursor/skills/floorplan/` or `.agents/skills/floorplan/`, start a new chat, and ask for a floorplan, or type `/floorplan`. See [Floorplan in Cursor](docs/cursor.md).
 </details>
 
 ## Star history

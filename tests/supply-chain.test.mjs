@@ -61,7 +61,7 @@ test('nothing to install: no dependencies and no install scripts', () => {
 test('the only commands pre-approved are the skill’s own scripts, and that list is fixed', () => {
   const front = /^---\n([\s\S]*?)\n---/.exec(read(path.join(SKILL, 'SKILL.md')).replace(/\r\n/g, '\n'))[1];
   // each script runs without a prompt while the skill is in use, so adding one is a deliberate change
-  const SCRIPTS = ['build.mjs', 'describe.mjs', 'open.mjs', 'plan.mjs', 'recent.mjs', 'refresh.mjs', 'scan.mjs', 'status.mjs'];
+  const SCRIPTS = ['ask-poll.mjs', 'build.mjs', 'describe.mjs', 'open.mjs', 'plan.mjs', 'recent.mjs', 'refresh.mjs', 'scan.mjs', 'status.mjs'];
   const granted = /^allowed-tools:\n((?: {2}- .*\n?)+)/m.exec(front + '\n')?.[1].trim().split('\n').map((l) => l.replace(/^\s*- /, '').trim());
   assert.deepEqual(granted, SCRIPTS.map((s) => `Bash(node \${CLAUDE_SKILL_DIR}/scripts/${s} *)`), `SKILL.md allowed-tools: exactly the skill's own scripts. ${UPDATE}`);
   const scripts = fs.readdirSync(path.join(SKILL, 'scripts')).filter((n) => !fs.statSync(path.join(SKILL, 'scripts', n)).isDirectory()).sort();
@@ -80,7 +80,9 @@ test('it reaches the internet in one place: the waitlist, only when someone sign
   const LOCAL = /^(['"`]\/|s\.url \+)/;
   const calls = find(/\bfetch\(\s*([^,)]+)/).map((x) => ({ ...x, arg: x.m[1].trim() }));
   const outside = calls.filter((c) => !LOCAL.test(c.arg));
-  assert.deepEqual(outside.map((c) => `${c.file}: fetch(${c.arg}`), ['assets/serve.mjs: fetch(WAITLIST_URL'], `requests that leave this computer. ${UPDATE}`);
+  // ask-poll.mjs calls only the map server recorded on this computer, and checks the host before it does
+  assert.deepEqual(outside.map((c) => `${c.file}: fetch(${c.arg}`), ['assets/serve.mjs: fetch(WAITLIST_URL', 'scripts/ask-poll.mjs: fetch(address'], `requests that leave this computer. ${UPDATE}`);
+  assert.match(read(path.join(SKILL, 'scripts', 'ask-poll.mjs')), /hostname !== '127\.0\.0\.1'/);
   assert.match(read(path.join(SKILL, 'assets', 'serve.mjs')), /const WAITLIST_URL = process\.env\.FLOORPLAN_WAITLIST_URL \|\| 'https:\/\/floorplan-waitlist-690500262396\.us-central1\.run\.app\/';/);
   assert.deepEqual(find(/\b(WebSocket|XMLHttpRequest|sendBeacon|importScripts)\b/).map((x) => `${x.file}: ${x.text}`), [], `other ways to reach a server. ${UPDATE}`);
   assert.deepEqual(find(/new EventSource\(\s*(?!['"`]\/)/).map((x) => `${x.file}:${x.line}`), [], 'live reload only from the local server');

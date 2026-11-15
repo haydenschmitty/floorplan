@@ -28,6 +28,7 @@ The layout engine ([elkjs](https://github.com/kieler/elkjs) 0.9.3, EPL-2.0) and 
 - It answers only to `127.0.0.1` and `localhost` at its own port, so a website that points its own domain at your computer (DNS rebinding) can't load the map or its token.
 - Questions run Claude with **read-only** tools: reading files, searching, and the map's own lookup script. It can't edit files or run other commands.
 - With Codex, questions run in Codex's **read-only** sandbox: it can read and search, but not write files.
+- A map made in Cursor does not start Cursor and does not send the question to Claude or Codex. The question waits on this server until the Cursor chat picks it up and replies. That chat is already your agent: the map only shows the reply, and it does not lock the chat into a read-only sandbox. `--engine claude` or `--engine codex` uses those instead.
 - On a blueprint (a map planned from a PRD), **Change** requests run the same read-only way. The agent replies with the updated plan, and the server itself writes only `floorplan/plan.json`, `floorplan/architecture.json` and `floorplan/recent-work.json`, after checking them, keeping the old copies for Undo.
 - It stops by itself two hours after the last tab closes, and `node floorplan/serve.mjs --stop` stops it immediately.
 

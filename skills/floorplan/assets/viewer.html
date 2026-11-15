@@ -622,15 +622,19 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
 const G = window.FLOORPLAN;
 // who answers questions and takes "Fix with …" prompts: the CLI the map server runs, else the agent that built the map.
 // A map made without an agent session (meta.agent "none", e.g. in CI) and opened without the server names none.
+// Cursor is named when the map was made there and no Claude or Codex CLI is answering: prompts are pasted into the Cursor chat.
 const AGENT_ID = window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want || G?.meta.agent;
-const AGENT = AGENT_ID === 'codex'
-  ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
-      signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
-  : AGENT_ID === 'none'
-  ? { id: 'none', name: 'AI', app: 'your AI coding agent', cli: 'the Claude Code CLI or Codex', docs: 'https://github.com/haydenschmitty/floorplan#install',
-      signIn: 'Sign in to it in a terminal, then ask again.' }
-  : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
-      signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
+const AGENTS_BY_ID = {
+  codex: { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
+    signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' },
+  cursor: { id: 'cursor', name: 'Cursor', app: 'Cursor', cli: 'Cursor', docs: 'https://cursor.com/docs',
+    signIn: 'The Cursor chat for this project answers this bar. Leave ask-poll.mjs running in that chat.' },
+  none: { id: 'none', name: 'AI', app: 'your AI coding agent', cli: 'the Claude Code CLI or Codex', docs: 'https://github.com/haydenschmitty/floorplan#install',
+    signIn: 'Sign in to it in a terminal, then ask again.' },
+  claude: { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
+    signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' },
+};
+const AGENT = AGENTS_BY_ID[AGENT_ID] || AGENTS_BY_ID.claude;
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
 if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.mjs.</p>'; return; }
 // a blueprint: planned from a PRD, so its files don't exist yet (no line counts, nothing to open in an editor)
@@ -1872,7 +1876,7 @@ function renderFlowMenu() {
 function showFlowForm() {
   fm.innerHTML = `<form class="ff"><label>Describe what to trace, and ${AGENT.name} builds a step-by-step flow through the map.</label>
     <textarea placeholder="e.g. How does an order end up charged through Stripe?" spellcheck="false"></textarea>
-    ${askState.engine ? '' : `<div class="note">Needs ${AGENT.cli} (run node floorplan/serve.mjs)${AGENT.id === 'claude' ? ' or the Claude app' : ''}.</div>`}
+    ${askState.engine ? '' : '<div class="note">' + (AGENT.id === 'cursor' ? 'Ask in the Cursor chat, or install the Claude Code CLI or Codex and run node floorplan/serve.mjs.' : 'Needs ' + AGENT.cli + ' (run node floorplan/serve.mjs)' + (AGENT.id === 'claude' ? ' or the Claude app' : '') + '.') + '</div>'}
     <div class="ffa"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn primary" ${askState.engine ? '' : 'disabled'}>Build flow</button></div></form>`;
   const form = fm.querySelector('form'), ta = form.querySelector('textarea');
   setTimeout(() => ta.focus(), 30);
@@ -2017,8 +2021,12 @@ const askState = { engine: null, sample: null, busy: false, ctl: null, session: 
 const askInput = $('#ask-input'), askSend = $('#ask-send'), sheet = $('#ask-sheet'), warn = $('#ask-warn');
 const DOCS = 'https://docs.claude.com/en/docs/claude-code/overview'; // the Claude app's tip: install the CLI
 const WARNINGS = {
-  no_engine: `Asking needs <b>${AGENT.cli}</b>. From the codebase root run <code>node floorplan/serve.mjs</code>${AGENT.id === 'claude' ? ', or open this map in the Claude app' : ''}.`,
-  cli_missing: `Requires <b>${AGENT.cli}</b> installed to work. <a href="${AGENT.docs}" target="_blank" rel="noopener">Install it</a>, then restart <code>serve.mjs</code>.`,
+  no_engine: AGENT.id === 'cursor'
+    ? `Open this map through its server (<code>node floorplan/serve.mjs</code>) so the bar can wait for the <b>Cursor</b> chat. Leave <code>ask-poll.mjs</code> running in that chat.`
+    : `Asking needs <b>${AGENT.cli}</b>. From the codebase root run <code>node floorplan/serve.mjs</code>${AGENT.id === 'claude' ? ', or open this map in the Claude app' : ''}.`,
+  cli_missing: AGENT.id === 'cursor'
+    ? `This bar is waiting on the <b>Cursor</b> chat, but the map server is not. Restart <code>serve.mjs</code>, and leave <code>ask-poll.mjs</code> running in that chat.`
+    : `Requires <b>${AGENT.cli}</b> installed to work. <a href="${AGENT.docs}" target="_blank" rel="noopener">Install it</a>, then restart <code>serve.mjs</code>.`,
   not_logged_in: `${Cap(AGENT.cli)} isn't signed in. ${AGENT.signIn}`,
   app_unavailable: `Claude isn't available for this map in this view.`,
   not_granted: `Claude access was declined for this map. Reload the page to be asked again.`,
@@ -2038,7 +2046,8 @@ function setEngine(engine, label, warning) {
   tag.className = 'engine ' + (engine ? 'ok' : 'warn');
   tag.innerHTML = `<i></i>${h(engine ? label : 'Unavailable')}${engine === 'app' ? `<button type="button" class="einfo" title="Install the Claude Code CLI for a better experience" aria-label="About the Claude Code CLI"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></button>` : ''}`;
   tag.querySelector('.einfo')?.addEventListener('click', () => setWarning(warn.hidden || !warn.classList.contains('info') ? 'cli_tip' : null));
-  tag.title = engine === 'cli' ? `Answers come from ${AGENT.cli} on this computer, which can read the source` : engine === 'app' ? 'Answers come from Claude in the Claude app, using the map (not the source files)' : '';
+  const viaCursor = !!window.FLOORPLAN_SERVER?.cursor && !window.FLOORPLAN_SERVER?.cli;
+  tag.title = viaCursor ? 'Answers come from the Cursor chat for this project. The question stays on this computer until that chat replies.' : engine === 'cli' ? `Answers come from ${AGENT.cli} on this computer, which can read the source` : engine === 'app' ? 'Answers come from Claude in the Claude app, using the map (not the source files)' : '';
   askInput.disabled = !engine;
   askSend.disabled = !engine;
   askInput.placeholder = engine ? `Ask anything about ${G.project.name}…` : 'Asking is unavailable';
@@ -2048,7 +2057,12 @@ function setEngine(engine, label, warning) {
 }
 async function detectEngine() {
   const S = window.FLOORPLAN_SERVER;
-  if (S) { S.cli ? setEngine('cli', AGENT.app + (S.model ? ' · ' + S.model : '')) : setEngine(null, null, 'cli_missing'); return; }
+  if (S) {
+    if (S.cli) setEngine('cli', AGENT.app + (S.model ? ' · ' + S.model : ''));
+    else if (S.cursor) setEngine('cli', 'Cursor chat');
+    else setEngine(null, null, 'cli_missing');
+    return;
+  }
   if (window.claude?.use) {
     setEngine(null, null); $('#ask-engine').innerHTML = '<i></i>connecting…';
     let sample = null;

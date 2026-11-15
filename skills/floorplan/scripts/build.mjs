@@ -17,6 +17,7 @@ import { scriptJson, scriptCode, withPolicy, editorTemplate } from '../assets/pa
 import { buildPlanHealth } from './lib/blueprint.mjs';
 import { buildScreens } from './lib/screens.mjs';
 import { writeClaudeMd } from './lib/claudemd.mjs';
+import { writeCursorRule } from './lib/cursorrule.mjs';
 import { detectAgent } from './lib/agent.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -685,15 +686,19 @@ if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detecte
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
   : `RECENT WORK  none highlighted${fs.existsSync(recentFile) ? '' : ' (no recent-work.json)'}`);
-// point future Claude Code sessions in this project at the map. Codex has no personal, uncommitted
+// point future sessions in this project at the map. Claude Code can keep a block in CLAUDE.local.md.
+// Cursor can keep a personal rule in .cursor/rules/floorplan.mdc. Codex has no personal, uncommitted
 // equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone,
 // and so does a map made without an agent session. Unattended mode never writes outside the map folder.
 if (agent === 'codex') report.push('AGENT  Codex: questions on the map run through Codex');
+if (agent === 'cursor') report.push('AGENT  Cursor: the Ask bar waits for this chat. Leave ask-poll.mjs running beside the map. Pass --engine claude or --engine codex to answer with one of those instead, which is what Change on a blueprint needs.');
 if (agent === 'none') report.push("AGENT  none: made without an agent session, so the map's prompts don't name one");
 let claudeNote = null;
+let cursorNote = null;
 if (scan.blueprint) report.push('BLUEPRINT  planned, not built yet: drawn from floorplan/plan.json');
 else if (unattended) report.push(`CLAUDE.LOCAL.MD  ${claudeNote = 'left alone (unattended mode writes only inside the map folder)'}`);
 else if (agent === 'claude' && !args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${claudeNote = writeClaudeMd(root, outDir, { add: !!args['claude-md'] })}`);
+else if (agent === 'cursor' && !args['no-cursor-rules']) report.push(`CURSOR RULE  ${cursorNote = writeCursorRule(root, outDir, { add: !!args['cursor-rules'] })}`);
 report.push(trackedWarning ? `GIT  ! ${trackedWarning}` : 'GIT  floorplan/ is kept out of git (it ignores itself)');
 report.push('');
 report.push(`✓ wrote ${path.relative(root, path.join(outDir, 'index.html'))} (${fmtNum(Math.round(html.length / 1024))} KB) and graph.json`);
@@ -709,8 +714,8 @@ else {
     } : null,
     screens: graph.screens?.length || 0,
     recentWork: { cards: graph.recent?.items.length || 0, tasks: graph.recent?.tasks.length || 0, file: fs.existsSync(recentFile) },
-    notes: { claudeLocalMd: claudeNote, git: trackedWarning || null },
-    // files written in the map folder; anything outside it is described in notes.claudeLocalMd (never in unattended mode)
+    notes: { claudeLocalMd: claudeNote, cursorRule: cursorNote, git: trackedWarning || null },
+    // files written in the map folder; anything outside it is described in notes (never in unattended mode)
     wrote: [
       path.join(outDir, '.gitignore'), path.join(outDir, 'graph.json'), path.join(outDir, 'index.html'),
       ...(args.artifact ? [path.join(outDir, 'artifact.html')] : []),

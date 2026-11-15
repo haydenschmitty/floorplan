@@ -64,7 +64,7 @@ By default everything is written for the app's owner, not an engineer: what each
 - connects the parts, using imports, matched requests and the AI's explicit connections;
 - runs the **Health** check;
 - detects **screens**: Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack;
-- writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one.
+- writes `graph.json` and the self-contained `index.html`, noting whether Claude Code, Codex or Cursor made it, so the map's Ask bar and fix prompts name the right one.
 
 The map lays itself out in your browser with [ELK](https://eclipse.dev/elk/), so the build itself is fast.
 
@@ -114,8 +114,9 @@ The map's server answers each question with the AI on your computer, in your pro
 
 - **Claude Code:** it runs `claude -p` with read-only tools only: reading and searching files, and `floorplan/query.mjs`, which looks things up in the map. It starts without any of your MCP servers (`--strict-mcp-config` with an empty list), since answers never use them and their tool descriptions alone can make a question too long, and it’s told not to read the map’s own generated files.
 - **Codex:** it runs `codex exec` in Codex's read-only sandbox, with the same lookups. These runs aren't saved to your Codex history, so a follow-up brings the last few questions and answers along. Codex has no option that leaves out only its MCP servers, so the ones you set up for Codex are loaded too; if questions fail as too long, turn off the ones you don't need (`enabled = false` in `~/.codex/config.toml`).
+- **Cursor:** the server does not start Cursor. The question stays on this computer until the Cursor chat polls for it with `ask-poll.mjs` and sends a reply, which the page displays. That chat is already your agent, so the map does not lock it into a read-only sandbox; the skill tells it not to edit files to answer. **Change** on a blueprint is not offered unless the server was started with `--engine claude` or `--engine codex`.
 
-It uses whichever made the map, and the other one if that isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
+Claude Code and Codex use whichever made the map, and the other one if that isn't installed. A map made in Cursor waits for that chat instead, unless `--engine` names one of the two. Either way it answers with text plus the cards to show, so answers can cite real code.
 
 In the Claude app, the map asks Claude through the app instead, with the same lookups but no access to your source.
 
