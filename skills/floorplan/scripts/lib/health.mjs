@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, compileGlob, blockComments, blankBlockComments, forwardIndexOf } from './common.mjs';
+import { git, compileGlob, blockComments, blankBlockComments, forwardIndexOf, callArgs } from './common.mjs';
 
 export const lineIndex = (src) => {
   const starts = [0];
@@ -331,6 +331,47 @@ const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permiss
 // `validate_user_input`) but not a credential (`validate_jwt`, `validate_api_key`, `validateToken`).
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log(?!in(?:_|$)|ged_?in(?:_|$))\w*|swag_from|validate(?!_(?:\w+_)?(?:login|auth|authenticated|authorized?|jwt|tokens?|permissions?|perms?|roles?|staff|admin|superuser|owner|scopes?|session|api_?key|signature|signed|hmac|device|member|user|credentials?|bearer)$)\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
 const isGuardName = (name) => !!name && !NOT_GUARD.test(snake(name)) && GUARD_NAME.test(snake(name));
+// JavaScript checks GUARD_NAME doesn't spell out: passport.authenticate('jwt'), expressjwt({ … }), isLoggedIn
+const JS_GUARD_NAME = /(^|_)authenticate(_|$)|^express_?jwt$|(^|_)logged_in(_|$)/;
+const isJsGuardName = (name) => isGuardName(name) || (!!name && !NOT_GUARD.test(snake(name)) && JS_GUARD_NAME.test(snake(name)));
+// Middleware that never turns anyone away, matched on the snake_case name of what app.use() is handed
+const NOT_GUARD_MIDDLEWARE = /^(cors|helmet|compression|morgan|cookie_parser|body_parser|json|urlencoded|raw|text|static|serve_static|favicon|method_override|response_time|timeout|express_session|session|cookie_session|rate_limit|slow_down|hpp|csurf|nocache|pino_http|request_id|logger|secure_headers|etag|pretty_json|initialize)$/;
+// words that say the middleware only loads or prepares something (loadUser, optionalAuth, attachSession,
+// withAuth), or protects against something other than strangers (xssProtection)
+const NOT_A_CHECK = /(^|_)(optional|maybe|soft|load|loads|attach|attaches|populate|parse|parser|extract|deserialize|current|context|with|init|setup|xss|ddos|csrf|xsrf|brute|spam|clickjacking)(_|$)/;
+// words that add nothing to what a name checks (authMiddleware is auth, createShutdownGuard is shutdown)
+const FILLER = /(^|_)(guard|guards|middleware|middlewares|mw|handler|create|make|build|get|use|express|hono|koa|fastify|plugin|global|app)(?=_|$)/g;
+// on their own, these name a session, a cookie or a user being made available, not checked
+const NOT_ENOUGH = /^(session|sessions|cookie|cookies|user|users|store|device|member|members)(_(session|sessions|cookie|cookies|user|users|store))*$/;
+/**
+ * Whether middleware handed to app.use() / router.use() checks the caller. It protects every route after it, so
+ * this is stricter than a check on one route (#72): the name must say what it checks (authGuard, requireUser,
+ * verifyToken, passport.authenticate), not just "guard" (createShutdownGuard) or "session" (sessionMiddleware),
+ * and a router (authRoutes, adminRouter) or middleware that turns no one away (cors, helmet) doesn't count.
+ */
+const isUseGuard = (name) => {
+  if (!name || NOT_GUARD.test(snake(name))) return false;
+  const s = snake(name);
+  if (NOT_GUARD_MIDDLEWARE.test(s) || NOT_A_CHECK.test(s) || /(^|_)(router|routes|route|routing|controller|controllers|endpoints|api|server)$/.test(s)) return false;
+  const core = s.replace(FILLER, '').replace(/__+/g, '_').replace(/^_|_$/g, '');
+  return !!core && !NOT_ENOUGH.test(core) && (GUARD_NAME.test(core) || JS_GUARD_NAME.test(core));
+};
+const JS_STRING = /(['"`])(?:\\[\s\S]|(?!\1)[^\\])*\1/g;
+/**
+ * The name to judge for one argument of app.use(…), with strings and comments removed: the call or name
+ * itself (cors({ exposedHeaders: ['X-Refreshed-Token'] }) is cors, passport.authenticate('jwt') is
+ * authenticate), never a word inside its options. null for anything else (an inline function, an object).
+ */
+function useArgName(arg) {
+  const code = arg.replace(JS_STRING, '""').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ').trim();
+  const m = /^(?:await\s+)?([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(\(|<|$)/.exec(code);
+  if (!m || /^(async|function|new|class)$/.test(m[1])) return null;
+  const segs = m[1].replace(/\s+/g, '').split('.');
+  const last = segs[segs.length - 1];
+  // the last part is what runs: passport.session() loads a session whatever passport is
+  if (NOT_GUARD_MIDDLEWARE.test(snake(last)) || NOT_A_CHECK.test(snake(last))) return null;
+  return [...segs].reverse().find(isUseGuard) || null;
+}
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
 const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_session|sessionmaker)$|(^|_)(db|database|sql\w*|engine|conn|connection|cursor|uow|unit_of_work)(_|$)|session_?(local|maker|factory)/i;
@@ -583,12 +624,19 @@ function jsRoutes(src, f, out) {
     const matcher = /matcher\s*:\s*([^\n]+)/.exec(src)?.[1] || '';
     if (!matcher || /api|\(\?!/.test(matcher)) out.push({ k: 'global-guard', framework: 'next', line: 1 });
   }
-  // app.use(auth) / router.use(requireAuth) without a path guards everything registered after it
+  // app.use(auth) / router.use(requireAuth) without a path guards everything registered after it.
+  // That turns off the open-endpoint check for every route behind it, so the evidence must be the
+  // middleware itself (#72): words inside strings (a header named 'X-Refreshed-Token') and options
+  // don't count, nor does middleware that never checks the caller (cors, helmet, express-session…)
   const uses = [];
   const lineOf = lineIndex(src);
-  for (const m of src.matchAll(/(?<!\w)(\w+)\.use\(\s*([^'"`)][^)]{0,500})\)/g)) {
-    const names = m[2].match(/[A-Za-z_$][\w$]*/g) || [];
-    if (names.some(isGuardName)) uses.push({ v: m[1], line: lineOf(m.index), name: names.find(isGuardName) });
+  for (const m of src.matchAll(/(?<![\w$])(\w+)\.use\(/g)) {
+    const before = src.slice(Math.max(0, m.index - 300), m.index);
+    if (/(^|[^:])\/\//.test(before.slice(before.lastIndexOf('\n') + 1))) continue; // commented out
+    const args = callArgs(src, m.index + m[0].length);
+    if (!args?.length || /^\s*['"`]/.test(args[0])) continue; // a path first: mounted, not app-wide
+    const name = args.map(useArgName).find(Boolean);
+    if (name) uses.push({ v: m[1], line: lineOf(m.index), name });
   }
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
 
@@ -629,7 +677,8 @@ function jsRoutes(src, f, out) {
       const fn = /(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(own);
       args = fn ? own.slice(0, fn.index) : own.slice(0, Math.max(0, own.lastIndexOf(',')));
     }
-    const mw = (args.match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isGuardName);
+    // (names, not words inside strings: cache('user-token') isn't a check)
+    const mw = (args.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isJsGuardName);
     const next = routes[idx + 1]?.line || r.line + 60;
     const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
     const prior = uses.find((u) => u.v === r.var && u.line < r.line);
@@ -1453,7 +1502,13 @@ export function buildHealth({ graph, scan, arch, root }) {
   }
   // a sign-in check applied where the route's router is mounted: app.use('/admin', requireStaff, adminRouter),
   // or app.include_router(admin.router, dependencies=[Depends(require_admin)]) (a database session isn't one)
-  const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isGuardDep)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardDep)]));
+  // In JavaScript that includes app.use('/api/*', auth) and router.use(requireAuth) above a mounted router, judged
+  // like app-wide middleware since they cover every route behind them (app.use('/api', cors()) isn't one), and a
+  // route served at two paths (mounted twice, or under /api and outside it) is open if either is.
+  const isPy = (r) => scanByPath.get(r.file)?.lang === 'python';
+  const mountCheck = (r) => r.mountMw?.find(isPy(r) ? isGuardDep : isUseGuard);
+  const mountGuard = new Map((scan.routes || []).filter(mountCheck).map((r) => [`${r.file}|${r.line}|${r.method}`, mountCheck(r)]));
+  for (const r of scan.routes || []) if (!isPy(r) && !mountCheck(r)) mountGuard.delete(`${r.file}|${r.line}|${r.method}`);
   const sourceOf = new Map();
   const readSource = (p) => {
     if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
@@ -1504,6 +1559,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     return !!fnd.nextGet && (marksPublic(r.f) || readsNothingPrivate(r.f, /\[/.test(r.p)));
   };
   const perRepo = new Map(); // repo -> { guarded, open: [], guardCounts }
+  const appWide = new Map(); // `${file}|${line}` -> an app-wide check and how many endpoints only it protects
   graph.routes.forEach((r, i) => {
     const fnd = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
     if (!fnd) return; // framework we don't analyse: say nothing
@@ -1521,11 +1577,17 @@ export function buildHealth({ graph, scan, arch, root }) {
     // a parameter typed with a dependency alias that checks the caller: `user: AdminUser`
     const viaAlias = !fnd.via && fnd.types?.find((t) => depGuards.get(repo)?.aliases.has(t));
     // a FastAPI dependency whose name doesn't say it checks, but whose code does (pyDependencyGuards)
-    const viaDep = !fnd.via && fnd.depRefs?.find((ref) => depGuards.get(repo)?.checks(ref))?.replace(/^w+:/, '');
+    const viaDep = !fnd.via && fnd.depRefs?.find((ref) => depGuards.get(repo)?.checks(ref))?.replace(/^\w+:/, '');
     const viaSignatureHelper = !fnd.via && fnd.calls?.find((name) =>
       (verifiedHelpers.get(repo)?.get(name) || []).some((helper) => helperImported(r.f, helper, name)));
     if (fnd.via || global || viaWrapper || mounted || viaAlias || viaDep || viaSignatureHelper) {
       pr.guarded++; pr.guardedIn.set(r.f, (pr.guardedIn.get(r.f) || 0) + 1);
+      // what the result rests on when only an app-wide check clears an endpoint, so the panel can name it (#72)
+      if (global && !fnd.via && !viaWrapper && !viaAlias && !viaDep && !viaSignatureHelper && (!mounted || mounted === global.name)) {
+        const k = `${global.file}|${global.line}`;
+        if (!appWide.has(k)) appWide.set(k, { ...(repo && repo !== '.' ? { repo } : {}), name: global.name || global.file.split('/').pop(), file: global.file, line: global.line, endpoints: 0 });
+        appWide.get(k).endpoints++;
+      }
       const name = fnd.guard || viaWrapper || mounted || viaAlias || viaDep;
       if (name) {
         pr.guardCounts.set(name, (pr.guardCounts.get(name) || 0) + 1);
@@ -1547,6 +1609,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (fnd.misplaced) pr.misplaced.push(entry); else pr.open.push(entry);
   });
   for (const [repo, pr] of perRepo) {
+    const repoName = repo === '.' ? '' : repo; // a single repo at the root has no name to show
     const top = (m) => m && [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
     // prefer what this file already uses, then the project's most common real (non-wrapper) check
     const guardHint = (file, lang) => {
@@ -1577,12 +1640,12 @@ export function buildHealth({ graph, scan, arch, root }) {
       const list = pr.open.sort((a, b) => b.write - a.write);
       issues.push({
         id: 'no-auth:' + repo, kind: 'unprotected-endpoint', severity: 'medium',
-        title: `None of ${repo ? `${repo}’s` : 'your'} endpoints check who is calling`,
+        title: `None of ${repoName ? `${repoName}’s` : 'your'} endpoints check who is calling`,
         detail: `${plural(list.length, 'endpoint')} answer anyone who knows the address, with no login check in the code. That's fine only if this server is private (for example behind a company network or a gateway that checks logins); otherwise anyone could read or change its data.`,
         items: list.slice(0, 24).map((e) => 'r:' + e.i),
         notes: Object.fromEntries(list.slice(0, 24).map((e) => ['r:' + e.i, e.write ? 'Changes data, no login check' : 'No login check'])),
         locations: list.map((e) => ({ file: e.r.f, line: e.r.l })),
-        fix: [`Review access control${repo ? ` in ${repo}` : ''}. None of these endpoints verify the caller in code:`, ...list.slice(0, 40).map(routeLine), list.length > 40 ? `- …and ${list.length - 40} more` : null, ``, `First tell me in plain words whether this server is reachable from the internet and whether anything in front of it (gateway, network rules) checks logins. If it is public, propose the smallest safe way to require login for the data-changing endpoints (POST/PUT/PATCH/DELETE) first, show me the plan, and wait for my OK before changing code.`].filter((x) => x !== null).join('\n'),
+        fix: [`Review access control${repoName ? ` in ${repoName}` : ''}. None of these endpoints verify the caller in code:`, ...list.slice(0, 40).map(routeLine), list.length > 40 ? `- …and ${list.length - 40} more` : null, ``, `First tell me in plain words whether this server is reachable from the internet and whether anything in front of it (gateway, network rules) checks logins. If it is public, propose the smallest safe way to require login for the data-changing endpoints (POST/PUT/PATCH/DELETE) first, show me the plan, and wait for my OK before changing code.`].filter((x) => x !== null).join('\n'),
       });
       continue;
     }
@@ -1727,7 +1790,8 @@ export function buildHealth({ graph, scan, arch, root }) {
   const kept = issues.slice(0, 40);
   const summary = { high: 0, medium: 0, low: 0 };
   for (const i of kept) summary[i.severity]++;
-  return { summary, issues: kept, checked: whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTables, firebaseFiles, findings }) };
+  // appWide: [{ repo?, name, file, line, endpoints }], the app-wide checks some endpoints count as protected by alone
+  return { summary, issues: kept, ...(appWide.size ? { appWide: [...appWide.values()] } : {}), checked: whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTables, firebaseFiles, findings }) };
 }
 
 // ---------- what was checked ----------

@@ -679,6 +679,8 @@ if (healthChecked.length) {
   report.push('  what was checked:');
   for (const c of healthChecked) report.push(`  ${c.loud ? '!' : c.checked ? '✓' : '·'} ${c.label}: ${c.text}`);
 }
+// what "no open endpoints" rests on, when an app-wide check is all that protects some of them
+for (const g of graph.health?.appWide || []) report.push(`APP-WIDE CHECK  ${g.name} (${g.file}:${g.line}) is the only login check Health saw on ${g.endpoints} endpoint${g.endpoints === 1 ? '' : 's'}`);
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`

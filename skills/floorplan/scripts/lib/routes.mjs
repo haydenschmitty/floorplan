@@ -12,16 +12,66 @@ const joinPath =(...parts) => '/' + parts.map((p) => (p || '').replace(/^\/+|\/+
  * @param files      scanned files: { path, lang, routes, mounts, routers, imports:[{names, aliases, alias, files[]}] }
  * @returns routes   [{ file, method, path, line }]
  */
-/** The file (and router variable, '*' = all) a mount statement points at. */
-function mountTarget(f, mount) {
-  const imports = (f.imports || []).filter((i) => i.files?.length);
-  if (mount.spec) { const imp = imports.find((i) => i.spec === mount.spec); return imp ? { file: imp.files[0], v: '*' } : null; }
-  const [head, attr] = mount.var.split('.');
-  if (f.lang !== 'python') {
-    // JS: match the mounted name to the local binding of an import or require (every router can be called `router`)
-    const imp = imports.find((i) => i.locals && Object.hasOwn(i.locals, head));
-    return { file: imp ? imp.files[0] : f.path, v: '*' };
+/**
+ * What a JS file exports as `name` ('default' for its default export): { file, v, kind }, following barrels
+ * (`export { default as authRoutes } from './auth.routes.js'`, `export * from './routes.js'`). kind is
+ * 'router' (v is the router variable), 'function', 'other' (some other value) or 'unknown'.
+ */
+function exportOf(byPath, file, name, depth = 0) {
+  const t = byPath.get(file);
+  if (!t || name == null || name === '*' || depth > 8) return { file, v: '*', kind: 'unknown' };
+  const sym = (t.symbols || []).find((s) => (name === 'default' ? s.default : s.name === name && !s.default));
+  if (sym) {
+    const local = sym.default ? sym.name : name;
+    if (sym.kind === 'function' || sym.kind === 'class') return { file, v: '*', kind: 'function' };
+    if (t.routerVars?.includes(local)) return { file, v: local, kind: 'router' };
+    return { file, v: '*', kind: 'other' };
   }
+  const passed = (t.imports || []).filter((i) => i.reexport && i.files?.length);
+  for (const imp of passed) if (imp.exported && Object.hasOwn(imp.exported, name)) return exportOf(byPath, imp.files[0], imp.exported[name], depth + 1);
+  if (name !== 'default') for (const imp of passed) if (!imp.exported) { const r = exportOf(byPath, imp.files[0], name, depth + 1); if (r.kind !== 'unknown') return r; }
+  return { file, v: '*', kind: 'unknown' };
+}
+
+/**
+ * JS: the router a mount points at, or null when it isn't one this scan can place (middleware, a package's
+ * export, a value it can't follow). Never the mounting file itself unless the router was made there: taking
+ * an unknown name for "this file" put its prefix on every route the file serves or mounts (#71).
+ */
+function jsMountTarget(f, mount, imports, byPath) {
+  const bound = (local) => imports.find((i) => i.locals && Object.hasOwn(i.locals, local));
+  // `import * as routes from` then routes.admin names the module's admin export
+  const exported = (imp, local, rest) => exportOf(byPath, imp.files[0], imp.locals[local] === '*' ? rest[0] : imp.locals[local]);
+  const [head, ...rest] = mount.var.split('.');
+  const imp = bound(head);
+  if (imp && !mount.call) {
+    const t = exported(imp, head, rest);
+    // an imported function handed to app.use() is middleware (or a handler), not a router
+    return mount.on && t.kind === 'function' ? null : { file: t.file, v: t.v };
+  }
+  if (!imp && !mount.call && !rest.length && f.routerVars?.includes(head)) return { file: f.path, v: head }; // a router made in this file (#98)
+  // a router a factory returns: app.use('/billing', createBillingRoutes()), or a variable assigned that call
+  const via = mount.call ? mount.var : mount.via;
+  if (via) {
+    const [vh, ...vr] = via.split('.');
+    const fimp = bound(vh);
+    if (fimp) return { file: exported(fimp, vh, vr).file, v: '*' };
+  }
+  return null;
+}
+
+/** The file (and router variable, '*' = all) a mount statement points at, or null. */
+function mountTarget(f, mount, byPath) {
+  const imports = (f.imports || []).filter((i) => i.files?.length);
+  if (mount.spec) {
+    const imp = imports.find((i) => i.spec === mount.spec);
+    if (!imp) return null;
+    const t = f.lang !== 'python' && exportOf(byPath, imp.files[0], 'default');
+    return { file: imp.files[0], v: t?.kind === 'router' ? t.v : '*' };
+  }
+  if (!mount.var) return null;
+  if (f.lang !== 'python') return jsMountTarget(f, mount, imports, byPath);
+  const [head, attr] = mount.var.split('.');
   // First the import that binds the mounted name in this file: `from app.routes import campaigns as
   // campaign_routes` binds campaign_routes (not campaigns), and wins over `from app.platform import pricing`
   // whose module merely ends in a router's name (platform).
@@ -46,14 +96,32 @@ function mountTarget(f, mount) {
 }
 
 export function resolveRoutes(files) {
-  // mountsTo[file] = [{ from, v, prefix }]   (v === '*' applies to every route in the file)
+  const byPath = new Map(files.map((f) => [f.path, f]));
+  const servesOrMounts = (p) => { const t = byPath.get(p); return !!(t?.routes?.length || t?.mounts?.some((m) => m.var || m.spec)); };
+  // mountsTo[file] = [{ from, on, v, prefix, line }]   (v === '*' applies to every route in the file)
   const mountsTo = new Map();
+  // middleware for every route under a path, registered on a router or app: app.use('/api/*', auth),
+  // app.use(requireAuth), or the middleware before a handler: [{ file, on, prefix, line, mw }]
+  const scoped = [];
   for (const f of files) for (const mount of TEST_FILE.test(f.path) ? [] : f.mounts || []) {
-    const t = mountTarget(f, mount);
+    const t = mountTarget(f, mount, byPath);
+    // JS: what app.use() is handed is a router only if it serves or mounts something
+    if (mount.on && (!t || (t.file !== f.path && !servesOrMounts(t.file)))) {
+      const mw = [...(mount.mw || []), ...(mount.var ? [mount.var.split('.').pop()] : [])];
+      if (mw.length && scoped.length < 1000) scoped.push({ file: f.path, on: mount.on, prefix: mount.prefix, line: mount.line, mw });
+      continue;
+    }
     if (!t) continue;
     if (!mountsTo.has(t.file)) mountsTo.set(t.file, []);
-    mountsTo.get(t.file).push({ from: f.path, v: t.v, prefix: mount.prefix, mw: mount.mw || [] });
+    mountsTo.get(t.file).push({ from: f.path, on: mount.on, v: t.v, prefix: mount.prefix, line: mount.line, mw: mount.mw || [] });
   }
+  // routers mounted inside another router of the same file: a mount of the whole file ('*') reaches them
+  // through that router, not directly (api.route('/frentes', frentes) under app.route('/api', api))
+  const nested = new Set();
+  for (const [to, ms] of mountsTo) for (const m of ms) if (m.from === to && m.v !== '*') nested.add(`${to}|${m.v}`);
+  const mountsOf = (file, v) => (mountsTo.get(file) || []).filter((m) => v == null || m.v === v || (m.v === '*' && !nested.has(`${file}|${v}`)));
+  // the router a mount is registered on: the receiver in its own file (same file: compose), or any in a Python file
+  const parentOf = (m, file) => (m.from === file ? (m.on ? [file, m.on] : null) : [m.from, m.on ?? null]);
   // Every prefix a file's routes live under, composing nested mounts (a router mounted into a router
   // that is itself mounted), e.g. app.use('/api', api) + api.use('/users', users) → /api/users.
   // Each file's answer is remembered (files mounted twice into each other would otherwise be walked once per
@@ -63,11 +131,14 @@ export function resolveRoutes(files) {
   const outerPrefixes = (file, v, seen = new Set()) => {
     const key = `${file}|${v ?? ''}`;
     if (prefixMemo.has(key)) return prefixMemo.get(key);
-    const ms = (mountsTo.get(file) || []).filter((m) => v == null || m.v === '*' || m.v === v);
-    if (!ms.length || seen.has(file)) return [''];
-    const next = new Set(seen).add(file);
+    const ms = mountsOf(file, v);
+    if (!ms.length || seen.has(key)) return [''];
+    const next = new Set(seen).add(key);
     const out = new Set();
-    for (const m of ms) for (const p of m.from === file ? [''] : outerPrefixes(m.from, null, next)) if (out.size < MAX_PREFIXES) out.add(joinPath(p, m.prefix));
+    for (const m of ms) {
+      const up = parentOf(m, file);
+      for (const p of up ? outerPrefixes(up[0], up[1], next) : ['']) if (out.size < MAX_PREFIXES) out.add(joinPath(p, m.prefix));
+    }
     prefixMemo.set(key, [...out]);
     return prefixMemo.get(key);
   };
@@ -77,14 +148,34 @@ export function resolveRoutes(files) {
   const mountMw = (file, v, seen = new Set()) => {
     const key = `${file}|${v ?? ''}`;
     if (mwMemo.has(key)) return mwMemo.get(key);
-    const ms = (mountsTo.get(file) || []).filter((m) => v == null || m.v === '*' || m.v === v);
-    if (!ms.length || seen.has(file)) return [];
-    const next = new Set(seen).add(file);
+    const ms = mountsOf(file, v);
+    if (!ms.length || seen.has(key)) return [];
+    const next = new Set(seen).add(key);
     // a route is only as protected as its least-protected mount
-    const each = ms.map((m) => [...m.mw, ...(m.from === file ? [] : mountMw(m.from, null, next))]);
+    const each = ms.map((m) => { const up = parentOf(m, file); return [...m.mw, ...(up ? mountMw(up[0], up[1], next) : [])]; });
     mwMemo.set(key, each.reduce((a, b) => a.filter((x) => b.includes(x))));
     return mwMemo.get(key);
   };
+
+  // Scoped middleware covers the routes registered on its router after it, under its path, and every router
+  // mounted there after it, all the way down. covers(s) is the set of `${file}|${v}` reached ('*' = every router).
+  const mountsFrom = new Map();
+  for (const [to, ms] of mountsTo) for (const m of ms) { if (!mountsFrom.has(m.from)) mountsFrom.set(m.from, []); mountsFrom.get(m.from).push({ to, v: m.v, on: m.on, line: m.line }); }
+  const below = (s) => {
+    const keys = new Set(), queue = [];
+    const add = (file, v) => { const k = `${file}|${v}`; if (!keys.has(k) && keys.size < 5000) { keys.add(k); queue.push([file, v]); } };
+    for (const m of mountsFrom.get(s.file) || []) if (m.on === s.on && m.line > s.line) add(m.to, m.v);
+    while (queue.length) {
+      const [file, v] = queue.pop();
+      for (const m of mountsFrom.get(file) || []) if (v === '*' || m.on == null || m.on === v) add(m.to, m.v);
+    }
+    return keys;
+  };
+  const scopes = scoped.map((s) => ({ ...s, keys: below(s), under: outerPrefixes(s.file, s.on).map((p) => routeSegments(joinPath(p, s.prefix))) }));
+  const underPath = (segs, path) => { const p = routeSegments(path); return segs.length <= p.length && segs.every((x, i) => x === p[i] || x === '*' || p[i] === '*'); };
+  const scopedMw = (f, r, path) => scopes
+    .filter((s) => ((s.file === f.path && s.on === r.var && s.line < r.line) || s.keys.has(`${f.path}|${r.var}`) || s.keys.has(`${f.path}|*`)) && s.under.some((u) => underPath(u, path)))
+    .flatMap((s) => s.mw);
 
   // Firebase deploys a function under the name the functions entry file exports it as, so
   // `export { approveItem as approve } from './items'` renames it: `${file}|approveItem` -> ['approve']
@@ -99,7 +190,6 @@ export function resolveRoutes(files) {
   }
 
   // onRequest(app) serves an Express app under the function's name; its own routes are the endpoints
-  const byPath = new Map(files.map((f) => [f.path, f]));
   const wrapsApp = (file, prefix) => [...mountsTo].some(([to, ms]) => ms.some((m) => m.from === file && m.prefix === prefix) && byPath.get(to)?.routes?.some((r) => r.framework !== 'firebase'));
 
   const routes = [];
@@ -114,8 +204,12 @@ export function resolveRoutes(files) {
         continue;
       }
       const defPrefix = (r.var && f.routers?.[r.var]) || '';
-      const mw = mountMw(f.path, r.var);
-      for (const mp of outerPrefixes(f.path, r.var)) routes.push({ file: f.path, method: r.method, path: joinPath(mp, defPrefix, r.path), line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}) });
+      const fromMounts = mountMw(f.path, r.var);
+      for (const mp of outerPrefixes(f.path, r.var)) {
+        const path = joinPath(mp, defPrefix, r.path);
+        const mw = scopes.length ? [...new Set([...fromMounts, ...scopedMw(f, r, path)])] : fromMounts;
+        routes.push({ file: f.path, method: r.method, path, line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}) });
+      }
     }
   }
   return dedupe(routes, (r) => `${r.file}|${r.method}|${r.path}`);
