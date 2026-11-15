@@ -421,6 +421,15 @@ export function importStatements(code, head, { spaced = true } = {}) {
   return out;
 }
 
+/**
+ * A JSON file Floorplan, an agent or a person wrote (architecture.json, descriptions, recent-work.json, plan.json…),
+ * parsed strictly. A byte order mark at the start is skipped: Windows PowerShell's Set-Content and Out-File, and
+ * some editors, write one, and JSON.parse rejects it. Throws like JSON.parse for anything else that isn't JSON.
+ */
+export function readJsonFile(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+}
+
 /** Config files bigger than this aren't read: no real tsconfig.json or package.json comes close. */
 export const MAX_CONFIG_BYTES = 1024 * 1024;
 /** Config files readJsonLoose left unread because of their size, as { path, bytes } (the scan reports them). */
@@ -478,3 +487,22 @@ export async function printJson(obj, code) {
 }
 
 export const fmtNum = (n) => n >= 10000 ? (n / 1000).toFixed(0) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+
+/**
+ * The files a map leaves out because of their kind (docs, config, asset…): only the kinds in architecture.json's
+ * "include" are mapped, code alone by default, so a board that looks small isn't mistaken for a scan that missed
+ * things. Returns { byCategory } (biggest first) and the report line saying so, or a null line when nothing is left out.
+ * `ignored`: files of an included kind that architecture.json's "ignore" leaves out, when known.
+ */
+export function notMapped(files, include, ignored) {
+  const counts = {};
+  for (const f of files) if (!include.includes(f.category)) counts[f.category] = (counts[f.category] || 0) + 1;
+  const byCategory = Object.fromEntries(Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
+  const parts = Object.entries(byCategory).map(([k, v]) => `${v} ${k}`);
+  if (ignored) parts.push(`${ignored} left out by "ignore"`);
+  const example = ['docs', 'config'].find((k) => byCategory[k]) || Object.keys(byCategory)[0];
+  const hint = example
+    ? ` (the map shows ${include.join(' + ') || 'no'} files; to add a kind, list it in "include" in architecture.json, e.g. "include": ${JSON.stringify([...include, example]).replace(/,/g, ', ')})`
+    : '';
+  return { byCategory, ...(ignored === undefined ? {} : { ignored }), line: parts.length ? `NOT MAPPED  ${parts.join(' · ')}${hint}` : null };
+}

@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseArgs, fmtNum, mapDir, toPosix, unattendedMode, printJson } from './lib/common.mjs';
+import { parseArgs, fmtNum, mapDir, toPosix, unattendedMode, printJson, readJsonFile } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 import { maskSecrets, lineIndex } from './lib/health.mjs';
 
@@ -25,7 +25,7 @@ if (!fs.existsSync(graphFile)) {
   if (args.json) await printJson({ schema: SCHEMA, ok: false, errors: ['No floorplan/graph.json. Run build.mjs first.'] }, 1);
   console.error('✗ No floorplan/graph.json. Run build.mjs first.'); process.exit(1);
 }
-const g = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
+const g = readJsonFile(graphFile);
 const maxFiles = Number(args['max-files']) || 40;
 const wsDir = path.join(outDir, '.cache', 'worksheets');
 const descDir = path.join(outDir, 'descriptions');
@@ -76,7 +76,7 @@ for (const f of g.files) {
 const CAP = { routeLines: 12, fileLines: 20, lineChars: 160, worksheetLines: 120, paths: 4 };
 const NEVER_QUOTE = /(^|\/)\.env(\.|$)|(^|\/)\.(npmrc|netrc|pgpass|pypirc)$|\.(pem|key|p12|pfx|jks|keystore|crt|cer|tfvars)$|(^|\/)(id_(rsa|dsa|ecdsa|ed25519)|credentials?\.json|client_secret[^/]*\.json|service[-_]?account[^/]*\.json)$|secret/i;
 let scanFiles = [];
-try { scanFiles = JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'scan.json'), 'utf8')).files || []; } catch {}
+try { scanFiles = readJsonFile(path.join(outDir, '.cache', 'scan.json')).files || []; } catch {}
 const scanInfo = new Map(scanFiles.map((f) => [f.path, f]));
 const readable = (f) => f && !f.tooLarge && !NEVER_QUOTE.test(f.path) && (f.bytes || 0) <= 512 * 1024;
 const sources = new Map();
@@ -288,7 +288,7 @@ changed: ${f.review}`);
     // (a file that holds something other than an object, or whose files or routes do, counts as empty)
     const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
     let existing = {};
-    try { existing = obj(JSON.parse(fs.readFileSync(descFile, 'utf8'))); } catch {}
+    try { existing = obj(readJsonFile(descFile)); } catch {}
     const skel = { files: { ...obj(existing.files) }, routes: { ...obj(existing.routes) } };
     for (const f of chunk) {
       if (!skel.files[f.p]) skel.files[f.p] = { name: f.auto ? fallbackFileName(f.p) : f.name, description: f.auto ? '' : f.d };

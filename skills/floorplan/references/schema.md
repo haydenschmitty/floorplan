@@ -16,7 +16,7 @@ Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-
 | `flows` | array | no | guided walkthroughs through the board |
 | `tour` | array | no | the "Start here" tour shown on first open: 3–8 stops `{ "node": "<node id or file path>", "title": "…", "note": "…" }`, in plain language, in the order a newcomer should see them. The first flow is appended automatically |
 | `audience` | `"everyone"` \| `"developers"` | no | who names and descriptions are written for. Default `"everyone"`: plain language a non-technical owner understands (what it does for the business, in everyday words). `"developers"`: technical style for engineers |
-| `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs` |
+| `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs`. The scan and the build list what's left out, by category, on their `NOT MAPPED` line |
 | `ignore` | string[] | no | globs for files to leave off the board entirely (generated code, vendored libs, fixtures) |
 
 ## nodes

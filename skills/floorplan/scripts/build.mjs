@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, globProblem, parseArgs, fmtNum, mapDir, keepOutOfGit, toPosix, unattendedMode, printJson } from './lib/common.mjs';
+import { compileGlob, globProblem, parseArgs, fmtNum, mapDir, keepOutOfGit, toPosix, unattendedMode, printJson, readJsonFile, notMapped } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey, jargonIn } from './lib/names.mjs';
 import { buildHealth, withDismissed, dismissalFor, maskSecrets } from './lib/health.mjs';
 import { scriptJson, scriptCode, withPolicy } from '../assets/page-safety.mjs';
@@ -59,9 +59,9 @@ const fail = async (msg) => {
 };
 if (!fs.existsSync(scanFile)) await fail(`No scan at ${scanFile}. Run: node ${path.join(SKILL_DIR, 'scripts', 'scan.mjs')} "${root}"`);
 if (!fs.existsSync(archFile)) await fail(`No architecture file at ${archFile}. Write it first (see references/schema.md).`);
-const scan = JSON.parse(fs.readFileSync(scanFile, 'utf8'));
+const scan = readJsonFile(scanFile);
 let arch;
-try { arch = JSON.parse(fs.readFileSync(archFile, 'utf8')); } catch (e) { await fail(`architecture.json is not valid JSON: ${e.message}`); }
+try { arch = readJsonFile(archFile); } catch (e) { await fail(`architecture.json is not valid JSON: ${e.message}`); }
 
 // ---------- validate shape ----------
 const isStr = (v) => typeof v === 'string' && v.length > 0;
@@ -194,6 +194,8 @@ const filesAll = scan.files;
 const fileByPath = new Map(filesAll.map((f) => [f.path, f]));
 const included = filesAll.filter((f) => include.includes(f.category) && !ignoreGlobs.some((g) => g.test(f.path)));
 const includedSet = new Set(included.map((f) => f.path));
+// what the map leaves out, by kind (and by "ignore"), so a small board doesn't look like a scan that missed things
+const leftOut = notMapped(filesAll, include, filesAll.filter((f) => include.includes(f.category) && !includedSet.has(f.path)).length);
 
 // ---------- assign files to nodes ----------
 // A node's `exclude` also applies to its descendants, so "web excludes tests" holds all the way down.
@@ -311,7 +313,7 @@ flows.forEach((fl, i) => {
 const customFile = path.join(outDir, 'custom-flows.json');
 if (fs.existsSync(customFile)) {
   let custom = [];
-  try { custom = JSON.parse(fs.readFileSync(customFile, 'utf8')).flows || []; } catch (e) { warn(`custom-flows.json is not valid JSON: ${e.message}`); }
+  try { custom = readJsonFile(customFile).flows || []; } catch (e) { warn(`custom-flows.json is not valid JSON: ${e.message}`); }
   const routeAt = new Map(routesIn.map((r, i) => [routeKey(r), i]));
   const resolveStep = (ref) => {
     if (typeof ref !== 'string') return null;
@@ -349,7 +351,7 @@ let outRecent = null;
 const recentFile = path.join(outDir, 'recent-work.json');
 if (fs.existsSync(recentFile)) {
   let rw = null;
-  try { rw = JSON.parse(fs.readFileSync(recentFile, 'utf8')); } catch (e) { warn(`recent-work.json is not valid JSON: ${e.message}`); }
+  try { rw = readJsonFile(recentFile); } catch (e) { warn(`recent-work.json is not valid JSON: ${e.message}`); }
   const routeIdx = new Map(routesIn.map((r, i) => [routeKey(r), i]));
   const resolveRecent = (ref) => {
     if (!isStr(ref)) return null;
@@ -397,7 +399,7 @@ const staleEx = [];
 if (fs.existsSync(descDir)) {
   for (const name of fs.readdirSync(descDir).filter((n) => n.endsWith('.json')).sort()) {
     let d;
-    try { d = JSON.parse(fs.readFileSync(path.join(descDir, name), 'utf8')); } catch (e) { err(`descriptions/${name} is not valid JSON: ${e.message}`); continue; }
+    try { d = readJsonFile(path.join(descDir, name)); } catch (e) { err(`descriptions/${name} is not valid JSON: ${e.message}`); continue; }
     // a file that holds something else (null, a list, text), or whose files or routes hold the wrong kind of thing, is named and left out;
     // files or routes left empty (missing or null) is fine
     if (!isObj(d)) { err(`descriptions/${name} must be an object like { "files": { … }, "routes": { … } }, not ${kindOf(d)}`); continue; }
@@ -505,6 +507,7 @@ if (unassigned.length) {
 }
 const byKind = {};
 for (const l of links.values()) byKind[l.k] = (byKind[l.k] || 0) + 1;
+if (leftOut.line) report.push(leftOut.line);
 report.push(`LINKS  ${[...links.values()].length} (${Object.entries(byKind).map(([k, v]) => `${k} ${v}`).join(', ')})`);
 const describedFiles = included.filter((f) => fileDesc.get(f.path)?.d || f.desc).length;
 const describedRoutes = routesIn.filter((r) => routeDesc.get(routeKey(r))?.d || r.desc).length;
@@ -523,6 +526,8 @@ const result = (extra) => ({
   errors, warnings,
   agent, audience, blueprint: !!scan.blueprint, unattended,
   files: { total: included.length, unassigned: unassigned.length, unassignedPercent: Number(pct.toFixed(1)), include },
+  // files of the kinds "include" leaves out, by kind, and how many of the included kinds "ignore" leaves out
+  notMapped: { byCategory: leftOut.byCategory, ignored: leftOut.ignored },
   unassignedByDirectory: unassignedByDir.map(([dir, files]) => ({ dir, files })),
   nodes: nodes.filter((n) => n?.id && !n.parent && stats.has(n.id)).map((n) => ({ id: n.id, kind: n.kind, files: stats.get(n.id).files, loc: stats.get(n.id).loc })),
   links: { total: links.size, byKind },
@@ -599,7 +604,7 @@ if (scan.blueprint) try { graph.health = buildPlanHealth({ graph, scan }); } cat
 // issues people marked "not a problem" on the map (saved by serve.mjs) stay listed, set apart, and leave the counts
 const dismissedFile = path.join(outDir, 'health-dismissed.json');
 if (graph.health?.issues && fs.existsSync(dismissedFile)) {
-  try { const list = JSON.parse(fs.readFileSync(dismissedFile, 'utf8')).dismissed;
+  try { const list = readJsonFile(dismissedFile).dismissed;
     if (Array.isArray(list)) list.forEach((d, i) => scrubFields(d, ['reason'], 'health-dismissed.json', `dismissed[${i}]`));
     graph.health = withDismissed(graph.health, list);
     for (const w of secretWarnings()) { warn(w); report.push(`! ${w}`); } } catch (e) { warn(`health-dismissed.json is not valid JSON: ${e.message}`); }

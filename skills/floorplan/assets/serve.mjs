@@ -23,10 +23,12 @@ import { scriptJson, withPolicy } from './page-safety.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const argv = process.argv.slice(2);
+// a JSON file in this folder; one a person or an agent saved with a byte order mark at the start (Windows PowerShell does) reads the same
+const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 const opt = (name, dflt) => { const i = argv.indexOf('--' + name); return i < 0 ? dflt : argv[i + 1]; };
 const has = (name) => argv.includes('--' + name);
 const stateFile = path.join(here, '.cache', 'server.json');
-const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return null; } };
+const readState = () => { try { return readJson(stateFile); } catch { return null; } };
 if (has('stop')) {
   const s = readState();
   let stopped = false;
@@ -38,7 +40,7 @@ if (has('stop')) {
 
 // Health issues marked "not a problem" on the map; build.mjs folds them into graph.json
 const dismissedFile = path.join(here, 'health-dismissed.json');
-const readDismissed = () => { try { const { dismissed } = JSON.parse(fs.readFileSync(dismissedFile, 'utf8')); return Array.isArray(dismissed) ? dismissed : []; } catch { return []; } };
+const readDismissed = () => { try { const { dismissed } = readJson(dismissedFile); return Array.isArray(dismissed) ? dismissed : []; } catch { return []; } };
 const cleanDismissal = (d) => ({
   id: String(d.id).slice(0, 2000),
   locations: (Array.isArray(d.locations) ? d.locations : []).slice(0, 500).map((l) => String(l).slice(0, 1000)),
@@ -165,7 +167,7 @@ const ENGINES = {
   },
 };
 // --engine (or FLOORPLAN_ENGINE) decides; otherwise the agent that built the map, then the others in order
-const builtBy = (() => { try { return JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8')).meta?.agent; } catch { return null; } })();
+const builtBy = (() => { try { return readJson(path.join(here, 'graph.json')).meta?.agent; } catch { return null; } })();
 const asked = opt('engine', process.env.FLOORPLAN_ENGINE);
 const isEngine = (k) => typeof k === 'string' && Object.hasOwn(ENGINES, k);
 const want = isEngine(asked) ? asked : isEngine(builtBy) ? builtBy : 'claude';
@@ -187,7 +189,7 @@ const inject = `<script>window.FLOORPLAN_SERVER=${scriptJson({ token, cli: !!cli
 let page, G, core, MODES;
 function load() {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
-  const g = JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8'));
+  const g = readJson(path.join(here, 'graph.json'));
   const coreSrc = fs.readFileSync(path.join(here, 'query.mjs'), 'utf8').split('// ---- cli ----')[0];
   const c = new Function(`${coreSrc.replace(/^import .*$/gm, '')}; return { FLOORPLAN_ANSWER_SCHEMA, FLOORPLAN_FLOW_SCHEMA, FLOORPLAN_CHANGE_SCHEMA, floorplanAskInstructions, floorplanFlowInstructions, floorplanChangeInstructions, createGraphQuery };`)();
   c.q = c.createGraphQuery(g);
@@ -227,7 +229,7 @@ fs.watchFile(path.join(here, 'index.html'), { interval: 1000 }, (cur, prev) => {
 });
 if (idleExit) setInterval(() => { if (!tabs.size && !running.size && Date.now() - lastTab > idleExit) process.exit(0); }, 60000).unref();
 const flowsFile = path.join(here, 'custom-flows.json');
-const readFlows = () => { try { return JSON.parse(fs.readFileSync(flowsFile, 'utf8')).flows || []; } catch { return []; } };
+const readFlows = () => { try { return readJson(flowsFile).flows || []; } catch { return []; } };
 
 // ---------- Floorplan Cloud waitlist (opt-in) ----------
 // The map may ask, once, whether you want an email when Floorplan Cloud launches. Nothing is sent unless
@@ -238,7 +240,7 @@ const readFlows = () => { try { return JSON.parse(fs.readFileSync(flowsFile, 'ut
 // FLOORPLAN_NO_PROMPTS=1 turns the question off.
 const WAITLIST_URL = process.env.FLOORPLAN_WAITLIST_URL || 'https://floorplan-waitlist-690500262396.us-central1.run.app/';
 const settingsFile = path.join(process.env.HOME || process.env.USERPROFILE || here, '.floorplan', 'settings.json');
-const readSettings = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch { return {}; } };
+const readSettings = () => { try { return readJson(settingsFile); } catch { return {}; } };
 function saveCloud(cloud) {
   try { fs.mkdirSync(path.dirname(settingsFile), { recursive: true }); fs.writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), cloud }, null, 2) + '\n'); } catch {}
 }
@@ -446,7 +448,7 @@ function restore(dir) {
 /** Runs one of the skill's scripts on this project; throws with its output when it fails. */
 function skillScript(name, ...args) {
   let dir;
-  try { dir = JSON.parse(fs.readFileSync(path.join(here, '.cache', 'skill.json'), 'utf8')).dir; } catch {}
+  try { dir = readJson(path.join(here, '.cache', 'skill.json')).dir; } catch {}
   if (!dir || !fs.existsSync(path.join(dir, 'scripts', name))) throw new Error('This map’s server can’t find the Floorplan scripts. Ask Claude Code or Codex to update the floorplan once, then try again.');
   try { return execFileSync(process.execPath, [path.join(dir, 'scripts', name), root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 120000 }); }
   catch (e) { throw Object.assign(new Error(String(e.stdout || '') + String(e.stderr || '') || e.message), { checks: true }); }

@@ -6,7 +6,7 @@
 // --json prints one JSON object (floorplan/recent-result@1): the same facts as data, plus the text as "text".
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, parseArgs, mapDir, unattendedMode, printJson } from './lib/common.mjs';
+import { git, parseArgs, mapDir, unattendedMode, printJson, readJsonFile } from './lib/common.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 unattendedMode(args);
@@ -18,8 +18,8 @@ if (!fs.existsSync(graphFile)) {
   if (args.json) await printJson({ schema: SCHEMA, ok: false, errors: ['No floorplan/graph.json. Run build.mjs first.'] }, 1);
   console.error('✗ No floorplan/graph.json. Run build.mjs first.'); process.exit(1);
 }
-const G = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
-const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+const G = readJsonFile(graphFile);
+const readJson = (f) => { try { return readJsonFile(f); } catch { return null; } };
 const changes = readJson(path.join(dir, '.cache', 'changes.json'));
 const current = readJson(path.join(dir, 'recent-work.json'));
 

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { parseArgs, mapDir, unattendedMode } from './lib/common.mjs';
+import { parseArgs, mapDir, unattendedMode, readJsonFile } from './lib/common.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
@@ -28,7 +28,7 @@ if (!fs.existsSync(path.join(dir, 'index.html')) || !fs.existsSync(serveFile)) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return null; } };
+const readState = () => { try { return readJsonFile(stateFile); } catch { return null; } };
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 async function api(s, p) {
   try {

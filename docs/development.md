@@ -92,6 +92,8 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `firebase.test.mjs` | Firebase Cloud Functions: callables and onRequest functions as endpoints, the website's calls to them, Screens, Health, background functions (React + Firebase sample in `fixtures/`) |
 | `blueprint.test.mjs` | a map planned from a PRD before any code exists: plan.json errors, endpoints and calls, Screens, the design review, refreshing and switching to the real code (sample PRD in `fixtures/`) |
 | `blueprint-change.test.mjs` | changing a blueprint from the map: the agent's updated plan is checked, saved and highlighted, retried once when it fails the checks, and undone (stand-in CLI in `fixtures/fake-cli/`) |
+| `byte-order-mark.test.mjs` | JSON files that start with a byte order mark (as Windows PowerShell writes them) build, refresh, describe, plan and export like any other, while one that isn't JSON after it is still a named error |
+| `not-mapped.test.mjs` | the scan and the build say which kinds of file aren't on the map and how to add them, following `include` and counting `ignore`, and say nothing when everything is mapped |
 | `large-files.test.mjs` | files over the scan's size limit stay on the map with their line count, and the scan, Health and the map say they weren't read |
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
 | `worksheets.test.mjs` | the description worksheets quote each endpoint's code and very short files whole, within their caps, with secrets masked and `.env`-style files never quoted, and list the files that import, request or name each file |
