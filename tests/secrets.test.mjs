@@ -47,6 +47,52 @@ test('a variable handed to a command is not a password, a value written in is', 
   assert.equal(sh(`users=$(MYSQL_PWD="${FAKE_PASSWORD}" mariadb -N -e "SELECT 1")\n`).length, 1);
 });
 
+test('variables a script or pipeline fills in are not passwords, in every common spelling (#107, #108, #110, #116)', () => {
+  const sh = (line, p = 'db/init-postgres.sh') => secrets(line, p, 'shell');
+  // run.sh (#116): the variable handed to a container, and put into a config file by sed
+  assert.deepEqual(sh('mysql_q() { docker exec -i -e MYSQL_PWD="$MYSQL_PASSWORD" app-mysql mysql -uroot "$@"; }\n', 'run.sh'), []);
+  assert.deepEqual(sh('  sed -e "s|__MYSQL_PASSWORD__|$MYSQL_PASSWORD|g" "$HERE/Config.toml.template" > "$HERE/Config.toml"\n', 'run.sh'), []);
+  // Postgres init scripts: psql variables passed in and read back with :'name'
+  assert.deepEqual(sh('psql -v ON_ERROR_STOP=1 -v app_password="$APP_PASSWORD" -v ro_password="${RO_PASSWORD}" <<-EOSQL\n'), []);
+  assert.deepEqual(sh("  CREATE ROLE app LOGIN PASSWORD :'app_password';\n  ALTER ROLE ro WITH PASSWORD :'ro_password';\n"), []);
+  assert.deepEqual(secrets("ALTER ROLE ro WITH PASSWORD :'ro_password';\n", 'db/01-roles.sql', 'sql'), []);
+  assert.deepEqual(sh('export DB_PASSWORD="${POSTGRES_PASSWORD:-postgres}"\nAUTH_TOKEN="$API_USER:$API_TOKEN"\n'), []);
+  // pipelines: GitHub Actions, GitLab CI ($VAR), Azure Pipelines ($(var)), compose defaults
+  const yml = (text, p = 'ci/image.yml') => findIssues(text, { path: p, category: 'config', lang: 'yaml' }).filter((x) => x.k === 'secret');
+  assert.deepEqual(yml('    password: ${{ secrets.REGISTRY_TOKEN }}\n    REGISTRY_PASSWORD: $CI_REGISTRY_PASSWORD\n    password: $(registryPassword)\n'), []);
+  assert.deepEqual(yml('      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}\n'), []);
+  assert.deepEqual(secrets('password = "#{db_password}"\n', 'config/deploy.rb', 'ruby'), []);
+});
+
+test('a password written into a script or pipeline, next to those variables, is still found', () => {
+  const sh = (line) => secrets(line, 'db/init-postgres.sh', 'shell');
+  assert.equal(sh(`psql -v app_password="${FAKE_PASSWORD}" <<-EOSQL\n`).length, 1);
+  assert.equal(sh(`AUTH_TOKEN="$API_USER:${FAKE_PASSWORD}"\n`).length, 1, 'one variable does not excuse the text around it');
+  // the same :'…' outside a SQL script is an ordinary key and value
+  assert.equal(secrets(`const cfg = { password :'${FAKE_PASSWORD.replace(/-/g, '_')}' };\n`, 'src/db.ts', 'typescript').length, 1);
+  assert.equal(findIssues(`    password: ${FAKE_PASSWORD}\n`, { path: 'ci/image.yml', category: 'config', lang: 'yaml' }).filter((x) => x.k === 'secret').length, 1);
+});
+
+test("the answers of a choice and the browser's autofill words are not passwords (#93)", () => {
+  const tsx = (line) => secrets(line, 'src/screens/LoginScreen.tsx', 'typescript');
+  assert.deepEqual(tsx(`<TextInput autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />\n`), []);
+  assert.deepEqual(tsx(`const autofill = { password: "current-password", code: "one-time-code" };\n`), []);
+  // a real key and value, and a password given as a choice's fallback, are still found
+  assert.equal(tsx(`const login = { password: '${FAKE_PASSWORD}' };\n`).length, 1);
+  assert.equal(tsx(`const password = isDev ? devPassword : '${FAKE_PASSWORD}';\n`).length, 1);
+});
+
+test('a made-up key with a run of the alphabet in it is a placeholder, even in a well-known format (#101)', () => {
+  const ALPHABET = String.fromCharCode(...Array.from({ length: 26 }, (_, i) => 97 + i));
+  const DIGITS = Array.from({ length: 10 }, (_, i) => i).join('');
+  const dummy = 'ghp_' + ALPHABET + DIGITS + 'AB';
+  assert.deepEqual(secrets(`const token = '${dummy}';\n`, 'src/review/reviewFindings.test.ts', 'typescript'), []);
+  assert.deepEqual(secrets(`token = "${'ghp_' + 'Q7fK2p' + DIGITS + 'Xv9LmR4tZ8wNc3Hy7Jk2'}"`), []);
+  // a random-looking token is still found, in a test file and out of it
+  assert.equal(secrets(`const token = '${FAKE_GITHUB_TOKEN}';\n`, 'src/review/reviewFindings.test.ts', 'typescript').length, 1);
+  assert.equal(secrets(`token = "${FAKE_GITHUB_TOKEN}"`).length, 1);
+});
+
 test("a path to one of the project's files under a password-ish key is not a password", () => {
   const php = (line) => secrets(line, 'web/page-paths.php', 'php');
   assert.deepEqual(php("    'confirm_password' => 'resources/js/pages/auth/confirm-password.tsx',\n"), []);
@@ -77,4 +123,17 @@ test('tokens that are public by design are not flagged (#23)', () => {
   assert.equal(secrets(`ACCESS_TOKEN = "${hex}"`).length, 1);
   // a Mapbox public token
   assert.deepEqual(secrets(`mapboxToken = "pk.${'eyJ1IjoiZXhhbXBsZSIsImEiOiJ'}${hex}.${hex.slice(0, 22)}"`, 'web/map.ts', 'typescript'), []);
+});
+
+test('publishable keys, made to be put in web pages, are not secrets; their secret partners are (#119)', () => {
+  const body = 'Q7fK2pX9vLm' + 'R4tZ8wNc3Hy';
+  const ts = (line, p = 'src/lib/logos.ts') => secrets(line, p, 'typescript');
+  for (const key of ['pk_' + body, 'pk_live_' + body + body, 'pk_test_' + body, 'sb_publishable_' + body, 'phc_' + body + body]) {
+    assert.deepEqual(ts(`const LOGO_API_KEY = '${key}';\nexport const logo = (d: string) => \`https://img.example.com/\${d}?token=\${LOGO_API_KEY}\`;\n`), [], key);
+    assert.deepEqual(ts(`export const config = { token: "${key}" };\n`, 'src/config.ts'), [], key);
+  }
+  assert.equal(ts(`const STRIPE_API_KEY = 'sk_live_${body}${body}';\n`, 'src/pay.ts').length, 1);
+  assert.equal(ts(`const LOGO_API_KEY = 'sk_${body}';\n`).length, 1);
+  // a password is chosen by a person, so starting with "pk_" excuses nothing
+  assert.equal(ts(`const DB_PASSWORD = 'pk_${body}';\n`, 'src/db.ts').length, 1);
 });

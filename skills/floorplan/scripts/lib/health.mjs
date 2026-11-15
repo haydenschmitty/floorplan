@@ -109,8 +109,12 @@ const ENCRYPTED_VALUE = /^encrypted:[A-Za-z0-9+/=_-]{20,}|^ENC\[[A-Z0-9_]+,data:
 export const protectedValue = (v, name = '') => ENCRYPTED_VALUE.test(v) || HASHED_VALUE.test(v) || HASHED_NAME.test(snake(name));
 
 // A variable handed along, not a value: "$DB_PASSWORD" in a shell script or a PHP string, %DB_PASSWORD% on
-// Windows, $env:DB_PASSWORD in PowerShell. The secret itself lives wherever that variable is set.
-const VARIABLE_VALUE = /^\$[A-Za-z_]\w*$|^%[A-Za-z_]\w*%$|^\$env:[A-Za-z_]\w*$/i;
+// Windows, $env:DB_PASSWORD in PowerShell, $(dbPassword) in a pipeline or Makefile, #{password} in Ruby, or a
+// few of them joined ("$DB_USER:$DB_PASSWORD"). The secret itself lives wherever that variable is set.
+const VARIABLE_REF = String.raw`(?:\$[A-Za-z_]\w*|\$\{[A-Za-z_][\w.:-]*\}|\$\([A-Za-z_][\w.]*\)|#\{[A-Za-z_][\w.]*\}|%[A-Za-z_]\w*%|\$env:[A-Za-z_]\w*)`;
+const VARIABLE_VALUE = new RegExp(`^${VARIABLE_REF}(?:[:@/._-]{1,3}${VARIABLE_REF})*$`, 'i');
+// The words browsers' autofill reads (autoComplete="new-password"), not a password
+const AUTOFILL_VALUE = /^(new-password|current-password|one-time-code)$/i;
 // A path to one of the project's own files kept under a password-ish key, such as a map from page names to
 // page files: 'confirm_password' => 'resources/js/pages/auth/confirm-password.tsx'
 const FILE_PATH_VALUE = /^[\w@.-]+(?:\/[\w@.-]+)+\.(?:[cm]?[jt]sx?|vue|svelte|astro|php|py|rb|go|rs|java|kts?|swift|dart|html?|css|scss|less|md|txt|json|ya?ml|png|jpe?g|gif|svg|webp|ico)$/i;
@@ -129,7 +133,7 @@ export function isUlid(v) {
 function valueLooksReal(v, name) {
   if (/\s/.test(v) || PLACEHOLDER.test(v)) return false;
   if (protectedValue(v, name)) return false;
-  if (VARIABLE_VALUE.test(v) || FILE_PATH_VALUE.test(v)) return false;
+  if (VARIABLE_VALUE.test(v) || FILE_PATH_VALUE.test(v) || AUTOFILL_VALUE.test(v)) return false;
   // a record id under a plain "…token" name (routeToken: '01J…'); access, auth, secret… tokens still count
   if (/token$/i.test(name) && !NOT_SITE_TOKEN.test(name) && isUlid(v)) return false;
   if (/^(none|null|nil|undefined|true|false|string|number|text|required|optional|bearer|basic|secret|token|password|test|dev|development|local|admin)$/i.test(v)) return false;
@@ -146,9 +150,28 @@ function valueLooksReal(v, name) {
 }
 
 // Tokens that are public by design, because the browser has to send them: Cloudflare Web Analytics'
-// beacon (data-cf-beacon='{"token":"…"}') and Mapbox public tokens (pk.…)
+// beacon (data-cf-beacon='{"token":"…"}'), Mapbox public tokens (pk.…), and publishable keys, which services
+// issue to be put in web pages: pk_… (Stripe, Clerk and others), Supabase's sb_publishable_…,
+// PostHog's project key (phc_…) and Flutterwave's public key (FLWPUBK-…). Their secret partners (sk_…,
+// sb_secret_…) are still found. A password is chosen by a person, so a "pk_" at its start excuses nothing.
 const PUBLIC_TOKEN_LINE = /data-cf-beacon|cloudflareinsights\.com/i;
-const PUBLIC_TOKEN_VALUE = /^pk\.[\w-]{20,}\.[\w-]{10,}$/;
+const PUBLIC_TOKEN_VALUE = /^pk\.[\w-]{20,}\.[\w-]{10,}$|^pk_(?:live_|test_)?[A-Za-z0-9_-]{10,}$|^sb_publishable_[A-Za-z0-9_-]{10,}$|^phc_[A-Za-z0-9]{20,}$|^FLWPUBK(?:_TEST)?-[A-Za-z0-9-]{20,}$/;
+const publicByDesign = (value, name) => PUBLIC_TOKEN_VALUE.test(value) && !PASSWORD_NAME.test(name);
+
+// A made-up value with a long run of the alphabet or the digits in it (…abcdefghij…, …0123456789…): a real key
+// is random, and six in a row (up or down) turns up by chance in fewer than one in ten million keys.
+const charClass = (c) => (c >= 48 && c <= 57 ? 1 : c >= 65 && c <= 90 ? 2 : c >= 97 && c <= 122 ? 3 : 0);
+function hasSequence(v, min = 6) {
+  let run = 1, dir = 0;
+  for (let i = 1; i < v.length; i++) {
+    const a = v.charCodeAt(i - 1), b = v.charCodeAt(i);
+    const step = Math.abs(b - a) === 1 && charClass(a) && charClass(a) === charClass(b) ? b - a : 0;
+    if (step && step === dir) run++;
+    else { dir = step; run = step ? 2 : 1; }
+    if (run >= min) return true;
+  }
+  return false;
+}
 // A site token handed to a browser tracker's script: the script reads it from the page, so every visitor has it.
 // Names that say more than "token" (access, auth, secret…) and real key formats are never excused this way.
 const SCRIPT_TAG = /<script\b|createElement\(\s*['"]script['"]\s*\)/i;
@@ -179,6 +202,19 @@ const encryptedKeyAt = (src, idx) => /^[^\n]*\n(?:[^\n]*\n)?\s*Proc-Type:\s*4,\s
 /** A key file's head holds a private key that isn't passphrase-protected. */
 const plainKeyIn = (head) => [...head.matchAll(/-----BEGIN ([A-Z ]*)PRIVATE KEY(?: BLOCK)?-----/g)].some((m) => !/ENCRYPTED/.test(m[1]) && !encryptedKeyAt(head, m.index));
 
+/**
+ * A name = "value" match that isn't one: the two answers of a choice (mode === 'signup' ? 'new-password' :
+ * 'current-password'), where the first answer only looks like a name, or a psql variable the script fills in
+ * from outside (PASSWORD :'app_password').
+ */
+function notAnAssignment(m, text, sqlish) {
+  const [whole, q, name, , value] = m;
+  const op = /^\s*(:=|=>|=|:)/.exec(whole.slice(q.length * 2 + name.length))?.[1];
+  if (op !== ':') return false;
+  if (q && /\?\s*$/.test(text.slice(0, m.index))) return true;
+  return sqlish && !q && /^password$/i.test(name) && /^[A-Za-z_]\w*$/.test(value) && /^\s+:["']/.test(whole.slice(name.length));
+}
+
 function findSecrets(src, f, out) {
   const at = lineIndex(src);
   const isTest = TEST_FILE.test(f.path) || EXAMPLE_FILE.test(f.path);
@@ -190,7 +226,7 @@ function findSecrets(src, f, out) {
     for (const m of src.matchAll(fm.re)) {
       const v = m[0];
       if (isTest && (!fm.live || fm.whole)) continue;
-      if (!fm.whole && (/EXAMPLE|xxxx|XXXX|0{10,}/.test(v) || entropy(v) < 3)) continue;
+      if (!fm.whole && (/EXAMPLE|xxxx|XXXX|0{10,}/.test(v) || entropy(v) < 3 || hasSequence(v))) continue;
       if (fm.whole && encryptedKeyAt(src, m.index)) continue;
       add(at(m.index), { what: fm.what, svc: fm.svc, sev: fm.sev || 'high', hint: fm.whole ? 'private key block' : mask(v) });
     }
@@ -217,13 +253,14 @@ function findSecrets(src, f, out) {
   const throwawayDb = /(^|\/)\.github\/|(^|\/)(docker-)?compose[\w.-]*\.ya?ml$/i.test(f.path);
   const quoted = /(["']?)([A-Za-z_][\w.-]*)\1\s*(?::=|=>|=|:)\s*(?:[rbuRBU]{1,2})?(["'`])([^"'`\n]{6,200})\3/g;
   const unquoted = /^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*[:=]\s*([^\s#'"]{6,200})\s*(?:#.*)?$/;
+  const sqlish = ['shell', 'sql'].includes(f.lang) || /\.(sh|bash|sql|psql)$/i.test(f.path);
   lines.forEach((text, i) => {
     if (text.length > 400 || ENV_LOOKUP.test(text) || PUBLIC_TOKEN_LINE.test(text) || inDoc.has(i + 1) || /^\s*(#|\/\/|\*|\/\*|<!--)/.test(text)) return;
-    const pairs = [...text.matchAll(quoted)].map((m) => [m[2], m[4]]);
+    const pairs = [...text.matchAll(quoted)].filter((m) => !notAnAssignment(m, text, sqlish)).map((m) => [m[2], m[4]]);
     if (!pairs.length && (f.category === 'config' && CONFIG_LANGS.has(f.lang))) { const u = unquoted.exec(text); if (u) pairs.push([u[1], u[2]]); }
     for (const [name, value] of pairs) {
       const n = snake(name.split('.').pop());
-      if (!SECRET_NAME.test(n) || PUBLIC_NAME.test(n) || PUBLIC_TOKEN_VALUE.test(value) || !valueLooksReal(value, n)) continue;
+      if (!SECRET_NAME.test(n) || PUBLIC_NAME.test(n) || publicByDesign(value, n) || !valueLooksReal(value, n)) continue;
       if (trackerToken(name.split('.').pop(), value, src, f.path)) continue;
       if (throwawayDb && /^(postgres|mysql|mariadb|mongo(_initdb_root)?|redis|pg|rabbitmq_default|db|database)_(root_)?(password|pass|pwd)$/.test(n)) continue;
       add(i + 1, { what: kindFromName(name), name: name.split('.').pop(), sev: 'high', hint: mask(value, PASSWORD_NAME.test(n)), generic: true });

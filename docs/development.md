@@ -82,7 +82,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 |---|---|
 | `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework |
 | `helpers-lib.test.mjs` | globs, file types, command-line flags, fallback names |
-| `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
+| `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders: variables a script or pipeline fills in, file paths, record ids, autofill words, made-up keys and publishable keys, each with a real secret it must still find |
 | `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI and Express samples in `fixtures/`) |
 | `public-by-design.test.mjs` | what Health leaves alone because it's public on purpose (feeds, addresses a project publishes, cached responses, routes with nothing private, Payload CMS, tracker tokens, files a tool opens), each with a near miss it must still report |
 | `stack-health.test.mjs` | Health's checks for Supabase row-level security, Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |

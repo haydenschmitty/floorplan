@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-- **Fewer false "secret key" alarms in Health:** a variable handed along (`MYSQL_PWD="$DB_PASSWORD"` in a shell script, `"$password"` in PHP, `%DB_PASSWORD%` on Windows), a path to one of the project's own files under a password-ish key (`'confirm_password' => 'resources/js/pages/auth/confirm-password.tsx'`), and a ULID record id under a plain `…Token` name are no longer reported as secrets written into the code. Access, auth and secret tokens are still checked whatever their value looks like. Fixed by @Basel-Alsemsam.
+- **Fewer false "secret key" alarms in Health:** a variable handed along (`MYSQL_PWD="$DB_PASSWORD"` in a shell script, `"$password"` in PHP, `%DB_PASSWORD%` on Windows), a path to one of the project's own files under a password-ish key (`'confirm_password' => 'resources/js/pages/auth/confirm-password.tsx'`), and a ULID record id under a plain `…Token` name are no longer reported as secrets written into the code. Access, auth and secret tokens are still checked whatever their value looks like. Fixed by @Basel-Alsemsam in #104, which also fixes #116 (reported by @BechtelCanDoIt).
+- **More values that only look like secrets are left alone:**
+  - variables in more spellings: `$(dbPassword)` in Azure Pipelines and Makefiles, `#{password}` in Ruby, a few joined together (`"$DB_USER:$DB_PASSWORD"`), and psql variables in database set-up scripts (`-v app_password="$APP_PASSWORD"`, then `PASSWORD :'app_password'`). Prompted by reports from @jeanlima17-cmd in #110 and @auroraferraz in #107 and #108;
+  - publishable keys, which services make to be put in web pages: `pk_…` (Stripe, Clerk and others), Supabase's `sb_publishable_…` and PostHog's `phc_…`. A `sk_…` key is still flagged, and so is a password that happens to start with `pk_`. Reported by @notrdd in #119;
+  - the two answers of a choice, like `mode === 'signup' ? 'new-password' : 'current-password'`, and the browser's autofill words (`new-password`, `one-time-code`). Reported by @adlewis82 in #93;
+  - made-up keys with a run of the alphabet or the digits in them (`ghp_abcdefghij…0123456789…`), even in a well-known format. A random-looking key is still flagged, in test files too. Reported by @lexerio-seth in #101.
 
 ## 0.8.0 (2026-11-12)
 
