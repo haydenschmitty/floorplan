@@ -76,7 +76,7 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | `screens` | how many screens were found |
 | `recentWork` | `cards` and `tasks` highlighted, and whether `recent-work.json` exists |
 | `agent`, `audience`, `blueprint`, `unattended`, `check` | how it was built |
-| `notes` | `claudeLocalMd`: what happened to `CLAUDE.local.md`, if anything (never anything in unattended mode); `git`: a warning when git already tracks files in `floorplan/` |
+| `notes` | `claudeLocalMd`: what happened to `CLAUDE.local.md`, if anything (never anything in unattended mode); `cursorRule`: the same for `.cursor/rules/floorplan.mdc` (null unless the map was built in Cursor, and still null in unattended mode); `git`: a warning when git already tracks files in `floorplan/` |
 | `wrote[]` | the files written in the map folder; empty when there were errors or with `--check` |
 | `report` | the build's report |
 

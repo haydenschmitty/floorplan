@@ -37,22 +37,30 @@ const stripBlock = (text) => {
   return [text.slice(0, a).trimEnd(), text.slice(b + END.length).trimStart()].filter(Boolean).join('\n\n').replace(/\r\n/g, '\n');
 };
 
-/** Adds CLAUDE.local.md to the enclosing repo's .git/info/exclude unless git already ignores it. */
-function excludeLocally(root) {
+/**
+ * Adds a path (relative to root, forward slashes) to the enclosing repo's .git/info/exclude unless git
+ * already ignores it. The project's tracked files are never edited.
+ */
+export function ignoreUncommitted(root, name, comment) {
   if (git(root, ['rev-parse', '--is-inside-work-tree']) !== 'true') return 'not in a git repo';
-  if (git(root, ['ls-files', '--', NAME])) return `${NAME} is committed in this repo; the Floorplan section will show up in it`;
-  if (git(root, ['check-ignore', '-q', NAME]) !== null) return 'already ignored';
+  if (git(root, ['ls-files', '--', name])) return `${name} is committed in this repo; the Floorplan section will show up in it`;
+  if (git(root, ['check-ignore', '-q', '--', name]) !== null) return 'already ignored';
   const prefix = git(root, ['rev-parse', '--show-prefix']) || '';
   const excl = git(root, ['rev-parse', '--git-path', 'info/exclude']);
   if (!excl) return 'could not find .git/info/exclude';
   const file = path.resolve(root, excl);
-  const line = '/' + prefix + NAME;
+  const line = '/' + prefix + name;
   const cur = read(file) || '';
   if (!cur.split(/\r?\n/).includes(line)) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, cur.replace(/\s*$/, cur.trim() ? '\n' : '') + `# personal Claude Code notes (added by Floorplan)\n${line}\n`);
+    fs.writeFileSync(file, cur.replace(/\s*$/, cur.trim() ? '\n' : '') + `# ${comment}\n${line}\n`);
   }
   return 'ignored locally via .git/info/exclude';
+}
+
+/** Adds CLAUDE.local.md to the enclosing repo's .git/info/exclude unless git already ignores it. */
+function excludeLocally(root) {
+  return ignoreUncommitted(root, NAME, 'personal Claude Code notes (added by Floorplan)');
 }
 
 /** Refreshes the block, or adds it when `add` (the user asked for it); moves it out of a committed CLAUDE.md written by older versions. */

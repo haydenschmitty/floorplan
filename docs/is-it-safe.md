@@ -8,7 +8,7 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **No MCP servers.** Floorplan has none, so it never starts a server that downloads its newest version with `npx`.
 - **No dependencies, no install scripts.** Nothing comes from npm, at install time or ever. Its `package.json` exists only to run the tests.
 - **Never downloads anything, and never runs code from the internet.** No `eval`, no loading code at run time, no encoded payloads.
-- **Never changes your code.** It writes only its own `floorplan/` folder and, in Claude Code and only if you say yes, a marked section of `CLAUDE.local.md`. See [What's in your project](project-files.md).
+- **Never changes your code.** It writes only its own `floorplan/` folder and, only if you say yes, a marked section of `CLAUDE.local.md` (Claude Code) or `.cursor/rules/floorplan.mdc` (Cursor). See [What's in your project](project-files.md).
 - **No analytics or tracking.**
 
 ## Everything it does
@@ -37,7 +37,7 @@ Each is started directly with its arguments, never as a command line for a shell
 
 ### What runs without asking
 
-In Claude Code, while the skill is in use, it pre-approves one kind of command: `node` running one of its own scripts, each named exactly (`scripts/build.mjs`, `describe.mjs`, `open.mjs`, `plan.mjs`, `recent.mjs`, `refresh.mjs`, `scan.mjs` and `status.mjs`). That list is fixed by the tests below. Anything else Claude does asks according to your permission settings, as usual. Codex asks according to your approval settings.
+In Claude Code, while the skill is in use, it pre-approves one kind of command: `node` running one of its own scripts, each named exactly (`scripts/build.mjs`, `describe.mjs`, `open.mjs`, `plan.mjs`, `recent.mjs`, `refresh.mjs`, `scan.mjs` and `status.mjs`). That list is fixed by the tests below. Anything else Claude does asks according to your permission settings, as usual. Codex and Cursor ask according to your approval settings. Cursor does not use that pre-approved list; the scripts it runs are the same ones.
 
 ### The workflow file
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Cursor:** Floorplan runs as a Cursor skill. The scripts recognise a Cursor agent session, the map's Ask bar asks you to use the Cursor chat when neither the Claude Code CLI nor Codex is installed, and a personal rule at `.cursor/rules/floorplan.mdc` is written only if you say yes. Claude Code and Codex behave as before. See [Floorplan in Cursor](docs/cursor.md).
+
 ## 0.9.0 (2026-11-14)
 
 - **Flask login checks are recognised:** routes protected by `@login_required`, `@login_required_json` or `@logged_in_required` were reported as open, because names starting with "log" were taken for logging decorators. Logging decorators such as `@log_call` still do not count as login checks, and a login decorator placed above the route remains a warning. Reported by @SmmSrg in #123, fixed by @daniyyell-dev in #125.

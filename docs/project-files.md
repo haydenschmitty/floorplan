@@ -1,6 +1,6 @@
 # What's in your project
 
-Floorplan writes to exactly two places in your project: the `floorplan/` folder, and (in Claude Code, only if you say yes) a short section in `CLAUDE.local.md`. Neither is committed to git, and nothing else in your project is touched. Run in [unattended mode](unattended.md) (from CI or your own scripts), it writes only the `floorplan/` folder.
+Floorplan writes to the `floorplan/` folder, and, only if you say yes, one personal note: a marked section of `CLAUDE.local.md` in Claude Code, or `.cursor/rules/floorplan.mdc` in Cursor. Neither is committed to git, and nothing else in your project is touched. Codex writes only the `floorplan/` folder. Run in [unattended mode](unattended.md) (from CI or your own scripts), it writes only the `floorplan/` folder.
 
 ## The `floorplan/` folder
 
@@ -50,10 +50,22 @@ A blueprint adds no section, since there's no code to look up yet. Claude offers
 
 In Codex this file isn't touched. Codex has no personal, uncommitted notes file (`AGENTS.md` is shared with your team), so Floorplan doesn't add a note there.
 
+## `.cursor/rules/floorplan.mdc`
+
+In Cursor, after the first map, Cursor asks whether later chats in your project should use it. Only if you say yes, Floorplan adds this one rule, telling later Cursor chats that the map exists and how to look things up in it. Floorplan:
+
+- creates the file if you don't have one;
+- only ever rewrites its own section, between `<!-- floorplan:start -->` and `<!-- floorplan:end -->`, and keeps it current on each update;
+- adds the file to your clone's private ignore list, `.git/info/exclude`.
+
+To remove it, delete the file. To keep it from coming back, put `<!-- floorplan:off -->` anywhere in it. Floorplan does not write `AGENTS.md`.
+
+A blueprint adds no rule, since there's no code to look up yet.
+
 ## Staying out of git
 
 - **`floorplan/`** contains its own `.gitignore` that ignores everything in the folder, including itself. Your `.gitignore` isn't changed, and the folder never appears in `git status`.
-- **`CLAUDE.local.md`** is listed in `.git/info/exclude`, the per-clone ignore list that is never committed. If your project already ignores it, nothing is added.
+- **`CLAUDE.local.md`** and **`.cursor/rules/floorplan.mdc`** are listed in `.git/info/exclude`, the per-clone ignore list that is never committed. If your project already ignores them, nothing is added.
 
 The map is personal to each clone. Teammates who install Floorplan make their own.
 

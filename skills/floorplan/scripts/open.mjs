@@ -95,8 +95,11 @@ console.log(`FLOORPLAN  ${s.url}  (${shown})`);
 const CLI = {
   claude: { name: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code' },
   codex: { name: 'Codex', docs: 'https://developers.openai.com/codex' },
+  cursor: { name: 'Cursor', docs: 'https://cursor.com/docs' },
 };
 console.log(health?.cli
   ? `ASK  works: questions run through ${CLI[health.engine]?.name || 'the Claude Code CLI'}${health.version ? ' (' + health.version + ')' : ''}`
-  : `ASK  needs ${(CLI[health?.want] || CLI.claude).name}, which was not found; the map itself works (${(CLI[health?.want] || CLI.claude).docs})`);
+  : health?.want === 'cursor'
+    ? `ASK  off on the map: ask the Cursor agent in this project. The bar answers if the Claude Code CLI or Codex is installed (${CLI.claude.docs})`
+    : `ASK  needs ${(CLI[health?.want] || CLI.claude).name}, which was not found; the map itself works (${(CLI[health?.want] || CLI.claude).docs})`);
 console.log(`SERVER  runs in the background, updates open tabs when the map is rebuilt, and stops ${IDLE_MINUTES / 60} hours after the last tab closes. Stop it now: node ${rel}/serve.mjs --stop`);

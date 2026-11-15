@@ -2,7 +2,7 @@
 
 Prefer to watch? The [walkthrough video](https://youtu.be/NTUUzC7L_NQ) covers installing Floorplan and touring a finished map.
 
-Floorplan works in **Claude Code** and in **Codex**. Making and using a map is the same in both; only installing differs. This guide shows Claude Code, and [Floorplan in Codex](codex.md) has the Codex steps.
+Floorplan works in **Claude Code**, in **Codex**, and in **Cursor**. Making a map is the same in each; only installing, and where questions are asked, differ. This guide shows Claude Code. [Floorplan in Codex](codex.md) and [Floorplan in Cursor](cursor.md) have the other steps.
 
 ## What you need
 

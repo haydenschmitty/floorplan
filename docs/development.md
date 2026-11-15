@@ -10,10 +10,12 @@
 .codex-plugin/
   plugin.json          the same plugin for Codex (same skill, same version)
   icon.png
+.cursor-plugin/
+  plugin.json          the same skill, listed for Cursor
 .agents/plugins/
   marketplace.json     this repo as a Codex marketplace
 skills/floorplan/
-  SKILL.md             the workflow Claude and Codex follow
+  SKILL.md             the workflow Claude, Codex and Cursor follow
   agents/openai.yaml   how Codex lists the skill
   workflow.json        the same steps as SKILL.md, as data, for running without an agent session
   references/          formats and style guides Claude reads while working
@@ -58,7 +60,7 @@ claude plugin install floorplan@floorplan
 
 A plugin installed from a local folder runs straight from it, so edits apply in the next session with no update step.
 
-To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
+To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. To try it in Cursor, copy `skills/floorplan` to `.cursor/skills/floorplan/` and start a new chat ([Floorplan in Cursor](cursor.md)). `--agent claude|codex|cursor|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try a map from anywhere.
 
 The scripts also run on their own, which is the fastest way to work on them:
 
@@ -112,7 +114,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
-| `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
+| `agents.test.mjs` | telling Claude Code, Cursor and Codex apart, and what a map built by each records and writes |
 | `unattended.test.mjs` | running without an agent session: a small driver follows `workflow.json` through a first map and a refresh with canned answers, using only `--json` and exit codes; the optional plain-language step (reworded, left alone, rejected for changing more than wording, or failed, with the map completing every time); nothing written outside `floorplan/`, a map that names no agent, git failures that fail loudly, the workflow file's names and schemas, `maskSecrets` as a stable export, and no change without unattended mode |
 | `read-only-install.test.mjs` | a skill whose files are read-only builds a map twice, and the files it puts next to the map stay writable, including over read-only ones an earlier version left (skips itself where read-only doesn't stop the user writing) |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
@@ -140,8 +142,8 @@ Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order
 ## Adding an agent
 
 There are two lists, and an agent can be on one or both:
-- **The agent that built the map**, in `scripts/lib/agent.mjs`: an entry in `DETECT` that recognises it from the variables it sets for every command it runs. The map records it, so its prompts name the right agent.
-- **The agent that answers questions**, in `assets/serve.mjs`: an entry in `ENGINES` with its name, where to get it, `find` (where its CLI lives, plus a `--<name> <path>` override) and `run` (the arguments and how to read its output into progress and an answer).
+- **The agent that built the map**, in `scripts/lib/agent.mjs`: an entry in `DETECT` that recognises it from the variables it sets for every command it runs. The map records it, so its prompts name the right agent. Cursor is recognised from `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`.
+- **The agent that answers questions**, in `assets/serve.mjs`: an entry in `ENGINES` with its name, where to get it, `find` (where its CLI lives, plus a `--<name> <path>` override) and `run` (the arguments and how to read its output into progress and an answer). Cursor is not an engine: its CLI is not held read-only the way `claude -p` and `codex exec --sandbox read-only` are, so a map made in Cursor tells you to ask in the Cursor chat, and uses Claude Code or Codex only when one of those is installed.
 
 An engine must be read-only in a way its CLI enforces, not only because the prompt asks; if it can't be, say so plainly in the docs. Set `structured: true` only when the CLI holds answers to the schema, because changing a blueprint from the map relies on it; without it, the map doesn't offer Change. Never take the command to run from the page or from saved settings. Add a stand-in CLI to `tests/fixtures/fake-cli/` and tests like `ask.test.mjs`.
 

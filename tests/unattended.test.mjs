@@ -491,9 +491,10 @@ test('unattended mode leaves a map from before the rename (show-code/) where it 
 // ---------- a map that names no agent ----------
 /** The viewer's agent labels, as the built page works them out (run against a pretend window). */
 function agentLabels(html, { server, agent }) {
-  const code = /const AGENT_ID = [\s\S]*?signIn: 'Run <code>claude<\/code>[^\n]*\n/.exec(html)?.[0];
-  assert.ok(code, 'the page works out its agent labels in one place (const AGENT_ID … const AGENT)');
-  return vm.runInNewContext(code + '\nAGENT', { window: { FLOORPLAN_SERVER: server }, G: { meta: { agent } } });
+  const start = html.indexOf('const AGENT_ID = ');
+  const end = html.indexOf('const Cap = (t)', start);
+  assert.ok(start > 0 && end > start, 'the page works out its agent labels in one place (const AGENT_ID … const AGENT)');
+  return vm.runInNewContext(html.slice(start, end) + '\nAGENT', { window: { FLOORPLAN_SERVER: server }, G: { meta: { agent } } });
 }
 
 test('a map made in unattended mode records agent "none", and its page names no agent', () => {
@@ -515,6 +516,8 @@ test('a map made in unattended mode records agent "none", and its page names no 
     // and maps made by Claude Code or Codex are labelled as before
     assert.equal(agentLabels(html, { agent: 'claude' }).name, 'Claude');
     assert.equal(agentLabels(html, { agent: 'codex' }).name, 'Codex');
+    assert.equal(agentLabels(html, { agent: 'cursor' }).name, 'Cursor');
+    assert.equal(agentLabels(html, { agent: 'cursor' }).app, 'Cursor');
   } finally { cleanup(p); }
 });
 
