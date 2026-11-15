@@ -91,11 +91,35 @@ test('Express: a check before a named handler counts, and each route is judged o
 
 test('Flask: login decorators count, while logging and misplaced decorators do not (#123)', () => {
   const graph = buildFixture('flask-login');
-  assert.equal(graph.routes.length, 6);
+  // login_required, login_required_json and logged_in_required count; log_call, logging_required and
+  // logged_request are logging, and a check above the route line does nothing
+  assert.equal(graph.routes.length, 7);
   assert.deepEqual(openEndpoints(graph), [
     'POST /actions/log-call',
     'POST /actions/logged',
     'POST /actions/logging',
     'POST /actions/misplaced',
+  ]);
+});
+
+test('FastAPI: dependencies are judged by what they check, not only by their name (#112, #117, #102)', () => {
+  const graph = buildFixture('fastapi-dependency-checks');
+  assert.equal(graph.routes.length, 20, `expected the sample's 20 endpoints, found ${graph.routes.length}`);
+  // checks: validate_api_key and validate_jwt (#112); a guard factory's result, a neutral-named factory's
+  // result, a class whose __call__ raises 403 and a neutral name that raises 401 (#117 A, B); a factory's
+  // result on the whole router (#117 C); a list kept in a constant (#117 D); a Depends() kept in a
+  // variable, listed or as a parameter default (#102).
+  // Still open: a schema validator (Depends(validate_payload), @validate), a page number, a lookup that
+  // answers 404 and a factory that checks nothing, however they are passed.
+  assert.deepEqual(openEndpoints(graph), [
+    'PATCH /tickets/{ticket_id}',
+    'POST /catalog',
+    'POST /drafts',
+    'POST /notes/paged',
+    'POST /notes/paged-default',
+    'POST /orders/{order_id}/copy',
+    'POST /orders/{order_id}/export',
+    'POST /orders/{order_id}/notes',
+    'PUT /tickets/{ticket_id}',
   ]);
 });

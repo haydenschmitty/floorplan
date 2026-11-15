@@ -1,6 +1,6 @@
 from flask import Blueprint
 from flask_login import login_required
-from checks import login_required_json
+from checks import logged_in_required, login_required_json
 from logging_helpers import log_call, logging_required, logged_request
 
 bp = Blueprint("items", __name__)
@@ -16,6 +16,12 @@ def delete_item(item_id):
 @login_required_json
 def list_items():
     return []
+
+
+@bp.route("/items/<int:item_id>/archive", methods=["POST"])
+@logged_in_required
+def archive_item(item_id):
+    return "archived"
 
 
 @bp.route("/actions/log-call", methods=["POST"])

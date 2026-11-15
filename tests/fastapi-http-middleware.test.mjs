@@ -93,3 +93,26 @@ test('FastAPI: an HTTP middleware that never turns anyone away protects nothing 
       `    return response`],
   ]) assert.deepEqual(openEndpoints(mapWith(middleware.join('\n'))), ALL_OPEN, middleware[1]);
 });
+
+test('FastAPI: an HTTP middleware protects the Python app, not a JavaScript server beside it', () => {
+  const root = makeProject({
+    'app/__init__.py': '',
+    'app/main.py': [...HEAD,
+      `@app.middleware("http")`, `async def require_login(request: Request, call_next):`,
+      `    if not request.cookies.get("session"):`,
+      `        return JSONResponse({"error": "unauthorized"}, status_code=401)`,
+      `    return await call_next(request)`, ``].join('\n'),
+    'app/routes.py': [`from fastapi import APIRouter`, `router = APIRouter()`, ``,
+      `@router.delete("/devices/{device_id}")`, `async def delete_device(device_id: str):`, `    return {"deleted": device_id}`, ``].join('\n'),
+    'worker/server.js': [`const express = require('express');`, `const app = express();`,
+      `app.post('/jobs', (req, res) => { res.json({ queued: true }); });`, `app.listen(3001);`, ``].join('\n'),
+  }, { repos: ['.'], arch });
+  try {
+    scanAndBuild(root);
+    const graph = readGraph(root);
+    assert.ok(graph.routes.some((r) => r.p === '/jobs'), 'expected the Express endpoint');
+    assert.deepEqual(openEndpoints(graph), ['POST /jobs']);
+  } finally {
+    cleanup(root);
+  }
+});

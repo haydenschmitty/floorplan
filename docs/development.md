@@ -83,7 +83,8 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework |
 | `helpers-lib.test.mjs` | globs, file types, command-line flags, fallback names |
 | `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
-| `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI and Express samples in `fixtures/`) |
+| `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI, Flask and Express samples in `fixtures/`): sign-in checks recognised by name, and FastAPI dependencies by what their code does (a factory's result, a `Depends()` kept in a variable, a list kept in a constant, a function that raises a 401), with look-alikes that must stay open (logging decorators, schema validators, dependencies that check nothing) |
+| `fastapi-http-middleware.test.mjs` | a FastAPI `@app.middleware("http")` that turns callers away protects every route of that app, and one that only adds headers, logs or times requests protects nothing |
 | `public-by-design.test.mjs` | what Health leaves alone because it's public on purpose (feeds, addresses a project publishes, cached responses, routes with nothing private, Payload CMS, tracker tokens, files a tool opens), each with a near miss it must still report |
 | `stack-health.test.mjs` | Health's checks for Supabase row-level security, Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
 | `django.test.mjs` | Django: an app's `urls.py` included under a prefix, and the website's requests matched to it |
