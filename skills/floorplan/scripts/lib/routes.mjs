@@ -12,6 +12,17 @@ const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|\.(test|s
 const DOTNET_TEST_FILE = /(^|\/)[\w-]+(?:\.[\w-]+)*\.\w*Tests?\/(?:[^/]+\/)*[^/]+\.cs$/;
 const isTestFile = (p) => TEST_FILE.test(p) || DOTNET_TEST_FILE.test(p);
 
+/** offset → 1-based line number in src, from one pass over it. */
+const lineIndex = (src) => {
+  const starts = [0];
+  for (let i = 0; i < src.length; i++) if (src.charCodeAt(i) === 10) starts.push(i + 1);
+  return (offset) => {
+    let lo = 0, hi = starts.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= offset) lo = mid; else hi = mid - 1; }
+    return lo + 1;
+  };
+};
+
 const joinPath =(...parts) => '/' + parts.map((p) => (p || '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
 
 /**
@@ -119,7 +130,7 @@ export function resolveRoutes(files) {
     }
     if (!t) continue;
     if (!mountsTo.has(t.file)) mountsTo.set(t.file, []);
-    mountsTo.get(t.file).push({ from: f.path, on: mount.on, v: t.v, prefix: mount.prefix, line: mount.line, mw: mount.mw || [] });
+    mountsTo.get(t.file).push({ from: f.path, on: mount.on, v: t.v, prefix: mount.prefix, line: mount.line, mw: mount.mw || [], as: mount.as || '' });
   }
   // routers mounted inside another router of the same file: a mount of the whole file ('*') reaches them
   // through that router, not directly (api.route('/frentes', frentes) under app.route('/api', api))
@@ -128,6 +139,26 @@ export function resolveRoutes(files) {
   const mountsOf = (file, v) => (mountsTo.get(file) || []).filter((m) => v == null || m.v === v || (m.v === '*' && !nested.has(`${file}|${v}`)));
   // the router a mount is registered on: the receiver in its own file (same file: compose), or any in a Python file
   const parentOf = (m, file) => (m.from === file ? (m.on ? [file, m.on] : null) : [m.from, m.on ?? null]);
+  // Laravel route-name prefixes, composed the same way: ->name('admin.') on the group that loads admin.php
+  const outerNames = (file, seen = new Set()) => {
+    const m = (mountsTo.get(file) || [])[0];
+    if (!m || seen.has(file) || m.from === file) return m?.as || '';
+    return outerNames(m.from, new Set(seen).add(file)) + m.as;
+  };
+  // a Laravel route is answered by a controller method: its endpoint sits in that controller's file
+  const classFile = new Map();
+  for (const f of files) if (f.lang === 'php') for (const c of f.classes || []) if (!classFile.has(c.toLowerCase())) classFile.set(c.toLowerCase(), f);
+  // a controller's methods by name (exact, then any case), looked up once per route
+  const methodsOf = new Map();
+  const methodIn = (ctrl, fn) => {
+    if (!methodsOf.has(ctrl.path)) {
+      const exact = new Map(), loose = new Map();
+      for (const m of ctrl.methods || []) { if (!exact.has(m.name)) exact.set(m.name, m); if (!loose.has(m.name.toLowerCase())) loose.set(m.name.toLowerCase(), m); }
+      methodsOf.set(ctrl.path, { exact, loose });
+    }
+    const { exact, loose } = methodsOf.get(ctrl.path);
+    return exact.get(fn) || loose.get(String(fn).toLowerCase()) || null;
+  };
   // Every prefix a file's routes live under, composing nested mounts (a router mounted into a router
   // that is itself mounted), e.g. app.use('/api', api) + api.use('/users', users) → /api/users.
   // Each file's answer is remembered (files mounted twice into each other would otherwise be walked once per
@@ -208,6 +239,21 @@ export function resolveRoutes(files) {
         if (r.method === 'ANY' && wrapsApp(f.path, r.path)) continue;
         // served at its own name, whatever the file's routers are mounted under
         for (const name of exportedAs.get(`${f.path}|${r.handler}`) || [r.handler]) routes.push({ file: f.path, method: r.method, path: '/' + name, line: r.line, handler: name, framework: 'firebase', ...(r.doc ? { doc: r.doc } : {}) });
+        continue;
+      }
+      if (r.framework === 'laravel') {
+        const ctrl = r.action && classFile.get(r.action.cls.toLowerCase());
+        const fn = r.action?.fn;
+        const meth = ctrl && methodIn(ctrl, fn);
+        const mw = mountMw(f.path, null);
+        const names = r.routeName ? outerNames(f.path) : '';
+        for (const mp of outerPrefixes(f.path, null)) routes.push({
+          file: ctrl ? ctrl.path : f.path, method: r.method, path: joinPath(mp, r.path),
+          line: ctrl ? meth?.line || (ctrl.symbols || []).find((s) => s.kind === 'class')?.line || 1 : r.line,
+          ...(ctrl ? { handler: fn, defFile: f.path, defLine: r.line } : {}), ...(meth?.doc ? { doc: meth.doc } : {}),
+          framework: 'laravel', ...(r.routeName ? { routeName: names + r.routeName } : {}), ...(r.action ? { action: r.action } : {}),
+          ...(r.mw?.length ? { mw: r.mw } : {}), ...(mw.length ? { mountMw: mw } : {}), ...(r.page ? { page: r.page } : {}), ...(r.quiet ? { quiet: true } : {}),
+        });
         continue;
       }
       const defPrefix = (r.var && f.routers?.[r.var]) || '';
@@ -428,4 +474,110 @@ function clientScope(files) {
     }
     return memo.get(key);
   };
+}
+
+// ---------- Laravel: Wayfinder calls and Inertia pages ----------
+
+// what Wayfinder hangs off each route function: show.url(), show.form.patch(), store.definition
+const WAYFINDER_HELPERS = new Set(['url', 'form', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'definition', 'withQuery']);
+const JS_RESERVED = new Set('break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof new return super switch this throw try typeof var void while with yield let static enum await implements package protected interface private public'.split(' '));
+/** Wayfinder names a route or action after a reserved word with "Method" on the end (deleteMethod). */
+const unreserve = (s) => { const m = /^(.+)Method$/.exec(s); return m && JS_RESERVED.has(m[1]) ? m[1] : s; };
+/** Route names compared loosely: Wayfinder writes `verify-otp` as verifyOtp, folder names stay as they are. */
+const squash = (s) => s.toLowerCase().replace(/[-_]/g, '');
+
+/**
+ * Laravel Wayfinder calls matched to endpoints: named routes (`import { show } from '@/routes/posts'`,
+ * then show(post), or `import posts from '@/routes/posts'`, then posts.show.url(post)) by route name, and
+ * controller actions (`import PostController from '@/actions/App/Http/Controllers/PostController'`, then
+ * PostController.update.form(post)) by controller method.
+ * @returns [{ from, to, method, path, call, line, routeLine }]
+ */
+export function matchWayfinder(files, routes, readSource) {
+  const byName = new Map(), byAction = new Map();
+  const add = (m, k, r) => { if (!m.has(k)) m.set(k, []); m.get(k).push(r); };
+  for (const r of routes) {
+    if (r.routeName) add(byName, squash(r.routeName), r);
+    if (r.action?.cls) add(byAction, `${r.action.cls.toLowerCase()}@${r.action.fn.toLowerCase()}`, r);
+  }
+  const out = [];
+  if (!byName.size && !byAction.size) return out;
+  for (const f of files) {
+    const imps = (f.imports || []).filter((i) => i.wayfinder);
+    if (!imps.length) continue;
+    const src = readSource(f.path) || '';
+    const lineOf = lineIndex(src);
+    // what's used off each binding: posts.show.url(…) → show, PostController.update.form(…) → update, found in
+    // one pass over the file for all of them (a pass per name would read a file importing thousands many times)
+    const bindings = new Map();
+    for (const imp of imps) for (const [local, orig] of Object.entries(imp.locals || {})) {
+      if (!bindings.has(local)) bindings.set(local, []);
+      bindings.get(local).push({ imp, orig, uses: [] });
+    }
+    for (const m of src.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)((?:\s*\??\.\s*[A-Za-z_$][\w$]*)*)/g)) {
+      const bs = bindings.get(m[1]);
+      if (!bs) continue;
+      const line = lineOf(m.index);
+      const chain = m[2].split('.').map((s) => s.replace(/[?\s]/g, '')).filter(Boolean);
+      while (chain.length && WAYFINDER_HELPERS.has(chain[chain.length - 1])) chain.pop();
+      for (const b of bs) if (line !== b.imp.line) b.uses.push({ chain: chain.map(unreserve), line }); // not the import itself
+    }
+    const done = new Set(); // each call once per file: the first use stands for the rest
+    for (const bs of bindings.values()) for (const { imp, orig, uses } of bs) {
+      const w = imp.wayfinder;
+      const whole = orig === 'default' || orig === '*';
+      if (!whole && !uses.length) uses.push({ chain: [], line: imp.line });
+      for (const u of uses) {
+        let key, hits;
+        if (w.kind === 'route') {
+          const name = [w.prefix, ...(whole ? [] : [unreserve(orig)]), ...u.chain].filter(Boolean).join('.');
+          if (!name || (whole && !u.chain.length) || done.has('route|' + name)) continue;
+          key = name; hits = byName.get(squash(name));
+          // Laravel keeps one route per name; the same name in two places is a clash we can't settle by reading
+          if (new Set((hits || []).map((r) => r.file)).size > 1) hits = null;
+        } else {
+          const fn = whole ? u.chain[0] || '__invoke' : unreserve(orig);
+          key = `${w.cls}@${fn}`;
+          if (done.has('action|' + key)) continue;
+          hits = byAction.get(`${w.cls.toLowerCase()}@${fn.toLowerCase()}`);
+        }
+        done.add(`${w.kind}|${key}`);
+        for (const r of hits || []) out.push({ from: f.path, to: r.file, method: r.method, path: r.path, call: key, line: u.line, routeLine: r.line });
+      }
+    }
+  }
+  return dedupe(out, (e) => `${e.from}|${e.to}|${e.method}|${e.path}`);
+}
+
+/**
+ * Inertia pages: a Laravel endpoint whose controller method renders a page (Inertia::render('orders/show'),
+ * or Route::inertia('/about', 'About')) is where that page opens. Returns screen hints to store on the
+ * file that renders it (pointing at the page's file) and a link from each page to the endpoint serving it.
+ * @returns { hints: [{ file, hint: { fw, url, target } }], http: [{ from, to, method, path, call, line, routeLine }] }
+ */
+export function inertiaLinks(files, routes) {
+  const byPath = new Map(files.map((f) => [f.path, f]));
+  // page name → files: resources/js/pages/orders/show.tsx is 'orders/show' (Pages/Orders/Show.vue in older apps)
+  const pages = new Map();
+  for (const f of files) {
+    const m = /(?:^|\/)pages\/(.+)\.(?:tsx|jsx|ts|js|vue|svelte)$/i.exec(f.path);
+    if (!m || f.category !== 'code') continue;
+    const k = m[1].toLowerCase();
+    if (!pages.has(k)) pages.set(k, []);
+    pages.get(k).push(f.path);
+  }
+  const shared = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
+  const pick = (name, near) => (pages.get(name.toLowerCase().replace(/\.(tsx|jsx|vue|svelte)$/, '')) || []).sort((a, b) => shared(b, near) - shared(a, near))[0] || null;
+  const hints = [], http = [];
+  for (const r of routes) {
+    if (r.framework !== 'laravel' || (r.method !== 'GET' && r.method !== 'ANY')) continue;
+    const renders = r.page ? [r.page] : (byPath.get(r.file)?.inertia || []).filter((x) => r.action && x.fn === r.action.fn).map((x) => x.page);
+    for (const name of new Set(renders)) {
+      const page = pick(name, r.file);
+      if (!page) continue;
+      hints.push({ file: r.file, hint: { fw: 'inertia', url: r.path.replace(/\{(\w+)(\?)?\}/g, ':$1$2'), target: page } });
+      http.push({ from: page, to: r.file, method: r.method, path: r.path, call: `page ${name}`, line: 1, routeLine: r.line });
+    }
+  }
+  return { hints, http };
 }

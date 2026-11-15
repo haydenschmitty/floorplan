@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob, blockComments, blankBlockComments, forwardIndexOf, callArgs } from './common.mjs';
 import { csRoutes, csCors, csStripeEvents, csStripeVerified, csBuildContext, csFinding } from './health-csharp.mjs';
+import { stripPhp, phpBare, phpBrackets, phpBudget, phpParts, phpSplit, phpStr, phpArrayBody, phpNamed, phpPairs } from './extract.mjs';
 
 export const lineIndex = (src) => {
   const starts = [0];
@@ -797,6 +798,154 @@ function jsRoutes(src, f, out) {
   });
 }
 
+// ---------- Laravel: who may call each endpoint ----------
+// Laravel's routes come from routes.mjs with the middleware of the route, its groups and the route files around
+// it. Here, per PHP file: the app's middleware aliases and groups (bootstrap/app.php, or app/Http/Kernel.php
+// before Laravel 11), a controller's own middleware, the checks inside each controller method and the form
+// requests it takes. buildHealth puts them together for each endpoint (laravelFinding).
+
+const LARAVEL_MW_CONFIG = /->\s*withMiddleware\s*\(|\$(?:middlewareGroups|middlewareAliases|routeMiddleware)\s*=/;
+// a method that checks the caller itself: a policy or gate, a permission test, an abort with 401/403
+// (an abort_if's condition is read up to 300 characters, so a file of `abort_if(` with no `;` isn't read once per call)
+const PHP_INLINE_CHECK = /\$this\s*->\s*authorize\w*\s*\(|\bGate\s*::\s*(?:authorize|allows|denies|check|any|none|inspect|forUser)\s*\(|\babort_(?:if|unless)\s*\([^;]{0,300}?(?:->\s*(?:can|cannot|cant|user)\s*\(|auth\(\)|Auth\s*::|\b40[13]\b)|\babort\s*\(\s*40[13]\b|->\s*(?:can|cannot|cant)\s*\(|\bAuth\s*::\s*(?:check|guest|authenticate)\s*\(|\bauth\(\)\s*->\s*(?:check|guest|authenticate)\s*\(|\bpolicy\s*\(|\bthrow\s+new\s+\\?(?:[\w\\]*\\)?(?:AuthorizationException|AuthenticationException|AccessDeniedHttpException|UnauthorizedHttpException)\b/;
+// a form request's authorize() that looks at the user, rather than `return true;`
+const PHP_REQUEST_CHECK = /->\s*user\s*\(|->\s*(?:can|cannot|cant)\s*\(|\bGate\s*::|\bauth\(\)|\bAuth\s*::|->\s*authorize\w*\s*\(/;
+
+/** A middleware entry as a name: 'auth:sanctum' stays, EnsureStaff::class and Authenticate::using('x') become the class name. */
+const phpMwName = (t) => {
+  const s = phpStr(t);
+  if (s != null) return s;
+  const m = /^\\?((?:[\w]+\\)*)(\w+)\s*::\s*(?:class\b|using\s*\()/.exec((t || '').trim());
+  return m ? m[2] : null;
+};
+const phpMwItems = (t) => { const b = phpArrayBody(t); return (b != null ? phpSplit(b) : t ? [t] : []).map(phpMwName).filter(Boolean); };
+const phpStrList = (t) => { const s = phpStr(t); if (s != null) return [s]; const b = phpArrayBody(t); return b == null ? [] : phpSplit(b).map(phpStr).filter((x) => x != null); };
+
+/**
+ * One PHP file, ready to read: code (stripPhp), bare (strings blanked), close (where brackets close) and spend
+ * (phpBudget). args(open) is the argument list of the call whose ( is at open, and text(from, to) a piece of code,
+ * each empty once the file's allowance for reading nested text again is used up.
+ */
+function phpSource(src) {
+  const code = stripPhp(src), bare = phpBare(code), close = phpBrackets(bare), spend = phpBudget(code.length);
+  const args = (open) => { const a = phpParts(code, bare, close, open + 1, close(open) - 1); return spend(a.reduce((n, x) => n + x.length, 0)) ? a : []; };
+  return { code, bare, close, args, text: (from, to) => (spend(to - from) ? code.slice(from, to) : '') };
+}
+
+/** The middleware aliases and groups an app defines: { aliases: { name: ClassName }, groups: { name: [entries] } }. */
+function laravelMiddlewareConfig({ bare, close, args, text }) {
+  const aliases = {}, groups = {};
+  const add = (g, list, front) => { groups[g] = front ? [...list, ...(groups[g] || [])] : [...(groups[g] || []), ...list]; };
+  // Laravel 11+: $middleware->alias([...]), ->group('x', [...]), ->appendToGroup('x', [...]), ->web(append: [...])
+  for (const m of bare.matchAll(/->\s*(alias|group|appendToGroup|prependToGroup|web|api)\s*\(/g)) {
+    const a = args(m.index + m[0].length - 1);
+    if (m[1] === 'alias') { for (const [k, v] of phpPairs(a[0])) if (k) aliases[k] = phpMwName(v); }
+    else if (m[1] === 'web' || m[1] === 'api') { for (const x of a) { const [name, val] = phpNamed(x); if (name === 'append' || name === 'prepend') add(m[1], phpMwItems(val), name === 'prepend'); } }
+    else { const g = phpStr(a[0]); if (g) add(g, phpMwItems(a[1]), m[1] === 'prependToGroup'); }
+  }
+  // Laravel 10 and older: properties of app/Http/Kernel.php
+  for (const m of bare.matchAll(/\$(middlewareGroups|middlewareAliases|routeMiddleware)\s*=\s*(?=\[|array\s*\()/g)) {
+    const start = m.index + m[0].length;
+    const open = bare[start] === '[' ? start : bare.indexOf('(', start);
+    const pairs = phpPairs(text(start, close(open)));
+    for (const [k, v] of pairs) if (k) { if (m[1] === 'middlewareGroups') add(k, phpMwItems(v)); else aliases[k] = phpMwName(v); }
+  }
+  return { aliases, groups };
+}
+
+/** A controller's own middleware: HasMiddleware's static middleware() (Laravel 11+), or $this->middleware(…) in its constructor. */
+function controllerMiddleware({ bare, close, args, text }) {
+  const out = [];
+  const m = /\bfunction\s+middleware\s*\(\s*\)\s*(?::\s*\??[\w\\]+\s*)?\{/.exec(bare);
+  if (m) {
+    const open = m.index + m[0].length - 1;
+    // the list it returns: from its first return to the ; that ends the method
+    const body = text(open + 1, close(open) - 1).trim();
+    const ret = body.endsWith(';') ? /\breturn\s+/.exec(body) : null;
+    for (const item of phpSplit(phpArrayBody(ret ? body.slice(ret.index + ret[0].length, -1).trim() : '') ?? '')) {
+      const nm = /^new\s+\\?(?:[\w\\]*\\)?Middleware\s*\(([\s\S]*)\)$/.exec(item.trim());
+      if (!nm) { const name = phpMwName(item); if (name) out.push({ name }); continue; }
+      const parts = phpSplit(nm[1]).map(phpNamed);
+      const named = Object.fromEntries(parts.filter(([k]) => k));
+      const first = parts.find(([k]) => !k)?.[1] ?? named.middleware;
+      for (const name of phpMwItems(first)) out.push({ name, ...(named.only ? { only: phpStrList(named.only) } : {}), ...(named.except ? { except: phpStrList(named.except) } : {}) });
+    }
+  }
+  const tail = /\s*->\s*(only|except)\s*\(/y;
+  for (const mm of bare.matchAll(/\$this\s*->\s*middleware\s*\(/g)) {
+    const open = mm.index + mm[0].length - 1;
+    tail.lastIndex = close(open);
+    const t = tail.exec(bare);
+    const limit = t ? phpStrList(args(tail.lastIndex - 1)[0]) : null;
+    for (const name of args(open).flatMap(phpMwItems)) out.push({ name, ...(t ? { [t[1]]: limit } : {}) });
+  }
+  return out;
+}
+
+// PHP that answers web requests itself: it reads the request, or declares routes in a way the scan doesn't read
+// yet (Symfony's #[Route], Slim's or Lumen's $app->get('/…')). Read outside comments and strings.
+const PHP_SERVER_CODE = /\$_(?:GET|POST|REQUEST|FILES)\b|\$_SERVER\s*\[|#\[\s*Route\s*\(|\$(?:app|router)\s*->\s*(?:get|post|put|patch|delete|any|map)\s*\(/g;
+function phpServerCode({ code, bare }) {
+  for (const m of bare.matchAll(PHP_SERVER_CODE)) {
+    const next = code.slice(m.index + m[0].length, m.index + m[0].length + 40);
+    if (m[0].startsWith('$_SERVER')) {
+      const key = /^\s*(['"])(REQUEST_(?:METHOD|URI))\1/.exec(next);
+      if (key) return { at: m.index, how: 'reads', what: `$_SERVER['${key[2]}']` };
+    } else if (m[0].startsWith('$')) {
+      if (!m[0].startsWith('$_')) { if (/^\s*['"]\//.test(next)) return { at: m.index, how: 'calls', what: m[0].replace(/\s*\($/, '').replace(/\s+/g, '') }; }
+      else return { at: m.index, how: 'reads', what: m[0] };
+    } else return { at: m.index, how: 'declares routes with', what: '#[Route]' };
+  }
+  return null;
+}
+
+function phpChecks(src, f, out) {
+  if (TEST_FILE.test(f.path)) return;
+  const php = phpSource(src);
+  const { code, bare, close, text } = php;
+  // code that answers web requests, for "What was checked" when no endpoints were found (templates only show what they're given)
+  if (!EXAMPLE_FILE.test(f.path) && !/\.blade\.php$/i.test(f.path)) {
+    const sv = phpServerCode(php);
+    if (sv) out.push({ k: 'server-code', line: lineIndex(code)(sv.at), how: sv.how, what: sv.what });
+  }
+  if (LARAVEL_MW_CONFIG.test(bare)) out.push({ k: 'laravel-mw', ...laravelMiddlewareConfig(php) });
+  const mw = controllerMiddleware(php);
+  if (mw.length) out.push({ k: 'php-ctrl-mw', items: mw });
+  // each public method: does it check the caller itself, and which classes does it take (a form request may check)
+  const starts = [0];
+  for (let i = 0; i < code.length; i++) if (code.charCodeAt(i) === 10) starts.push(i + 1);
+  const brace = /\s*(?::[^{;]{1,300})?\{/y;
+  for (const m of f.methods || []) {
+    if (m.hidden) continue;
+    const from = bare.indexOf('(', starts[m.line - 1] ?? 0);
+    if (from < 0) continue;
+    brace.lastIndex = close(from);
+    const body = brace.exec(bare) ? text(brace.lastIndex, close(brace.lastIndex - 1) - 1) : '';
+    const checked = PHP_INLINE_CHECK.test(body);
+    if (checked || m.types?.length) out.push({ k: 'php-fn', fn: m.name, ...(checked ? { checked: true } : {}), ...(m.types?.length ? { takes: m.types } : {}) });
+  }
+  // a form request whose authorize() looks at the user
+  if (/\bextends\s+\\?(?:[\w\\]*\\)?FormRequest\b/.test(bare) && f.classes?.length) {
+    const a = /\bfunction\s+authorize\s*\(\s*\)\s*(?::\s*\??\w+\s*)?\{/.exec(bare);
+    const body = a ? text(a.index + a[0].length, close(a.index + a[0].length - 1) - 1) : '';
+    if (PHP_REQUEST_CHECK.test(body)) out.push({ k: 'php-form-request', cls: f.classes[0] });
+  }
+}
+
+// Laravel's own middleware that let only signed-in (or permitted) callers through
+const LARAVEL_GUARD = /^(auth|auth\.basic|auth\.session|can|verified|signed|password\.confirm|abilities|ability|role|permission|role_or_permission|subscribed)$/;
+// middleware classes that check the caller, by name (EnsurePortalAccess, RequireTwoFactor, BindDevice…)…
+const LARAVEL_GUARD_CLASS = /(^|_)(authenticate|authenticated|authenticates|auth|authorize|authorized|login|permissions?|roles?|admins?|staff|access|two_?factor|2fa|tokens?|signature|signed|abilities|ability|owner|members?|verified|device|account)(_|$)/;
+// …unless the name says it does something else
+const NOT_LARAVEL_GUARD = /header|version|locale|json|log|throttle|cors|cache|store|request_?id|idempot|deprecat|https|body|trim|encrypt|cookie|csrf|binding|precognit|maintenance|trust|appearance|inertia|preload|observe|security_?header/;
+const laravelGuard = (entry, aliases) => {
+  const base = entry.split(':')[0];
+  if (LARAVEL_GUARD.test(base)) return true;
+  const cls = aliases[base] || (/^[A-Z]/.test(base) ? base : null);
+  const n = cls && snake(cls);
+  return !!n && LARAVEL_GUARD_CLASS.test(n) && !NOT_LARAVEL_GUARD.test(n);
+};
+
 /**
  * FastAPI dependencies that check the caller, per repo: Map(repo -> { aliases: Map(alias -> file), checks(ref) }).
  * A dependency function checks the caller by its name (admin_user, validate_jwt), by raising a 401 or 403
@@ -1158,6 +1307,7 @@ export function findIssues(src, f) {
   if (f.lang === 'python') pyRoutes(src, f, out);
   else if (['typescript', 'javascript'].includes(f.lang)) jsRoutes(src, f, out);
   else if (f.lang === 'csharp' && !TEST_FILE.test(f.path)) csRoutes(src, f, out, SIGNATURE_CHECK);
+  else if (f.lang === 'php') phpChecks(src, f, out);
   // run directly or registered by name (so "nothing imports it" doesn't mean unused)
   if (/^#!|if\s+__name__\s*==\s*['"]__main__['"]|@(?:\w+\.)*(?:task|shared_task|command|group|receiver|scheduled_job|on_event|listener|hookimpl|periodic_task|cli\.command)\b|require\.main\s*===\s*module|import\.meta\.main/m.test(src)) out.push({ k: 'runnable' });
   // a frontend calling a fixed localhost address (breaks once deployed)
@@ -1174,6 +1324,9 @@ export function findIssues(src, f) {
 
 const SEV_ORDER = { high: 0, medium: 1, low: 2 };
 const PUBLIC_PATH = /(^|\/)(health|healthz|healthcheck|ping|status|ready|readyz|readiness|live|livez|liveness|version|metrics|robots\.txt|sitemap[\w.]*|favicon[\w.]*|\.well-known|login|logout|signin|pair|sign-in|signout|signup|sign-up|register|forgot[\w-]*|reset[\w-]*|verify[\w-]*|oauth\w*|callback|auth|token|refresh|static|assets|public|newsletter|contact|waitlist|unsubscribe|openapi\.json|docs|swagger[\w.]*|i|images?)(\/|$)/i;
+// A site's privacy, terms and legal pages, which every visitor may read: only reading them, and only when the whole
+// address is the page (/privacy, /legal/imprint), so /account/privacy (someone's settings) or /api/legal/cases is still checked
+const LEGAL_PAGE = /^\/(?:legal\/)?(?:privacy(?:-policy|-notice|-statement)?|terms(?:-of-(?:service|use)|-and-conditions|-conditions)?|tos|legal|imprint|impressum)\/?$/i;
 // Files and feeds that exist to be read by crawlers, feed readers and AI tools. Only for reading: see publicByDesign.
 const PUBLIC_FILE_PATH = /(^|\/)(llms(-full)?\.txt|ai\.txt|humans\.txt|(app-)?ads\.txt|security\.txt|rss(\.xml)?|atom(\.xml)?|feed\.(xml|rss|atom|json)|index\.xml|opensearch\.xml|site\.webmanifest|manifest\.(json|webmanifest)|openapi\.ya?ml)$/i;
 const LISTING_FILE = /(^|\/)(llms(-full)?\.txt|robots\.txt)$/i;
@@ -1196,6 +1349,7 @@ const plural = (n, w, ws) => `${n} ${n === 1 ? w : ws || w + 's'}`;
 function guardLabel(name, defs, lang) {
   if (defs.some((g) => g.alias)) return `a parameter typed ${name}`;
   if (lang === 'python') return '@' + name;
+  if (lang === 'php' && /^[a-z]/.test(name)) return `the '${name}' middleware`;
   // [Authorize(...)] and .RequireAuthorization(...) arrive written out; a custom attribute arrives as its name
   if (lang === 'csharp' && !/^[[.]/.test(name)) return `[${name}]`;
   return name;
@@ -1666,9 +1820,56 @@ export function buildHealth({ graph, scan, arch, root }) {
   // like app-wide middleware since they cover every route behind them (app.use('/api', cors()) isn't one), and a
   // route served at two paths (mounted twice, or under /api and outside it) is open if either is.
   const isPy = (r) => scanByPath.get(r.file)?.lang === 'python';
-  const mountCheck = (r) => r.mountMw?.find(isPy(r) ? isGuardDep : isUseGuard);
+  const mountCheck = (r) => r.framework !== 'laravel' && r.mountMw?.find(isPy(r) ? isGuardDep : isUseGuard);
   const mountGuard = new Map((scan.routes || []).filter(mountCheck).map((r) => [`${r.file}|${r.line}|${r.method}`, mountCheck(r)]));
   for (const r of scan.routes || []) if (!isPy(r) && !mountCheck(r)) mountGuard.delete(`${r.file}|${r.line}|${r.method}`);
+  // Laravel: the route's own middleware and its groups' (through the app's aliases and groups), then the
+  // controller's middleware, a form request that checks the user, or a check inside the method
+  const lvConfig = new Map(); // repo -> { aliases, groups }
+  const formRequests = new Set();
+  for (const f of scan.files) for (const x of findings(f.path)) {
+    if (x.k === 'php-form-request') formRequests.add(String(x.cls).toLowerCase());
+    if (x.k !== 'laravel-mw') continue;
+    const k = f.repo ?? '';
+    const c = lvConfig.get(k) || { aliases: {}, groups: {} };
+    Object.assign(c.aliases, x.aliases);
+    for (const [g, list] of Object.entries(x.groups || {})) c.groups[g] = [...(c.groups[g] || []), ...list];
+    lvConfig.set(k, c);
+  }
+  // a controller file's own middleware and its methods' facts, gathered once per file rather than once per route
+  const factsOf = new Map();
+  const phpFacts = (file) => {
+    if (!factsOf.has(file)) {
+      const fns = new Map();
+      let ctrlMw = null;
+      for (const x of findings(file)) {
+        if (x.k === 'php-ctrl-mw' && !ctrlMw) ctrlMw = x;
+        else if (x.k === 'php-fn' && !fns.has(x.fn.toLowerCase())) fns.set(x.fn.toLowerCase(), x);
+      }
+      factsOf.set(file, { ctrlMw, fns });
+    }
+    return factsOf.get(file);
+  };
+  const laravelFinding = (r) => {
+    const { aliases, groups } = lvConfig.get(scanByPath.get(r.file)?.repo ?? '') || { aliases: {}, groups: {} };
+    const expand = (n, depth = 0) => { const g = groups[n.split(':')[0]]; return g && depth < 6 ? g.flatMap((x) => expand(x, depth + 1)) : [n]; };
+    const rec = { k: 'route', line: r.line, method: r.method, fn: r.action?.fn || null, ...(r.defFile ? { defFile: r.defFile, defLine: r.defLine } : {}) };
+    const names = [...(r.mw || []), ...(r.mountMw || [])].flatMap((n) => expand(n));
+    if (names.some((n) => n.split(':')[0] === 'guest')) return { ...rec, guest: true }; // for people who aren't signed in: sign-in pages
+    const mw = names.find((n) => laravelGuard(n, aliases));
+    if (mw) return { ...rec, guard: mw.split(':')[0], via: 'middleware' };
+    const fn = r.action?.fn;
+    const own = phpFacts(r.file);
+    const ctrl = own.ctrlMw?.items.filter((i) => (!i.only || i.only.includes(fn)) && !(i.except || []).includes(fn)).flatMap((i) => expand(i.name)).find((n) => laravelGuard(n, aliases));
+    if (ctrl) return { ...rec, guard: ctrl.split(':')[0], via: 'controller' };
+    const method = fn && own.fns.get(fn.toLowerCase());
+    const request = method?.takes?.find((t) => formRequests.has(t.toLowerCase()));
+    if (request) return { ...rec, guard: request.split('\\').pop(), via: 'form request' };
+    if (method?.checked) return { ...rec, via: 'inline' };
+    // a closure that only redirects or answers something fixed, or a plain page: nothing to protect
+    return r.quiet ? { ...rec, quiet: true } : rec;
+  };
+  for (const r of scan.routes || []) if (r.framework === 'laravel') routeFinding.set(`${r.file}|${r.line}|${r.method}`, laravelFinding(r));
   const sourceOf = new Map();
   const readSource = (p) => {
     if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
@@ -1764,14 +1965,14 @@ export function buildHealth({ graph, scan, arch, root }) {
       }
       return;
     }
-    if (r.m === 'OPTIONS' || r.m === 'HEAD' || fnd.notAllowed) return;
+    if (r.m === 'OPTIONS' || r.m === 'HEAD' || fnd.notAllowed || fnd.guest || fnd.quiet) return;
     // webhook receivers: by URL, or a webhook-ish handler in a webhook file (not that file's admin endpoints)
     const webhook = (WEBHOOK_PATH.test(r.p) && !WEBHOOK_ADMIN.test(r.p)) || (/webhook|hooks?\//i.test(r.f) && /webhook|hook|notify|event|ingress|pubsub|callback|receive|inbound/i.test(r.h || '') && !/create|list|manage|register|delete|test|setup|sync/i.test((r.h || '') + r.p));
     if (webhook && fnd.signed) return;
     // a Stripe webhook that doesn't check Stripe's signature has its own, more specific issue
     if (stripeFiles.has(r.f) && (webhook || /stripe|payment|hook/i.test(r.p) || graph.routes.filter((x) => x.f === r.f && x.m !== 'GET').length === 1)) return;
     if (!webhook && PUBLIC_PATH.test(r.p.replace(/<[^>]*>|\{[^}]*\}|:\w+|\[[^\]]*\]/g, 'x'))) return;
-    if (r.p === '/' && r.m === 'GET') return;
+    if ((r.p === '/' || LEGAL_PAGE.test(r.p)) && r.m === 'GET') return;
     if (!webhook && publicByDesign(r, fnd, repo)) return;
     const entry = { i, r, fnd, write: !['GET', 'ANY'].includes(r.m), webhook };
     if (fnd.misplaced) pr.misplaced.push(entry); else pr.open.push(entry);
@@ -1791,7 +1992,7 @@ export function buildHealth({ graph, scan, arch, root }) {
       const how = guardLabel(name, defs, lang);
       return `the same check ${local ? 'the other endpoints in this file' : 'the protected endpoints'} already use (${how}${where ? ', ' + where : ''})`;
     };
-    const routeLine = (e) => `- ${e.r.m} ${e.r.p} — ${e.r.f}:${e.r.l}${e.fnd.fn && !/^[A-Z]+$/.test(e.fnd.fn) ? ` (${e.fnd.fn})` : ''}`;
+    const routeLine = (e) => `- ${e.r.m} ${e.r.p} — ${e.r.f}:${e.r.l}${e.fnd.fn && !/^[A-Z]+$/.test(e.fnd.fn) ? ` (${e.fnd.fn})` : ''}${e.fnd.defFile ? `, route registered in ${e.fnd.defFile}:${e.fnd.defLine}` : ''}`;
     if (pr.misplaced.length) {
       const list = pr.misplaced;
       issues.push({
@@ -1980,7 +2181,7 @@ function whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTabl
   for (const f of scan.files) {
     if (!live(f.path) || f.category !== 'code') continue;
     const sv = findings(f.path).find((x) => x.k === 'server-code');
-    if (sv) servers.push({ file: f.path, what: `it calls ${sv.what}` });
+    if (sv) servers.push({ file: f.path, what: `it ${sv.how || 'calls'} ${sv.what}` });
     else if (/(^|\/)supabase\/functions\/[^/]+\/index\.[jt]s$/.test(f.path)) servers.push({ file: f.path, what: 'it’s a Supabase Edge Function' });
   }
   if (checkedRoutes) add('endpoints', 'Endpoint sign-in', true, found > checkedRoutes

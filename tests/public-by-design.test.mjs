@@ -37,6 +37,24 @@ test('that address only excuses reading it, and a social "feed" is not a public 
   assert.deepEqual(open({ [route('blog/rss.xml')]: `export async function POST(req: Request) { return Response.json(await req.json()); }\n` }), ['POST /blog/rss.xml']);
 });
 
+// ---------- pages every site shows to everyone ----------
+test('privacy, terms and legal pages are public on purpose; a privacy request is not', () => {
+  const dbRead = `import { db } from '@/lib/db';\nexport async function GET() { return Response.json(await db.page.findFirst()); }\n`;
+  const pages = ['privacy', 'privacy-policy', 'terms', 'terms-of-service', 'legal', 'legal/imprint', 'tos'];
+  assert.deepEqual(open(Object.fromEntries(pages.map((a) => [route(a), dbRead]))), []);
+  // someone's data export or deletion request only shares a word with those pages
+  assert.deepEqual(open({ [route('api/privacy-requests')]: dbRead }), ['GET /api/privacy-requests']);
+});
+
+test('a person\'s privacy settings, data under /legal and changes to a legal page are still reported', () => {
+  const dbRead = `import { db } from '@/lib/db';\nexport async function GET() { return Response.json(await db.user.findFirst()); }\n`;
+  const write = `import { db } from '@/lib/db';\nexport async function PUT(req: Request) { return Response.json(await db.page.update(await req.json())); }\n`;
+  assert.deepEqual(open({
+    [route('api/users/[id]/privacy')]: dbRead, [route('account/privacy')]: dbRead, [route('api/legal/cases')]: dbRead,
+    [route('legal/terms/acceptances')]: dbRead, [route('terms')]: write,
+  }).sort(), ['GET /account/privacy', 'GET /api/legal/cases', 'GET /api/users/[id]/privacy', 'GET /legal/terms/acceptances', 'PUT /terms']);
+});
+
 // ---------- the project itself says it's public (#44, #47, #48, #51, #52) ----------
 const dataFeed = `import { db } from '@/lib/db';\nexport async function GET() { return Response.json(await db.plan.findMany()); }\n`;
 
