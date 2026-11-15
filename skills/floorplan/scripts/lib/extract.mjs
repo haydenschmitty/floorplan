@@ -84,7 +84,11 @@ function keyedRouteTable(code, at) {
 
 // ---------- HTTP call literals ----------
 
-const HTTP_CONTEXT = /\b(fetch|axios|ky|got|request|requests|httpx|aiohttp|session|client|http|https|api|Api|API|endpoint|Endpoint|url|Url|URL|BASE|base)\b|\.(get|post|put|patch|delete|head)\s*(<[^>]*>)?\s*\(|(?<![.\w$])(get|post|put|patch|delete)\s*\(\s*[rf]?["'`]\//;
+const HTTP_CONTEXT = /\b(fetch|axios|ky|got|request|requests|httpx|aiohttp|session|client|http|https|api|Api|API|endpoint|Endpoint|url|Url|URL|BASE|base)\b|\.(get|post|put|patch|delete|head)\s*(<[^>]*>)?\s*\(|(?<![.\w$])(get|post|put|patch|delete)\s*\(\s*[rf]?["'`]\/|\b(?:api[A-Z]\w*|(?:http|fetch|request)(?:Get|Post|Put|Patch|Delete|Send|Json|Data|Api)\w*)\s*(?:<[^()]*>)?\s*\(/;
+// An app's own API helpers: apiGet('/tasks'), httpPost('/orders', body), apiSend('PATCH', `/tasks/${id}`, body)
+const HELPER_VERB = /\b(?:api|http|fetch|request)(Get|Post|Put|Patch|Delete)\w*\s*(?:<[^()]*>)?\s*\(/;
+// A helper taking the method first is named in camelCase (apiSend, not requestedBy); the method may be either case
+const HELPER_ARG_VERB = /\b(?:api|http|fetch|request)[A-Z]\w*\s*(?:<[^()]*>)?\s*\(\s*["'`](GET|POST|PUT|PATCH|DELETE|get|post|put|patch|delete)["'`]\s*,/;
 const NAV_CONTEXT = /\b(router\.(push|replace|prefetch)|navigate|redirect|href|revalidatePath|pathname|Link|to=|location\.)\b|window\.location/;
 const STR_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
 const IGNORED_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$|\.(test|example|invalid|local|localhost|internal)(:\d+)?$|(^|\.)example\.(com|org|net)$/;
@@ -163,8 +167,10 @@ function extractCalls(src, at, { skip } = {}) {
     // a URL assigned to a variable counts when an HTTP call below uses that variable
     const assigned = ASSIGN.exec(line)?.[1];
     const use = assigned ? variableUse(lines, i, assigned) : null;
-    if (!HTTP_CONTEXT.test(line) && !use) continue;
-    const method = (METHOD_CALL.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || '').toUpperCase() || null;
+    // a call whose URL wraps onto its own line: `this.http.post<Order>(` with the template on the line below
+    const wrapped = i > 0 && /^\s*["'`]/.test(line) && lines[i - 1].length <= 500 ? WRAPPED_CALL.exec(lines[i - 1])?.[1] : null;
+    if (!HTTP_CONTEXT.test(line) && !use && !wrapped) continue;
+    const method = (METHOD_CALL.exec(line)?.[1] || HELPER_ARG_VERB.exec(line)?.[1] || HELPER_VERB.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || wrapped || '').toUpperCase() || null;
     for (const m of line.matchAll(STR_LITERAL)) {
       const n = normalizeCallLiteral(m[2]);
       if (!n) continue;
@@ -452,6 +458,15 @@ function extractJs(src, filePath) {
   }
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
+  const built = urlBuilderCalls(code, at);
+  if (built.calls.length || built.bodies.size) {
+    // a line with a built URL may also hold a partial guess from its literal argument (`/ship`): the full path
+    // replaces it. And a URL-building method's own template is not a request.
+    const builtLines = new Set(built.calls.map((c) => c.line));
+    const kept = calls.filter((c) => !builtLines.has(c.line) && !built.bodies.has(c.line));
+    calls.length = 0;
+    for (const c of [...kept, ...built.calls]) calls.push(c);
+  }
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
   calls.push(...callables.calls);
   return { imports, symbols, routes, mounts, calls, hosts, ...(routerVars.size ? { routerVars: [...routerVars] } : {}), ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
@@ -580,6 +595,79 @@ function wrapperCalls(code, at) {
 function spliced(rawBody, param) {
   const raw = new RegExp(`\`((?:\\$\\{[^}]*\\})*)([^\`$]*)\\$\\{\\s*${param}\\s*\\}`).exec(rawBody);
   return raw ? raw[2] : null;
+}
+
+// ---------- URL-building methods (Angular services and the like) ----------
+
+// A service class often builds its URLs in a method and passes the result to the HTTP call:
+//   private url(id: string, suffix = ''): string { return `${this.base}/orders/${encodeURIComponent(id)}${suffix}`; }
+//   ship(id: string) { return this.http.post(this.url(id, '/ship'), {}); }
+// is POST /orders/${x}/ship. A method that returns another builder's call counts too:
+//   private itemUrl(id: string, itemId: string, suffix = ''): string { return this.url(id, `/items/${itemId}${suffix}`); }
+// Parameters and templates are read on one line, up to a length, so a file full of unclosed `f(` costs one pass.
+const URL_BUILDER = /^[ \t]*(?:(?:private|protected|public|static|readonly)\s+)*([A-Za-z_$][\w$]*)\s*\(([^)\n]{0,300})\)\s*(?::\s*string\s*)?\{\s*return\s+`([^`\n]{0,500})`\s*;?\s*\}/gm;
+const URL_BUILDER_CHAIN = /^[ \t]*(?:(?:private|protected|public|static|readonly)\s+)*([A-Za-z_$][\w$]*)\s*\(([^)\n]{0,300})\)\s*(?::\s*string\s*)?\{\s*return\s+this\.([A-Za-z_$][\w$]*)\s*\(/gm;
+// `.post<Order>(` at the end of a line: the call's arguments start on the next one
+const WRAPPED_CALL = /\.(get|post|put|patch|delete)\s*(?:<[^\n]{0,200}>)?\s*\(\s*$/i;
+const paramNames = (s) => s.split(',').map((p) => /^[A-Za-z_$][\w$]*/.exec(p.trim())?.[0]).filter(Boolean);
+const usesParam = (expr, p) => new RegExp(`(?<![\\w$.])${p.replace(/\$/g, '\\$')}(?![\\w$])`).test(expr);
+
+/** Top-level arguments of the call whose `(` is at code[open], trimmed, or null when it doesn't close nearby; `end` is its `)`. */
+const argsAt = (code, open) => { const a = callArgs(code, open + 1, 800); return a && Object.assign(a.map((x) => x.trim()), { end: a.end }); };
+
+/** A builder's template with the arguments put in: a literal goes in as text, anything else as `other` says. */
+function fillTemplate(tpl, pnames, args, other) {
+  return tpl.replace(/\$\{([^}]*)\}/g, (all, expr) => {
+    const i = pnames.findIndex((p) => usesParam(expr, p));
+    if (i < 0) return '${x}';
+    const a = args[i];
+    if (a == null) return ''; // left to its default, usually ''
+    const lit = /^(["'`])([\s\S]*)\1$/.exec(a);
+    return lit ? lit[2] : other(a);
+  });
+}
+
+function urlBuilderCalls(code, at) {
+  const builders = new Map(); // name -> { pnames, tpl }
+  const bodies = new Set(); // lines of the builders themselves
+  const mark = (from, to) => { for (let l = at(from); l <= at(to); l++) bodies.add(l); };
+  for (const m of code.matchAll(URL_BUILDER)) {
+    if (/^(get|post|put|patch|delete|request|fetch|constructor)$/i.test(m[1])) continue;
+    const pnames = paramNames(m[2]);
+    if (pnames.length && /\/[A-Za-z]/.test(m[3])) { builders.set(m[1], { pnames, tpl: m[3] }); mark(m.index, m.index + m[0].length - 1); }
+  }
+  // a delegating builder, written in its own parameters (one passed straight through stays `${p}`)
+  if (builders.size) for (const m of code.matchAll(URL_BUILDER_CHAIN)) {
+    const inner = builders.get(m[3]);
+    if (!inner || builders.has(m[1])) continue;
+    const args = argsAt(code, m.index + m[0].length - 1);
+    if (!args) continue;
+    builders.set(m[1], { pnames: paramNames(m[2]), tpl: fillTemplate(inner.tpl, inner.pnames, args, (a) => '${' + a + '}') });
+    // its body runs to the end of the call it returns, which may wrap onto the lines below
+    mark(m.index, args.end);
+  }
+  const out = [];
+  if (!builders.size) return { calls: out, bodies };
+  // one pass over the file's this.name( calls, however many builders there are
+  for (const c of code.matchAll(/(?<![\w$])this\.([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const b = builders.get(c[1]);
+    if (!b) continue;
+    const line = at(c.index);
+    if (bodies.has(line)) continue; // a delegating builder's own body
+    const args = argsAt(code, c.index + c[0].length - 1);
+    if (!args) continue;
+    const n = normalizeCallLiteral(flattenTemplates('`' + fillTemplate(b.tpl, b.pnames, args, () => '${x}') + '`').slice(1, -1));
+    if (!n?.path || n.host) continue;
+    // only a URL handed to an HTTP call counts (not one used for a link or a download address); the
+    // call is on the same line, or on the line before when the arguments wrap. Only the last few hundred
+    // characters before the builder are read, so a long line costs no more than a short one.
+    const before = code.slice(Math.max(0, c.index - 600), c.index).split('\n');
+    const head = before[before.length - 1], prev = before.length > 1 ? before[before.length - 2] : '';
+    const verb = WRAPPED_CALL.exec(head)?.[1] || (!head.trim() ? WRAPPED_CALL.exec(prev)?.[1] : null);
+    if (!verb) continue;
+    out.push({ path: n.path, method: verb.toUpperCase(), line });
+  }
+  return { calls: out, bodies };
 }
 
 // ---------- Python ----------

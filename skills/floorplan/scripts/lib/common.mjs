@@ -434,6 +434,7 @@ export function readJsonFile(file) {
  * The top-level arguments of a JavaScript call whose "(" ends just before `start`, as strings: commas and
  * brackets inside strings, nested calls, objects and arrays don't split them. null when the call isn't
  * closed within `limit` characters (or a bracket doesn't match), so a stray "(" costs at most that much.
+ * The list's `end` is the index of the closing ")".
  */
 export function callArgs(src, start, limit = 4000) {
   const args = [];
@@ -447,7 +448,7 @@ export function callArgs(src, start, limit = 4000) {
       if (depth) { depth--; continue; }
       if (c !== ')') return null;
       args.push(src.slice(from, i));
-      return args.filter((a) => a.trim());
+      return Object.assign(args.filter((a) => a.trim()), { end: i });
     } else if (c === ',' && !depth) { args.push(src.slice(from, i)); from = i + 1; }
   }
   return null;

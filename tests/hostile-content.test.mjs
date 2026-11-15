@@ -583,6 +583,9 @@ test('files of unclosed lists and brackets are still read quickly', async () => 
     'route( inside an unclosed string': ['typescript', `route("${mb('route(')}`],
     'route( nested a million deep': ['typescript', mb('route("a", ', 1) + mb(')', 1)],
     'route objects nested deep': ['typescript', `createBrowserRouter\n${mb("{path:'a',", 0.5)}${mb('}', 0.5)}`],
+    'f( with no ) on every line': ['typescript', mb('f(\n')],
+    '.get< with no > before an address on the next line': ['typescript', mb('.get<') + '(\n"/orders"\n'],
+    'thousands of URL-building methods': ['typescript', Array.from({ length: 60000 }, (_, i) => `  b${i}(a) { return \`/x/\${a}\`; }`).join('\n')],
   };
   for (const [name, [lang, src]] of Object.entries(cases)) {
     const t = performance.now();
