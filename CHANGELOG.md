@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 (2026-11-15)
 
 - **One unusual letter no longer blanks the map:** to list the page's own scripts in its Content-Security-Policy, the build reads a lower-cased copy of the page, and a few letters get longer when lower-cased (the Turkish "İ" becomes two characters). One of them anywhere before the scripts, in a comment the scan picked up, a file name or a description, moved every later script by one character in that copy, so their fingerprints were wrong, the browser blocked them and the map drew nothing. Only A to Z are lower-cased now, the way the browser reads tag names, so the copy always lines up with the page. Fixed by @OfficialCodeVoyage in #118.
 - **Fastify routes written as objects are found:** a Fastify server that declares its endpoints as `app.route({ method: 'POST', url: '/api/orders', handler })` had none of them on the map. They now count on any router the file makes (`const api = Fastify()`), with one endpoint per method when `method` is a list, and a `preHandler`, `onRequest` or `preValidation` check on the route protects only that route. A key inside the route's `schema`, and a `method` or `url` that isn't written out, don't make an endpoint. Fixed by @Bl0ck154 in #34.
