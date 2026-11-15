@@ -578,7 +578,9 @@ const STRIPE_EVENT = /(?:\bcase\s*|[!=]==?\s*)["'](checkout\.session\.(?:complet
 const STRIPE_VERIFIED = /constructEvent(?:Async)?\s*\(|construct_event\s*\(|verifyHeader|verify_header|events\.retrieve\s*\(|Event\.retrieve\s*\(/;
 
 function findStripeWebhook(src, f, out) {
-  if (!/stripe/i.test(src) || STRIPE_VERIFIED.test(src)) return;
+  if (!/stripe/i.test(src)) return;
+  // checked and fine: counted in "What was checked"
+  if (STRIPE_VERIFIED.test(src)) { out.push({ k: 'stripe-signed' }); return; }
   const hits = [...src.matchAll(STRIPE_EVENT)];
   if (!hits.length) return;
   out.push({ k: 'stripe-unsigned', line: lineIndex(src)(hits[0].index), events: [...new Set(hits.map((m) => m[1]))].slice(0, 4) });
@@ -755,6 +757,8 @@ function dynamicRls(s, found) {
   }
 }
 
+// a call that starts a web server: if the scan found no endpoints next to one, it may use a setup it doesn't know
+const SERVER_CODE = /\b(?:https?\.|http2\.)?createServer\s*\(|\bDeno\.serve\s*\(|\bBun\.serve\s*\(|\bserve\s*\(\s*\{\s*fetch\b|\.listen\s*\(\s*(?:\d|process\.env|PORT\b|port\b)|\buvicorn\.run\s*\(|\bhttp\.ListenAndServe\s*\(/;
 const USES_SUPABASE = /@supabase\/(?:supabase-js|ssr|auth-helpers[\w-]*)|from\s+supabase\s+import|^[ \t]*import\s+supabase\b/m;
 
 // ---------- per-file entry point ----------
@@ -769,6 +773,11 @@ export function findIssues(src, f) {
     if (['typescript', 'javascript', 'python'].includes(f.lang)) { findStripeWebhook(src, f, out); findCors(src, f, out); }
   }
   if (['typescript', 'javascript', 'python'].includes(f.lang) && USES_SUPABASE.test(src)) out.push({ k: 'uses-supabase' });
+  // code that starts a server, for "What was checked" when no endpoints were found
+  if (['typescript', 'javascript', 'python', 'go'].includes(f.lang) && !TEST_FILE.test(f.path) && !EXAMPLE_FILE.test(f.path)) {
+    const sv = SERVER_CODE.exec(src);
+    if (sv && !(/^createServer/.test(sv[0]) && /from\s+['"]vite['"]|require\(\s*['"]vite['"]/.test(src))) out.push({ k: 'server-code', line: lineIndex(src)(sv.index), what: sv[0].replace(/\s*\($/, '') });
+  }
   if (f.lang === 'python') pyRoutes(src, f, out);
   else if (['typescript', 'javascript'].includes(f.lang)) jsRoutes(src, f, out);
   // run directly or registered by name (so "nothing imports it" doesn't mean unused)
@@ -991,6 +1000,7 @@ export function buildHealth({ graph, scan, arch, root }) {
 
   // ---------- Supabase tables anyone can read and change ----------
   const usesSupabase = scan.files.some((f) => /(^|\/)supabase\/(migrations\/|config\.toml$|functions\/)/.test(f.path) || findings(f.path).some((x) => x.k === 'uses-supabase'));
+  let supabaseTables = 0; // for "What was checked"
   if (usesSupabase) {
     const byRepo = new Map(); // repo -> [file, …] in path order (migrations are named by timestamp)
     for (const f of scan.files) if (f.lang === 'sql' && live(f.path) && findings(f.path).some((x) => x.k.startsWith('sql-'))) { const k = f.repo ?? ''; if (!byRepo.has(k)) byRepo.set(k, []); byRepo.get(k).push(f.path); }
@@ -1010,6 +1020,7 @@ export function buildHealth({ graph, scan, arch, root }) {
       const short = (t) => t.replace(/^public\./, '');
       const open = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls !== true && t.rls !== 'unsure');
       const unsure = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls === 'unsure');
+      supabaseTables += [...tables.keys()].filter((name) => name.startsWith('public.')).length;
       if (open.length) {
         const items = [], notes = {};
         for (const [name, t] of open) {
@@ -1101,6 +1112,7 @@ export function buildHealth({ graph, scan, arch, root }) {
   // ---------- Firebase security rules that let anyone in ----------
   const today = new Date();
   const longDate = (d) => d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
+  const firebaseFiles = []; // rules files read, for "What was checked"
   for (const f of scan.files) {
     const base = f.path.split('/').pop();
     if (!live(f.path) || !(/\.rules$/i.test(base) || /^database(\.[\w-]+)?\.rules\.json$/i.test(base))) continue;
@@ -1109,6 +1121,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     const rtdb = /\.json$/i.test(base);
     const service = rtdb ? 'Realtime Database' : /service\s+firebase\.storage/.test(src) ? 'Storage' : /service\s+cloud\.firestore/.test(src) ? 'Firestore' : null;
     if (!service) continue;
+    firebaseFiles.push(f.path);
     const rules = rtdb ? firebaseRtdbRules(src, today) : firebaseRules(src, today);
     // the whole database, or (Firestore and Storage) any change beyond adding new records to one place
     const severe = (r) => r.wide || (!rtdb && !r.createOnly);
@@ -1517,9 +1530,51 @@ export function buildHealth({ graph, scan, arch, root }) {
   const kept = issues.slice(0, 40);
   const summary = { high: 0, medium: 0, low: 0 };
   for (const i of kept) summary[i.severity]++;
-  return { summary, issues: kept };
+  return { summary, issues: kept, checked: whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTables, firebaseFiles, findings }) };
 }
 
+// ---------- what was checked ----------
+// A clean Health panel means something only if each check had something to look at, so every check says what it
+// read, or that it found nothing to read. `loud` marks the gaps that matter: the code looks like it runs a server
+// (or uses Supabase) but the scan found nothing for the check to look at.
+function whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTables, firebaseFiles, findings }) {
+  const out = [];
+  const add = (check, label, checked, text, loud) => out.push({ check, label, checked, text, ...(loud ? { loud: true } : {}) });
+
+  const found = graph.routes.filter((r) => !TEST_FILE.test(r.f)).length;
+  const checkedRoutes = [...perRepo.values()].reduce((s, pr) => s + pr.total, 0);
+  const servers = [];
+  for (const f of scan.files) {
+    if (!live(f.path) || f.category !== 'code') continue;
+    const sv = findings(f.path).find((x) => x.k === 'server-code');
+    if (sv) servers.push({ file: f.path, what: `it calls ${sv.what}` });
+    else if (/(^|\/)supabase\/functions\/[^/]+\/index\.[jt]s$/.test(f.path)) servers.push({ file: f.path, what: 'it’s a Supabase Edge Function' });
+  }
+  if (checkedRoutes) add('endpoints', 'Endpoint sign-in', true, found > checkedRoutes
+    ? `checked ${checkedRoutes} of the ${found} endpoints found (the others are set up in a way Floorplan can’t check yet, or belong to scripts and tests)`
+    : `checked ${plural(checkedRoutes, 'endpoint')}`);
+  else if (found) add('endpoints', 'Endpoint sign-in', false, `not checked: ${plural(found, 'endpoint')} found, but set up in a way Floorplan can’t check for a login yet`);
+  else if (servers.length) add('endpoints', 'Endpoint sign-in', false, `not checked: no endpoints found, but ${servers[0].file} looks like it runs a server (${servers[0].what})${servers.length > 1 ? `, and so ${servers.length === 2 ? 'does 1 other file' : `do ${servers.length - 1} other files`}` : ''}. Its endpoints may be set up in a way Floorplan doesn’t recognise yet, so nothing checked whether they need a login.`, true);
+  else add('endpoints', 'Endpoint sign-in', false, 'not checked: no endpoints found. If your app has a server, it may use a setup Floorplan doesn’t recognise yet.');
+
+  if (usesSupabase && supabaseTables) add('supabase', 'Supabase table rules', true, `checked ${plural(supabaseTables, 'table')} in the migrations`);
+  else if (usesSupabase) add('supabase', 'Supabase table rules', false, 'not checked: the app uses Supabase, but no migrations that create tables were found. Tables made in the Supabase dashboard can’t be checked from the code.', true);
+  else add('supabase', 'Supabase table rules', false, 'no Supabase found');
+
+  const firebaseJson = scan.files.some((f) => /(^|\/)firebase\.json$/.test(f.path));
+  if (firebaseFiles.length) add('firebase', 'Firebase rules', true, `checked ${plural(firebaseFiles.length, 'rules file')}`);
+  else add('firebase', 'Firebase rules', false, firebaseJson ? 'not checked: the project uses Firebase, but no rules files were found. Rules set in the Firebase console can’t be checked from the code.' : 'no rules files found');
+
+  const stripe = scan.files.filter((f) => live(f.path) && findings(f.path).some((x) => x.k === 'stripe-unsigned' || x.k === 'stripe-signed')).length;
+  const usesStripe = (scan.externals || []).some((e) => e.name === 'stripe' || /^@stripe\//.test(e.name || ''));
+  if (stripe) add('stripe', 'Stripe webhooks', true, `checked ${plural(stripe, 'file')} that receive${stripe === 1 ? 's' : ''} Stripe events`);
+  else add('stripe', 'Stripe webhooks', false, usesStripe ? 'the app uses Stripe, but no code that receives its events was found' : 'no Stripe code found');
+
+  const readable = scan.files.filter((f) => ['code', 'config', 'docs'].includes(f.category));
+  const big = readable.filter((f) => f.tooLarge).length;
+  add('secrets', 'Secrets in code', readable.length > big, `read ${plural(readable.length - big, 'file')}${big ? `; ${plural(big, 'file')} too big to read ${big === 1 ? 'wasn’t' : 'weren’t'} checked` : ''}`);
+  return out;
+}
 
 // ---------- "not a problem": issues people dismissed from the Health panel ----------
 // serve.mjs saves them to floorplan/health-dismissed.json as { dismissed: [{ id, locations: ['file:line'], reason, at }] }.

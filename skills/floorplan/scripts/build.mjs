@@ -663,6 +663,12 @@ const hs = graph.health?.summary;
 if (hs && (hs.high || hs.medium || hs.low)) {
   report.push(`${scan.blueprint ? 'DESIGN REVIEW' : 'HEALTH'}  ${hs.high} important · ${hs.medium} worth fixing · ${hs.low} minor`);
   for (const i of graph.health.issues.filter((x) => x.severity !== 'low' && !dismissalFor(x, graph.health.dismissed)).slice(0, 8)) report.push(`  [${i.severity}] ${i.title}`);
+} else if (hs && !scan.blueprint) report.push('HEALTH  nothing found');
+// what each check had to look at: a clean result where a check found nothing to read isn't a clean bill of health
+const healthChecked = Array.isArray(graph.health?.checked) ? graph.health.checked : [];
+if (healthChecked.length) {
+  report.push('  what was checked:');
+  for (const c of healthChecked) report.push(`  ${c.loud ? '!' : c.checked ? '✓' : '·'} ${c.label}: ${c.text}`);
 }
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
 report.push(graph.recent
@@ -688,6 +694,7 @@ else {
       kind: scan.blueprint ? 'design-review' : 'health',
       high: hs.high, medium: hs.medium, low: hs.low,
       important: graph.health.issues.filter((x) => x.severity !== 'low' && !dismissalFor(x, graph.health.dismissed)).map((i) => ({ severity: i.severity, kind: i.kind, title: i.title })),
+      checked: healthChecked,
     } : null,
     screens: graph.screens?.length || 0,
     recentWork: { cards: graph.recent?.items.length || 0, tasks: graph.recent?.tasks.length || 0, file: fs.existsSync(recentFile) },

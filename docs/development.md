@@ -85,6 +85,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
 | `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI and Express samples in `fixtures/`) |
 | `public-by-design.test.mjs` | what Health leaves alone because it's public on purpose (feeds, addresses a project publishes, cached responses, routes with nothing private, Payload CMS, tracker tokens, files a tool opens), each with a near miss it must still report |
+| `health-checked.test.mjs` | Health's "What was checked": each check says what it read or that it found nothing, louder when code runs a server but no endpoints were found, in graph.json, the build's report and `--json`, and the Health panel (its code run against a stand-in viewer) |
 | `nuxt.test.mjs` | Nuxt auto-imports: pages linked to the components and composables they use without an import, from `.nuxt/`'s name lists or Nuxt's folder conventions, names a file imports or defines itself left alone, `.nuxt/` kept off the map |
 | `stack-health.test.mjs` | Health's checks for Supabase row-level security (including dynamic SQL in a loop), Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
 | `django.test.mjs` | Django: an app's `urls.py` included under a prefix, and the website's requests matched to it |
