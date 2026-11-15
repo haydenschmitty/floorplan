@@ -71,6 +71,28 @@ test("a builder's own template, and a URL built but not requested (a link), are 
   assert.ok(!r.calls.some((c) => [8, 12, 42].includes(c.line)), JSON.stringify(r.calls));
 });
 
+test('a request on the line right after a one-line builder still counts; a builder whose call wraps covers its lines', () => {
+  const r = extract([
+    `export class TasksService {`,
+    `  constructor(private readonly http: HttpClient) {}`,
+    '  private url(id: string, suffix = \'\'): string { return `${this.base}/tasks/${id}${suffix}`; }',
+    '  list() { return this.http.get<Task[]>(`${this.base}/tasks`); }',
+    '  private noteUrl(id: string, noteId: string): string { return this.url(id, `/notes/${noteId}`); }',
+    '  archive() { return this.http.post(`${this.base}/tasks/archive`, {}); }',
+    `  private fileUrl(id: string, name: string): string {`,
+    `    return this.url(`,
+    '      id, `/files/${name}`); // the url of one file',
+    `  }`,
+    `  done(id: string) { return this.http.put(this.url(id, '/done'), {}); }`,
+    `}`,
+  ].join('\n'), 'typescript', 'web/src/tasks.service.ts');
+  assert.deepEqual(r.calls.map((c) => `${c.line} ${c.method} ${c.path}`).sort((a, b) => parseInt(a) - parseInt(b)), [
+    '4 GET /tasks',
+    '6 POST /tasks/archive',
+    '11 PUT /tasks/${x}/done',
+  ]);
+});
+
 let root, graph;
 before(() => {
   root = makeProject({
