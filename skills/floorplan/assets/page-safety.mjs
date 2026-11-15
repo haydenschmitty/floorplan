@@ -111,3 +111,45 @@ export function withPolicy(html, kind) {
   if (!head) throw new Error('the page has no <head> to put its policy in');
   return clean.slice(0, head.index + head[0].length) + tag + clean.slice(head.index + head[0].length);
 }
+
+// ---------- editor links ----------
+// "Open in editor" is a link the browser hands to an editor, built from a template with {path} (the file's full
+// path), {line} and {column}. It can be set in architecture.json ("editor") or on the map's server (--editor), so
+// it's text Floorplan didn't write: only editors' own link schemes are allowed (never javascript:, data:, a web
+// address or file:), and nothing that could end the attribute it goes in. The viewer checks the same list again.
+/** The editors with a name of their own. A template is any link in one of EDITOR_SCHEMES with {path} in it. */
+export const EDITOR_PRESETS = {
+  vscode: 'vscode://file/{path}:{line}',
+  'vscode-insiders': 'vscode-insiders://file/{path}:{line}',
+  vscodium: 'vscodium://file/{path}:{line}',
+  cursor: 'cursor://file/{path}:{line}',
+  windsurf: 'windsurf://file/{path}:{line}',
+  zed: 'zed://file/{path}:{line}',
+  // JetBrains IDEs answer these where they register their link (IntelliJ IDEA and PhpStorm on macOS, or with Toolbox)
+  idea: 'idea://open?file={path}&line={line}',
+  phpstorm: 'phpstorm://open?file={path}&line={line}',
+};
+export const EDITOR_SCHEMES = ['vscode', 'vscode-insiders', 'vscodium', 'cursor', 'windsurf', 'zed', 'idea', 'phpstorm', 'pycharm', 'webstorm', 'goland', 'rubymine', 'clion', 'rider', 'txmt', 'mvim', 'subl'];
+export const EDITOR_DEFAULT = EDITOR_PRESETS.vscode;
+// characters that could end an attribute or a link: quotes, angle brackets, the backtick and the backslash
+const LINK_BREAKERS = ['"', "'", '<', '>', '`', String.fromCharCode(92)];
+/**
+ * An editor setting (a preset's name or a link template) as the template to use: { template } or { error }, in words.
+ * Nothing at all is { template: null }: VS Code, as always.
+ */
+export function editorTemplate(value) {
+  if (value === undefined || value === null || value === '') return { template: null };
+  if (typeof value !== 'string') return { error: `must be an editor's name (${Object.keys(EDITOR_PRESETS).join(', ')}) or a link like "zed://file/{path}:{line}"` };
+  const v = value.trim();
+  if (Object.hasOwn(EDITOR_PRESETS, v.toLowerCase())) return { template: EDITOR_PRESETS[v.toLowerCase()] };
+  const shown = JSON.stringify(v.length > 60 ? `${v.slice(0, 57)}…` : v);
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(v)?.[1].toLowerCase();
+  if (!scheme) return { error: `${shown} isn't an editor's name (${Object.keys(EDITOR_PRESETS).join(', ')}) or a link like "zed://file/{path}:{line}"` };
+  if (!EDITOR_SCHEMES.includes(scheme)) return { error: `${shown} starts with "${scheme}:", which isn't an editor's link; use one of ${EDITOR_SCHEMES.map((s) => s + ':').join(', ')}` };
+  if (v.length > 300) return { error: `${shown} is longer than 300 characters` };
+  if ([...v].some((c) => c.charCodeAt(0) <= 32 || c.charCodeAt(0) === 127 || LINK_BREAKERS.includes(c))) return { error: `${shown} has a space, quote, angle bracket, backslash or control character, which a link can't` };
+  const unknown = [...v.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]).filter((k) => !['path', 'line', 'column'].includes(k));
+  if (unknown.length) return { error: `${shown} has {${unknown[0]}}; a link can use {path}, {line} and {column}` };
+  if (!v.includes('{path}')) return { error: `${shown} needs {path} where the file's path goes` };
+  return { template: v };
+}

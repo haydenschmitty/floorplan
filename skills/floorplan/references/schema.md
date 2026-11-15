@@ -18,6 +18,7 @@ Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-
 | `audience` | `"everyone"` \| `"developers"` | no | who names and descriptions are written for. Default `"everyone"`: plain language a non-technical owner understands (what it does for the business, in everyday words). `"developers"`: technical style for engineers |
 | `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs`. The scan and the build list what's left out, by category, on their `NOT MAPPED` line |
 | `ignore` | string[] | no | globs for files to leave off the board entirely (generated code, vendored libs, fixtures) |
+| `editor` | string | no | the editor **Open in editor** opens. Default VS Code. A name (`vscode`, `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed`, `idea`, `phpstorm`) or a link with `{path}`, `{line}` and `{column}` in an editor's own scheme, like `"zed://file/{path}:{line}"`. Set it only when the user says which editor they use |
 
 ## nodes
 
