@@ -613,13 +613,78 @@ function extractRust(src) {
 
 // ---------- JVM ----------
 
+// A declaration at the start of a line: the file's top level, where other files can see it. Kotlin files
+// often hold several classes, functions and values, and Java files package-private classes beside the
+// public one, none of them named after the file.
+const JVM_TOP = /^(?:@[\w.]+(?:\([^)\n]{0,300}\))?[ \t]+){0,10}((?:(?:public|internal|protected|private|abstract|final|open|sealed|data|enum|annotation|value|inline|inner|const|lateinit|suspend|tailrec|operator|infix|external|expect|actual|static|strictfp|non-sealed|case|implicit)[ \t]+){0,10})(fun[ \t]+interface|@interface|class|interface|object|trait|record|enum|typealias|fun|val|var)[ \t]+([^\n]{1,400})/gm;
+const ANGLES = /<[^<>\n]{0,200}>/g;
+
+/** The name a top-level declaration gives other files: `Foo` in `class Foo<T>`, `goes` in `fun <T> List<T>.goes(`. */
+function jvmTopName(kind, rest) {
+  let head = rest;
+  if (kind === 'fun') head = rest.split('(')[0];
+  else if (kind === 'val' || kind === 'var') head = rest.split(/[:=]|[ \t]by[ \t]/)[0];
+  else return /^`?(\w+)/.exec(rest)?.[1] || null;
+  for (let i = 0; i < 4 && head.includes('<'); i++) head = head.replace(ANGLES, '');
+  const name = head.trim().split(/[ \t]/)[0].split('.').pop().replace(/`/g, '');
+  return /^[A-Za-z_]\w*$/.test(name) ? name : null;
+}
+
+// Blank string and character literals (Kotlin raw strings included), so names quoted in them aren't uses.
+// One pass: an unclosed quote ends at its line's end, an unclosed """ at the file's.
+const stripJvmStrings = (code) => {
+  let out = '';
+  let from = 0;
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c !== '"' && c !== "'") continue;
+    let j;
+    if (c === '"' && code.startsWith('"""', i)) { j = code.indexOf('"""', i + 3); j = j < 0 ? code.length : j + 3; }
+    else {
+      j = i + 1;
+      while (j < code.length && code[j] !== c && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1;
+      j = Math.min(j + 1, code.length);
+    }
+    out += code.slice(from, i) + blank(code.slice(i, j));
+    from = i = j;
+    i--;
+  }
+  return out + code.slice(from);
+};
+
+/** Every name the file's code mentions (not its package and import lines), as one space-separated string, minus the names it declares itself. */
+function jvmMentions(code) {
+  const text = stripJvmStrings(code).replace(/^[ \t]*(?:package|import)[ \t][^\n]*/gm, '');
+  const own = new Set();
+  for (const m of text.matchAll(/\b(?:val|var|fun|class|interface|object|enum|record|typealias)[ \t]+`?(\w+)/g)) own.add(m[1]);
+  const seen = new Set();
+  for (const m of text.matchAll(/[A-Za-z_]\w{0,99}/g)) {
+    if (seen.size >= 20000) break;
+    if (!own.has(m[0])) seen.add(m[0]);
+  }
+  return [...seen].join(' ');
+}
+
 function extractJvm(src) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
-  const pkg = /^[ \t]*package\s+([\w.]+)/m.exec(code)?.[1] || null;
+  const pkgMatch = /^[ \t]*package\s+([\w.]+)/m.exec(code);
+  const pkg = pkgMatch?.[1] || null;
   const imports = all(/^[ \t]*import\s+(?:static\s+)?([\w.*]+)/gm, code).map((m) => ({ spec: m[1], names: [], line: at(m.index) }));
+  // Kotlin and Java see the rest of their own package without an import, as if it were `import <pkg>.*`
+  if (pkg) imports.push({ spec: `${pkg}.*`, names: [], line: at(pkgMatch.index), implicit: true });
   const symbols = [];
   for (const m of all(/^[ \t]*(?:public\s+|internal\s+)?(?:abstract\s+|final\s+|data\s+|sealed\s+|open\s+)*(class|interface|enum|record|object)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
+  // Top-level names other files can use (private ones are the file's own), and the names this file uses
+  const decls = [];
+  if (pkg) {
+    for (const m of all(JVM_TOP, code)) {
+      if (/\bprivate\b/.test(m[1])) continue;
+      const kind = m[2].startsWith('fun') && m[2] !== 'fun' ? 'interface' : m[2].replace('@', '');
+      const name = jvmTopName(kind, m[3]);
+      if (name && !decls.includes(name)) decls.push(name);
+    }
+  }
   const routes = [];
   const classPrefix = /@RequestMapping\(\s*(?:value\s*=\s*|path\s*=\s*)?"([^"]*)"[^)]{0,500}\)\s*(?:@\w+(?:\([^)]{0,500}\))?\s*){0,20}(?:public\s+)?class/.exec(code)?.[1] || '';
   for (const m of all(/@(Get|Post|Put|Patch|Delete|Request)Mapping\(\s*(?:value\s*=\s*|path\s*=\s*)?"([^"]*)"/g, code)) {
@@ -627,7 +692,7 @@ function extractJvm(src) {
     routes.push({ method: m[1] === 'Request' ? 'ANY' : m[1].toUpperCase(), path: classPrefix + m[2], var: null, line: at(m.index) });
   }
   const { calls, hosts } = extractCalls(code, at, { skip: /@\w+Mapping/ });
-  return { imports, symbols, routes, mounts: [], calls, hosts, pkg };
+  return { imports, symbols, routes, mounts: [], calls, hosts, pkg, ...(pkg ? { decls, mentions: jvmMentions(code) } : {}) };
 }
 
 // ---------- small ones ----------

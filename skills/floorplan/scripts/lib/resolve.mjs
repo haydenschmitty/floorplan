@@ -302,13 +302,66 @@ export function createResolver(root, files) {
   };
 
   // ---- JVM ----
+  // `<package>.<name>` -> the files declaring it: each file's own name, and every top-level class, function,
+  // value and type alias in it (a Kotlin file often holds several, none named after the file)
   const jvmIndex = new Map();
-  for (const f of files) if (f.pkg) jvmIndex.set(`${f.pkg}.${P.basename(f.path).replace(/\.\w+$/, '')}`, f.path);
-  const resolveJvm = (from, spec) => {
-    if (jvmIndex.has(spec)) return { file: jvmIndex.get(spec) };
+  const addJvm = (key, file) => { const l = jvmIndex.get(key); if (!l) jvmIndex.set(key, [file]); else if (!l.includes(file)) l.push(file); };
+  // package -> top-level name -> the files declaring it, for names a file uses without importing them
+  const jvmPackages = new Map();
+  for (const f of files) {
+    if (!f.pkg) continue;
+    addJvm(`${f.pkg}.${P.basename(f.path).replace(/\.\w+$/, '')}`, f.path);
+    if (!jvmPackages.has(f.pkg)) jvmPackages.set(f.pkg, new Map());
+    const names = jvmPackages.get(f.pkg);
+    for (const d of f.decls || []) {
+      addJvm(`${f.pkg}.${d}`, f.path);
+      if (!names.has(d)) names.set(d, []);
+      names.get(d).push(f.path);
+    }
+  }
+  const jvmHit = (list) => (list.length === 1 ? { file: list[0] } : { files: list });
+  // Tests see the code they test, but nothing outside them sees a test's helpers
+  const JVM_TEST = /(^|\/)(src\/(test|androidTest|testFixtures|\w+Test)|tests?)\//;
+  /**
+   * The files of package `pkg` whose top-level names `file` mentions: what Kotlin and Java see without an
+   * import in their own package, or through `import pkg.*`. Looked up name by name, so a big package costs
+   * no more than a small one.
+   */
+  const jvmMentioned = (file, pkg, shadowedBy) => {
+    const names = jvmPackages.get(pkg);
+    if (!names?.size || !file.mentions) return [];
+    // An explicit import of the same simple name wins over the package (and, for `pkg.*`, so does the file's own package)
+    const imported = new Set((file.imports || []).filter((i) => !i.spec.endsWith('*')).map((i) => i.spec.split('.').pop()));
+    const own = shadowedBy ? jvmPackages.get(shadowedBy) : null;
+    const fromTest = JVM_TEST.test(file.path);
+    const out = new Set();
+    for (const n of file.mentions.split(' ')) {
+      const hits = names.get(n);
+      if (!hits || imported.has(n) || own?.has(n)) continue;
+      for (const h of hits) if (h !== file.path && (fromTest || !JVM_TEST.test(h))) out.add(h);
+    }
+    return [...out].sort();
+  };
+  const resolveJvm = (file, imp) => {
+    const spec = imp.spec;
+    if (spec.endsWith('.*') && jvmPackages.has(spec.slice(0, -2))) {
+      const pkg = spec.slice(0, -2);
+      const hits = jvmMentioned(file, pkg, imp.implicit || pkg === file.pkg ? null : file.pkg);
+      // a package of the project's own: linked to what's used from it, never an external package
+      return hits.length ? jvmHit(hits) : { internal: true };
+    }
+    if (imp.implicit) return { internal: true };
+    if (jvmIndex.has(spec)) return jvmHit(jvmIndex.get(spec));
     if (/^(java|javax|kotlin|scala|jdk|sun)\./.test(spec)) return { builtin: true };
     const parts = spec.split('.').slice(0, 20);
-    for (let k = parts.length - 1; k >= 2; k--) if (jvmIndex.has(parts.slice(0, k).join('.'))) return { file: jvmIndex.get(parts.slice(0, k).join('.')) };
+    // `Outer.Inner`, `Util.CONSTANT` (static imports), `Foo.Companion.bar`: the longest prefix that names a
+    // declaration. A package declared in the scanned code is the project's own, so reaching one first means
+    // a name missing from it, never an external package.
+    for (let k = parts.length - 1; k >= 1; k--) {
+      const prefix = parts.slice(0, k).join('.');
+      if (jvmPackages.has(prefix)) return { unresolved: true };
+      if (k >= 2 && jvmIndex.has(prefix)) return jvmHit(jvmIndex.get(prefix));
+    }
     return { external: parts.slice(0, Math.min(3, parts.length - 1)).join('.'), eco: 'maven' };
   };
 
@@ -330,7 +383,7 @@ export function createResolver(root, files) {
       case 'python': return resolvePy(file.path, imp, file.repo);
       case 'go': return resolveGo(file.path, imp.spec);
       case 'rust': return resolveRust(file.path, imp);
-      case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file.path, imp.spec);
+      case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file, imp);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
