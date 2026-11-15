@@ -398,6 +398,8 @@ else {
       httpMatches: http.length,
       importEdges: scan.edges.length,
       autoImportLinks: nuxt.edges.length,
+      wayfinderLinks: wayfinderLinks.length,
+      inertiaPages: inertia.hints.length,
       unresolvedImports: unresolved,
       externalPackages: scan.externals.length,
       notRead: unread.length,

@@ -217,3 +217,12 @@ test('Health: a Laravel endpoint is protected by its middleware, its groups, its
   assert.match(feedback.fix, /POST \/feedback — app\/Http\/Controllers\/FeedbackController\.php:10 \(store\), route registered in routes\/web\.php:\d+/);
   assert.match(feedback.fix, /the '(auth|staff|can)' middleware|the same check/);
 });
+
+test("the scan's --json counts Wayfinder calls and Inertia pages, and What was checked counts every Laravel endpoint", () => {
+  const counts = JSON.parse(run('scan.mjs', root, '--json')).counts;
+  assert.equal(counts.wayfinderLinks, 4);
+  assert.equal(counts.inertiaPages, 5);
+  assert.deepEqual(counts.notMapped, { config: 2 }, 'PHP files are code, on the map');
+  const endpoints = graph.health.checked.find((c) => c.check === 'endpoints');
+  assert.equal(endpoints.text, `checked ${graph.routes.length} endpoints`);
+});

@@ -776,10 +776,32 @@ function controllerMiddleware({ bare, close, args, text }) {
   return out;
 }
 
+// PHP that answers web requests itself: it reads the request, or declares routes in a way the scan doesn't read
+// yet (Symfony's #[Route], Slim's or Lumen's $app->get('/…')). Read outside comments and strings.
+const PHP_SERVER_CODE = /\$_(?:GET|POST|REQUEST|FILES)\b|\$_SERVER\s*\[|#\[\s*Route\s*\(|\$(?:app|router)\s*->\s*(?:get|post|put|patch|delete|any|map)\s*\(/g;
+function phpServerCode({ code, bare }) {
+  for (const m of bare.matchAll(PHP_SERVER_CODE)) {
+    const next = code.slice(m.index + m[0].length, m.index + m[0].length + 40);
+    if (m[0].startsWith('$_SERVER')) {
+      const key = /^\s*(['"])(REQUEST_(?:METHOD|URI))\1/.exec(next);
+      if (key) return { at: m.index, how: 'reads', what: `$_SERVER['${key[2]}']` };
+    } else if (m[0].startsWith('$')) {
+      if (!m[0].startsWith('$_')) { if (/^\s*['"]\//.test(next)) return { at: m.index, how: 'calls', what: m[0].replace(/\s*\($/, '').replace(/\s+/g, '') }; }
+      else return { at: m.index, how: 'reads', what: m[0] };
+    } else return { at: m.index, how: 'declares routes with', what: '#[Route]' };
+  }
+  return null;
+}
+
 function phpChecks(src, f, out) {
   if (TEST_FILE.test(f.path)) return;
   const php = phpSource(src);
   const { code, bare, close, text } = php;
+  // code that answers web requests, for "What was checked" when no endpoints were found (templates only show what they're given)
+  if (!EXAMPLE_FILE.test(f.path) && !/\.blade\.php$/i.test(f.path)) {
+    const sv = phpServerCode(php);
+    if (sv) out.push({ k: 'server-code', line: lineIndex(code)(sv.at), how: sv.how, what: sv.what });
+  }
   if (LARAVEL_MW_CONFIG.test(bare)) out.push({ k: 'laravel-mw', ...laravelMiddlewareConfig(php) });
   const mw = controllerMiddleware(php);
   if (mw.length) out.push({ k: 'php-ctrl-mw', items: mw });
@@ -1986,7 +2008,7 @@ function whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTabl
   for (const f of scan.files) {
     if (!live(f.path) || f.category !== 'code') continue;
     const sv = findings(f.path).find((x) => x.k === 'server-code');
-    if (sv) servers.push({ file: f.path, what: `it calls ${sv.what}` });
+    if (sv) servers.push({ file: f.path, what: `it ${sv.how || 'calls'} ${sv.what}` });
     else if (/(^|\/)supabase\/functions\/[^/]+\/index\.[jt]s$/.test(f.path)) servers.push({ file: f.path, what: 'it’s a Supabase Edge Function' });
   }
   if (checkedRoutes) add('endpoints', 'Endpoint sign-in', true, found > checkedRoutes
