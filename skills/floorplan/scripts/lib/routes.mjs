@@ -267,7 +267,9 @@ function inheritedRoutes(files) {
       if (t.abstract) continue;
       for (const b of t.bases) {
         const base = bases.get(`${f.repo ?? ''}|${b}`);
-        if (base) out.push(...base.actions.flatMap((a) => inheritedAction(f, t, a, base.attrs)));
+        // every action once per subclass: a real project has a handful of each, so stop well before code
+        // you didn't write could multiply them into millions
+        if (base) for (const a of base.actions) { for (const r of inheritedAction(f, t, a, base.attrs)) out.push(r); if (out.length >= 20000) return out; }
       }
     }
   }

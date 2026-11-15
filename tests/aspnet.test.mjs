@@ -293,10 +293,50 @@ test('Health, C#: CORS that allows every site, Stripe webhooks without a signatu
   const signed = 'using Stripe;\nvar e = EventUtility.ConstructEvent(json, Request.Headers["Stripe-Signature"], secret);\nif (e.Type == EventTypes.InvoicePaid) Pay(e);\n';
   assert.deepEqual(health(signed, 'Api/StripeWebhook.cs', 'stripe-unsigned'), []);
 
+  // a password-like value, put together here so none is written in the repo
+  const pw = ['Tr0', 'ub4', 'dor&', '3x'].join('');
   const conn = (src) => findIssues(src, { path: 'Api/appsettings.json', category: 'config', lang: 'json' }).filter((x) => x.k === 'secret').map((x) => x.what);
-  assert.deepEqual(conn('{ "ConnectionStrings": { "Db": "Server=prod-sql.shop.io;Database=shop;User Id=app;Password=Tr0ub4dor&3x;" } }'), ['a database password inside a connection string']);
-  assert.deepEqual(conn('{ "ConnectionStrings": { "Db": "Host=localhost;Username=app;Password=Tr0ub4dor&3x" } }'), []);
+  assert.deepEqual(conn(`{ "ConnectionStrings": { "Db": "Server=prod-sql.shop.io;Database=shop;User Id=app;Password=${pw};" } }`), ['a database password inside a connection string']);
+  assert.deepEqual(conn(`{ "ConnectionStrings": { "Db": "Host=localhost;Username=app;Password=${pw}" } }`), []);
   assert.deepEqual(conn('{ "ConnectionStrings": { "Db": "Host=db.shop.io;Password=${DB_PASSWORD}" } }'), []);
+});
+
+test('Health, C#: connection-string passwords follow the same rules as other secrets, and CORS look-alikes stay quiet', () => {
+  const pw = ['Tr0', 'ub4', 'dor&', '3x'].join('');
+  const conn = (value, file = 'Api/appsettings.json', lang = 'json') => findIssues(`{ "ConnectionStrings": { "Db": "${value}" } }`, { path: file, category: lang === 'json' ? 'config' : 'code', lang })
+    .filter((x) => x.k === 'secret').map((x) => x.what);
+  const real = ['a database password inside a connection string'];
+  // real ones, in any spelling of the keys, and in C# code too
+  assert.deepEqual(conn(`Server=tcp:prod-sql.shop.io,1433;Initial Catalog=shop;User ID=app;Password=${pw};Encrypt=True`), real);
+  assert.deepEqual(conn(`Data Source=prod-sql.shop.io;Database=shop;UID=app;PWD=${pw}`), real);
+  assert.deepEqual(conn(`Host=db.shop.io;Port=5432;Username=app;password=${pw}`), real);
+  assert.deepEqual(findIssues(`var cs = "Server=prod-sql.shop.io;User Id=app;Password=${pw};";\n`, { path: 'Api/Db.cs', category: 'code', lang: 'csharp' })
+    .filter((x) => x.k === 'secret').map((x) => x.what), real);
+  // and what only looks like one: this computer, variables a pipeline or the code fills in, placeholders, made-up words
+  for (const value of [
+    `Server=(localdb)\\\\MSSQLLocalDB;Database=shop;Password=${pw}`,
+    `Server=.;Database=shop;User Id=sa;Password=${pw}`,
+    `Server=127.0.0.1,1433;Password=${pw}`,
+    'Server=prod-sql.shop.io;User Id=app;Password=$(DbPassword)',
+    'Server=prod-sql.shop.io;User Id=app;Password=%DB_PASSWORD%',
+    'Server=prod-sql.shop.io;User Id=app;Password=#{DbPassword}',
+    'Server=prod-sql.shop.io;User Id=app;Password={password}',
+    'Server=prod-sql.shop.io;User Id=app;Password=<your-password>',
+    'Server=prod-sql.shop.io;User Id=app;Password=your_password_here',
+    'Server=prod-sql.shop.io;User Id=app;Password=changeme',
+    'Server=prod-sql.shop.io;User Id=app;Password=Password123',
+    'Server=prod-sql.shop.io;User Id=app;Password=',
+    'Server=prod-sql.shop.io;Integrated Security=true',
+  ]) assert.deepEqual(conn(value), [], value);
+  // a test project's settings are left alone, as other secrets in tests are
+  assert.deepEqual(conn(`Server=prod-sql.shop.io;Password=${pw}`, 'tests/Api.Tests/appsettings.json'), []);
+
+  const cors = (src) => health(src, 'Api/Program.cs', 'cors-any').map((x) => x.how);
+  assert.deepEqual(cors('// p.AllowAnyOrigin();\np.WithOrigins(builder.Configuration["Cors:Origins"]);'), [], 'a commented-out line');
+  assert.deepEqual(cors('/* p.SetIsOriginAllowed(_ => true) */ p.WithOrigins("https://shop.example.com");'), [], 'a commented-out block');
+  assert.deepEqual(cors('p.SetIsOriginAllowed(origin => allowed.Contains(origin)).AllowCredentials();'), [], 'an origin check that checks');
+  assert.deepEqual(cors('var docs = "use .AllowAnyOrigin() only for public APIs"; // see https://learn.example.com/cors'), [], 'words in a string');
+  assert.deepEqual(cors('p.WithOrigins("*");'), ['WithOrigins("*")']);
 });
 
 // ---------- across files: handlers, base controllers, project mappers, base-class chains ----------
@@ -384,4 +424,35 @@ test('C# only: other frameworks still match case exactly, and a non-C# folder na
   const paths = scan.routes.map((r) => `${r.method} ${r.path}`);
   assert.ok(paths.includes('POST /api/checkout/variant'), 'a JavaScript folder named Checkout.ABTests is not a .NET test project');
   assert.ok(!paths.includes('GET /api/stub'), 'C# files in Shop.Api.Tests are');
+});
+
+// ---------- code built to make pattern matching slow ----------
+
+test('C# files built to make pattern matching slow are read quickly, endpoints and Health included', () => {
+  const mb = (unit, n = 2) => unit.repeat(Math.ceil((n * 1024 * 1024) / unit.length));
+  const cases = {
+    'unclosed [ on every line': mb('[\n'),
+    'modifiers with no declaration': mb('public '),
+    'Map calls on one line': mb('app.MapGet("/x", a'),
+    'MapControllerRoute( with no pattern': mb('MapControllerRoute('),
+    'RequireAuthorization( with no ;': mb('a.RequireAuthorization('),
+    'unclosed <see cref="': mb('/// <see cref="'),
+    'unclosed <summary>': mb('/// <summary>\n'),
+    'controllers nested without end': mb('class AController {\n'),
+    'methods nested without end': mb('public void M() {\n'),
+    'arrow bodies with no ;': mb('public int M() =>\n'),
+    'a group prefix that keeps growing': mb('var g = g.MapGroup("/a");\n'),
+    'connection-string keys': mb('Server='),
+    'attribute and action on every line': mb('[HttpGet("a")] public void X() {}\n'),
+    'unclosed /* and strings': mb('/*"\'@"'),
+  };
+  for (const [name, src] of Object.entries(cases)) {
+    let t = performance.now();
+    const r = extract(src, 'csharp', 'Api/Big.cs');
+    const read = performance.now() - t;
+    t = performance.now();
+    findIssues(src, { path: 'Api/Big.cs', category: 'code', lang: 'csharp', ...r });
+    const checked = performance.now() - t;
+    assert.ok(read < 2000 && checked < 2000, `${name}: read in ${Math.round(read)} ms, checked in ${Math.round(checked)} ms`);
+  }
 });
