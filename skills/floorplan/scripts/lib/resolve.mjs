@@ -27,15 +27,24 @@ export function createResolver(root, files) {
     const json = readJsonLoose(path.join(root, file));
     if (json) {
       const dir = P.dirname(file);
-      let opts = json.compilerOptions || {};
-      let optsDir = dir;
-      if ((!opts.paths && !opts.baseUrl) && typeof json.extends === 'string' && json.extends.startsWith('.')) {
-        const extFile = P.normalize(P.join(dir, json.extends.endsWith('.json') ? json.extends : json.extends + '.json'));
+      const opts = json.compilerOptions || {};
+      let paths;
+      let pathsDir = dir;
+      let baseUrl;
+      // Later bases override earlier ones, then the child overrides both. Paths and baseUrl
+      // can come from different configs, so keep their declaring directories separately.
+      const bases = Array.isArray(json.extends) ? json.extends : [json.extends];
+      for (const ext of bases) {
+        if (typeof ext !== 'string' || !ext.startsWith('.')) continue;
+        const extFile = P.normalize(P.join(dir, ext.endsWith('.json') ? ext : ext + '.json'));
         const base = fileSet.has(extFile) ? loadTsconfig(extFile) : null;
-        if (base) { opts = base.raw; optsDir = base.optsDir; }
+        if (base?.hasPaths) { paths = base.paths; pathsDir = base.pathsDir; }
+        if (base?.hasBaseUrl) baseUrl = base.baseDir;
       }
-      const baseDir = opts.baseUrl ? P.normalize(P.join(optsDir, opts.baseUrl)) : optsDir;
-      cfg = { raw: opts, optsDir, baseDir, hasBaseUrl: !!opts.baseUrl, paths: Object.entries(opts.paths || {}) };
+      if (opts.paths) { paths = Object.entries(opts.paths); pathsDir = dir; }
+      if (typeof opts.baseUrl === 'string') baseUrl = P.normalize(P.join(dir, opts.baseUrl));
+      cfg = { paths: paths || [], pathsDir, hasPaths: paths !== undefined,
+        baseDir: baseUrl ?? pathsDir, hasBaseUrl: baseUrl !== undefined };
     }
     tsconfigCache.set(file, cfg);
     return cfg;

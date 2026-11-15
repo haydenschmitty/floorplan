@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Imports stay linked when TypeScript settings come from several files:** local arrays in `tsconfig.json`'s `extends` now preserve inherited path aliases. Later configurations and the project's own settings take precedence, and relative paths keep the correct starting directory.
+
 ## 0.8.0 (2026-11-12)
 
 - **An embedded map can hand "Ask about this" to the page around it:** an exported copy shown inside another page has no Ask bar, so its right-click menu had no Ask items. The page can now opt in by adding `ask=host` to the map's address. **Ask about this** then appears on cards, lines and the background, and sends that page a `floorplan:ask` message with the chosen items' ids and names, so its own Ask can take the question. Nothing changes for maps opened without it. See [Embedding the map](docs/using-the-map.md#handing-ask-about-this-to-the-page-around-the-map).
