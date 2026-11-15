@@ -117,7 +117,7 @@ test('a map built under Cursor records it, leaves Claude and Codex notes alone, 
   } finally { cleanup(root); }
 });
 
-test('a map built in Cursor asks through Codex when it is installed, and otherwise says to ask in Cursor', async () => {
+test('a map built in Cursor waits for the Cursor chat, unless --engine names Claude or Codex', async () => {
   const root = shopApp();
   const servers = [];
   const fake = path.join(REPO, 'tests', 'fixtures', 'fake-cli', 'fake-codex.mjs');
@@ -142,15 +142,41 @@ test('a map built in Cursor asks through Codex when it is installed, and otherwi
     const missing = path.join(root, 'no-such-cli');
     const alone = await start({ FLOORPLAN_CLAUDE: missing, FLOORPLAN_CODEX: missing });
     const alonePage = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(await (await fetch(alone.base + '/')).text())[1]);
-    assert.match(alone.buf.out, /Ask questions in the Cursor chat/);
+    assert.match(alone.buf.out, /asking through the Cursor chat/);
     assert.equal(alonePage.cli, false);
     assert.equal(alonePage.want, 'cursor');
     assert.equal(alonePage.engine, null);
+    assert.equal(alonePage.cursor, true);
+    assert.equal(alonePage.change, false);
+    const headers = { 'content-type': 'application/json', 'x-floorplan-token': alonePage.token };
+    const asked = fetch(alone.base + '/api/ask', { method: 'POST', headers, body: JSON.stringify({ question: 'Where is checkout?' }) });
+    const polled = await fetch(alone.base + '/api/cursor-ask?timeout=5000', { headers });
+    const pending = await polled.json();
+    assert.equal(pending.question.question, 'Where is checkout?');
+    assert.equal(pending.question.mode, 'ask');
+    const replied = await fetch(alone.base + '/api/cursor-ask', {
+      method: 'POST', headers,
+      body: JSON.stringify({ id: pending.question.id, answer: { title: 'Checkout', answer: 'It lives in orders.', items: [], followups: ['What does an order store?'] } }),
+    });
+    assert.equal(replied.status, 200);
+    const stream = await (await asked).text();
+    assert.match(stream, /event: answer/);
+    assert.match(stream, /It lives in orders/);
+    const refused = await fetch(alone.base + '/api/cursor-ask', {
+      method: 'POST', headers,
+      body: JSON.stringify({ id: pending.question.id, answer: { title: 'Again', answer: 'no' } }),
+    });
+    assert.equal(refused.status, 404);
     const withCodex = await start({ FLOORPLAN_CLAUDE: missing, FLOORPLAN_CODEX: fake });
-    const codexPage = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(await (await fetch(withCodex.base + '/')).text())[1]);
+    const stillCursor = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(await (await fetch(withCodex.base + '/')).text())[1]);
+    assert.equal(stillCursor.cursor, true);
+    assert.equal(stillCursor.cli, false);
+    const named = await start({ FLOORPLAN_ENGINE: 'codex', FLOORPLAN_CLAUDE: missing, FLOORPLAN_CODEX: fake });
+    const codexPage = JSON.parse(/window\.FLOORPLAN_SERVER=(\{.*?\});/.exec(await (await fetch(named.base + '/')).text())[1]);
     assert.equal(codexPage.cli, true);
     assert.equal(codexPage.engine, 'codex');
     assert.equal(codexPage.want, 'codex');
+    assert.equal(codexPage.cursor, false);
   } finally {
     await Promise.all(servers.filter((s) => s.exitCode === null).map((s) => new Promise((resolve) => { s.once('exit', resolve); s.kill(); })));
     cleanup(root);

@@ -3,6 +3,7 @@ name: floorplan
 description: "Draw a floorplan of an app's codebase (one repo or several side by side), an interactive node-graph map where every subsystem, module, file and HTTP route has a human-readable name and a one-line description, connected by the imports and HTTP calls between them, at several zoom levels. It is saved as a self-contained floorplan/index.html in the codebase. Use whenever the user wants to visualize, map, diagram, document or get an architectural overview of a codebase, repo or monorepo, understand how their app works or is connected under the hood, onboard onto unfamiliar code, see how the frontend talks to the backend, or update an existing floorplan, even if they don't say \"visualize\". Also use it before any code exists: when the user shares a PRD, a spec or a description of something they want to build and asks what pieces it needs or how they'd fit together, it draws a blueprint, the same map planned from the document. Also use it in Cursor, including when the user types /floorplan."
 argument-hint: "[path-to-codebase-root] [--refresh]"
 allowed-tools:
+  - Bash(node ${CLAUDE_SKILL_DIR}/scripts/ask-poll.mjs *)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/build.mjs *)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/describe.mjs *)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/open.mjs *)
@@ -34,7 +35,15 @@ Arguments: $ARGUMENTS
 
 The scripts notice which agent is running: Cursor (`CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`), Codex (`CODEX_THREAD_ID` or `CODEX_SESSION_ID`), otherwise Claude Code. Force it with `--agent cursor|claude|codex` on build.mjs.
 
-**Cursor.** Do not write `CLAUDE.local.md` or `AGENTS.md`. In `architecture.json` set `"editor": "cursor"`. The map's Ask bar does not run Cursor: questions and new flows go to you in this chat, and **Fix with Cursor** is a prompt to paste here. Say that in the report. `open.mjs` starts a background server; if this session's terminal stops it when the command ends, tell the user to run `node floorplan/serve.mjs` in their own terminal from the codebase root, or pass `--no-open` and open the URL yourself. After the first map, if the build says `CURSOR RULE  not added`, offer once to add a personal rule so later Cursor chats look the map up first. Only on a yes, run `node <skill folder>/scripts/build.mjs <root> --cursor-rules`. It writes `.cursor/rules/floorplan.mdc` and lists that file in `.git/info/exclude`. Don't ask again if they say no.
+**Cursor.** Do not write `CLAUDE.local.md` or `AGENTS.md`. In `architecture.json` set `"editor": "cursor"`. The map does not start Cursor. After `open.mjs` prints the URL, leave a poll running in the background so the Ask bar can reach this chat:
+
+`node <skill folder>/scripts/ask-poll.mjs <root>`
+
+When it prints `CURSOR ASK` and a JSON line (`id`, `mode`, `question`, `session`, `earlier`), answer from the map and the code without editing files. Write the answer JSON to a file and send it back, then start the poll again:
+
+`node <skill folder>/scripts/ask-poll.mjs <root> --reply <id> --file <answer.json>`
+
+For `mode` `ask`, the file is `{ "title", "answer", "items": [{ "id", "note" }], "steps", "followups" }`. For `mode` `flow`, it is `{ "title", "description", "steps": [{ "id", "note" }] }` with at least two steps. Item `id`s must already be on the map. Use `[[id]]` in the answer text. Do not edit the project to answer. **Fix with Cursor** is still a prompt to paste here. A blueprint's **Change** switch is not offered: that needs `node floorplan/serve.mjs --engine claude` or `--engine codex`. Say in the report that the bar is waiting on this chat. `open.mjs` starts a background server; if this session's terminal stops it when the command ends, tell the user to run `node floorplan/serve.mjs` in their own terminal from the codebase root, or pass `--no-open` and open the URL yourself. After the first map, if the build says `CURSOR RULE  not added`, offer once to add a personal rule so later Cursor chats look the map up first. Only on a yes, run `node <skill folder>/scripts/build.mjs <root> --cursor-rules`. It writes `.cursor/rules/floorplan.mdc` and lists that file in `.git/info/exclude`. Don't ask again if they say no.
 
 **Codex.** The map's Ask bar and Fix prompts use Codex. Run `open.mjs` outside the sandbox (escalated permissions): the server has to keep running, and Ask needs the network. If that isn't allowed, give the user `node floorplan/serve.mjs`. Codex has no personal notes file, so don't add `AGENTS.md` or `CLAUDE.local.md`.
 
@@ -132,7 +141,7 @@ The codebase root is the argument if one was given, otherwise the current direct
    - It starts the map's server in the background (or reuses the one already running for this map) and opens it in their browser. Tabs that are already open reload in place instead of a new one opening.
    - It prints the URL, whether Ask works (the Claude Code CLI or Codex was found), and how to stop the server. The server also stops on its own a couple of hours after the last tab closes.
    - **In Codex**, run open.mjs outside the sandbox (ask for escalated permissions): the server has to keep running after the command ends, and Ask needs the network to reach Codex. If that isn't allowed, give the user `node floorplan/serve.mjs` to run in their own terminal from the codebase root.
-   - **In Cursor**, pass `--no-open` when you can open the printed URL beside the chat. If the server does not stay up after the command ends, tell the user to run `node floorplan/serve.mjs` in their own terminal. The `ASK` line says whether the bar can answer or whether questions belong in the Cursor chat.
+   - **In Cursor**, pass `--no-open` when you can open the printed URL beside the chat. If the server does not stay up after the command ends, tell the user to run `node floorplan/serve.mjs` in their own terminal. Then leave `ask-poll.mjs` running, as the Cursor section above says. The `ASK` line prints that command.
    - If you have an in-app browser or preview tool, pass `--no-open` and open the printed URL there instead, so the map appears right beside the conversation.
    - If this is a remote or headless machine where the user can't reach 127.0.0.1, skip open.mjs and tell them to run `node floorplan/serve.mjs` on their own machine, or offer the Claude app route (step 9).
 
@@ -142,7 +151,7 @@ The codebase root is the argument if one was given, otherwise the current direct
 
 The map has a floating Ask bar. The user types a question, and the agent answers with text plus an answer board: the relevant cards, the connections among them, a note on each card, and an optional step-by-step walkthrough. The UI is the same either way. What answers depends on where you are.
 
-- **Cursor.** The bar does not call Cursor. Questions, new flows and blueprint changes are asked in the Cursor chat, then the map is refreshed if files changed. If the Claude Code CLI or Codex is installed, the server uses that as a fallback and the bar works, including **Change** on a blueprint. Without that fallback the bar says to ask in Cursor.
+- **Cursor.** The bar does not start Cursor. A question waits on the local map server until this chat, running `ask-poll.mjs`, replies. Answer it as above and send the reply; the page shows it. Do not edit files to answer. **Change** on a blueprint is not offered unless the server was started with `--engine claude` or `--engine codex`.
 - **Claude Code CLI or Codex (best).** The map's server (`floorplan/serve.mjs`, started by open.mjs in step 8) serves it at http://127.0.0.1:4378, or the next free port. Each question runs on the user's own sign-in, in the codebase, read-only, so answers can cite real code:
   - **Claude Code:** `claude -p` with the map (via `floorplan/query.mjs`) plus Read/Grep/Glob on the source. The server finds `claude` on PATH or in `~/.local/bin`.
   - **Codex:** `codex exec` in Codex's read-only sandbox, with nothing saved to their Codex history. The server finds `codex` on PATH, or the CLI that comes with the Codex app.

@@ -25,7 +25,7 @@ function block(mapRel) {
 - \`node ${mapRel}/query.mjs path <from> <to>\`: how two things connect
 - \`node ${mapRel}/query.mjs overview\`: the whole system at a glance
 
-The map can lag behind recent edits, so confirm in the code before changing anything. Open it with \`node ${mapRel}/serve.mjs\`. After big changes, update it when asked to "update the floorplan" (only changed files are re-read). Questions about the map belong in the Cursor chat; the map's Ask bar does not run Cursor.
+The map can lag behind recent edits, so confirm in the code before changing anything. Open it with \`node ${mapRel}/serve.mjs\`. After big changes, update it when asked to "update the floorplan" (only changed files are re-read). Questions typed on the Ask bar wait on that server for this chat: leave the Floorplan skill's \`ask-poll.mjs\` running (the map's ASK line prints the command) and reply without editing files. The bar does not start Cursor.
 ${END}`;
 }
 

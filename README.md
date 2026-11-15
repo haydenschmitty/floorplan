@@ -201,7 +201,7 @@ You need [Node.js 18+](https://nodejs.org). Copy `skills/floorplan` into `.curso
 npx skills add haydenschmitty/floorplan --skill floorplan -a cursor
 ```
 
-Start a new chat and ask for a floorplan, or type `/floorplan`. The same scripts run. Questions on the map go to the Cursor chat unless the Claude Code CLI or Codex is installed, in which case the Ask bar can use that. More in [Floorplan in Cursor](docs/cursor.md).
+Start a new chat and ask for a floorplan, or type `/floorplan`. The same scripts run. On a map made here, the Ask bar waits for that Cursor chat: leave `ask-poll.mjs` running beside the map, as [Floorplan in Cursor](docs/cursor.md) describes. `--engine claude` or `--engine codex` answers with one of those instead.
 
 ## Quick start
 

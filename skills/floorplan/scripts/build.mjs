@@ -691,7 +691,7 @@ report.push(graph.recent
 // equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone,
 // and so does a map made without an agent session. Unattended mode never writes outside the map folder.
 if (agent === 'codex') report.push('AGENT  Codex: questions on the map run through Codex');
-if (agent === 'cursor') report.push('AGENT  Cursor: ask questions in the Cursor chat. The Ask bar answers only when the Claude Code CLI or Codex is installed.');
+if (agent === 'cursor') report.push('AGENT  Cursor: the Ask bar waits for this chat. Leave ask-poll.mjs running beside the map. Pass --engine claude or --engine codex to answer with one of those instead, which is what Change on a blueprint needs.');
 if (agent === 'none') report.push("AGENT  none: made without an agent session, so the map's prompts don't name one");
 let claudeNote = null;
 let cursorNote = null;

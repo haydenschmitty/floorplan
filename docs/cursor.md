@@ -47,9 +47,23 @@ In `architecture.json`, `"editor": "cursor"` makes **Open in editor** open Curso
 
 ## Asking questions
 
-The map's Ask bar does not run Cursor. Ask in the Cursor chat ("how does a refund reach the customer?"), with the map open beside you. **Fix with Cursor** and **Build this with Cursor** copy a prompt for that same chat.
+The Ask bar does not start Cursor, and a map made here does not send the question to the Claude Code CLI or Codex. The question stays on the map server, on this computer, until the Cursor chat picks it up.
 
-If the Claude Code CLI or Codex is installed, the map's server uses it as a fallback and the Ask bar answers on its own, read-only, the way it does in those apps. Without either CLI the bar says to ask in Cursor, and the map itself still works. Generating the map does not depend on the bar.
+After the map is open, leave this running in that chat (the `ASK` line prints the same command):
+
+```bash
+node <skill folder>/scripts/ask-poll.mjs <project>
+```
+
+When it prints `CURSOR ASK`, answer from the map and the code without editing files, write the answer JSON to a file, and send it back:
+
+```bash
+node <skill folder>/scripts/ask-poll.mjs <project> --reply <id> --file answer.json
+```
+
+Then start the poll again. The page shows the reply. **Fix with Cursor** and **Build this with Cursor** still copy a prompt for that same chat.
+
+Generating the map does not depend on the bar. **Change** on a blueprint is not offered on this path. To use the Claude Code CLI or Codex instead, including **Change**, start the server with `--engine claude` or `--engine codex`. Those stay read-only in the way their own CLIs enforce. The Cursor chat is not locked that way: it is already your agent, and the map only displays what it sends back.
 
 ## A note for later chats
 
@@ -59,7 +73,7 @@ A blueprint (a map of an app that isn't built yet) adds no rule, because there i
 
 ## What's different from Claude Code and Codex
 
-- **Ask** lives in the Cursor chat unless the Claude Code CLI or Codex is installed.
-- **Changing a blueprint from the Ask bar** needs that same fallback. Otherwise edit `floorplan/plan.json` or ask in the chat, then update the floorplan.
+- **Ask** waits for the Cursor chat. Leave `ask-poll.mjs` running beside the map. `--engine claude` or `--engine codex` uses that program instead.
+- **Changing a blueprint from the Ask bar** needs one of those engines. Otherwise edit `floorplan/plan.json` or ask in the chat, then update the floorplan.
 - **No Claude app.** The map opens in your browser, served from your computer.
 - **Permissions.** Cursor asks before running terminal commands, the way it does for any other command. Claude Code's `allowed-tools` list does not apply here. The scripts are the same ones.

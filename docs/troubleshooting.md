@@ -50,8 +50,11 @@ Ask Claude or Codex to "update the floorplan". If a tab was already open, it rel
 ### The map is blank, or stuck on "Laying out"
 Maps made before version 0.1.3 load their layout engine from the internet, so check your connection or any content blocker, or ask Claude to "update the floorplan". Newer maps have everything built in and work offline.
 
+### Cursor: the Ask bar stays on “Waiting for the Cursor chat”
+The map does not start Cursor. In the Cursor chat, leave the command from the map's `ASK` line running (`ask-poll.mjs`). When it prints `CURSOR ASK`, that chat answers and sends the reply back, without editing files to do it. Opening `index.html` as a file cannot wait: use `node floorplan/serve.mjs`. More in [Floorplan in Cursor](cursor.md).
+
 ### The Ask bar has no Change switch
-**Change** appears only on a [blueprint](getting-started.md#plan-something-you-havent-built-yet), opened through its server (`node floorplan/serve.mjs`) with the Claude Code CLI or Codex available. A map of real code doesn't have it: ask Claude Code or Codex to change the code, then update the floorplan.
+**Change** appears only on a [blueprint](getting-started.md#plan-something-you-havent-built-yet), opened through its server (`node floorplan/serve.mjs`) with the Claude Code CLI or Codex available. A map made in Cursor does not show it unless that server was started with `--engine claude` or `--engine codex`. A map of real code doesn't have it: ask your assistant to change the code, then update the floorplan.
 
 ### A change to a blueprint failed, or I don't like it
 If the updated plan doesn't pass Floorplan's checks after a second try, nothing is saved and the map stays as it was; try asking more specifically. If a change went through but isn't what you wanted, press **Undo** in its summary, or ask for another change. The previous versions are kept in `floorplan/.cache/history/`.

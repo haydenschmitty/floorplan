@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Cursor:** Floorplan runs as a Cursor skill. The scripts recognise a Cursor agent session, the map's Ask bar asks you to use the Cursor chat when neither the Claude Code CLI nor Codex is installed, and a personal rule at `.cursor/rules/floorplan.mdc` is written only if you say yes. Claude Code and Codex behave as before. See [Floorplan in Cursor](docs/cursor.md).
+- **Cursor:** Floorplan runs as a Cursor skill. The scripts recognise a Cursor agent session, and a personal rule at `.cursor/rules/floorplan.mdc` is written only if you say yes. On a map made in Cursor the Ask bar does not start Cursor and does not fall through to another assistant: the question waits on the local server until `ask-poll.mjs`, run from the Cursor chat, replies. `--engine claude` or `--engine codex` still selects those, which is what **Change** on a blueprint needs. Claude Code and Codex behave as before when the map was made there. See [Floorplan in Cursor](docs/cursor.md).
 
 ## 0.9.0 (2026-11-14)
 
