@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Requests through an app's own helpers are found:** calls like `apiGet('/tasks')`, `apiSend('PATCH', `/tasks/${id}`, body)` or `httpPost('/orders')` are now web requests, with the method taken from the helper's name or its first argument. A phone app that made all its calls this way showed almost none. Fixed by @Basel-Alsemsam.
+- **A client's base address wins over a closer-looking match:** when a client's other calls all go under one base (its base URL holds `/api/v2`), an address like `/tasks/${id}` now reaches `/api/v2/tasks/:id` rather than a website page at `/tasks/:id`, even when both live in the same server file. A base is only learned from calls that every equally good match agrees on, so one ambiguous call can't teach the wrong one. Fixed by @Basel-Alsemsam.
+
 ## 0.9.0 (2026-11-14)
 
 - **Flask login checks are recognised:** routes protected by `@login_required`, `@login_required_json` or `@logged_in_required` were reported as open, because names starting with "log" were taken for logging decorators. Logging decorators such as `@log_call` still do not count as login checks, and a login decorator placed above the route remains a warning. Reported by @SmmSrg in #123, fixed by @daniyyell-dev in #125.
