@@ -35,6 +35,9 @@ const THEME = {
   'storefront/snippets/badge.liquid': `{% doc %}\n  Renders a small label over a product card.\n\n  @param {string} label - The text to show\n  @example\n  {% render 'logo' %}\n{% enddoc %}\n<span>{{ label }}</span>`,
   'storefront/snippets/signup.liquid': `<form></form>`,
   'storefront/snippets/unused-badge.liquid': `<span class="badge">New</span>`,
+  // named in another file, though no tag the scan can follow renders it
+  'storefront/snippets/promo-banner.liquid': `<div class="promo"></div>`,
+  'storefront/sections/promo.liquid': `{% assign promo = 'promo-banner' %}{% include promo %}`,
   'storefront/blocks/review-stars.liquid': `<div class="stars"></div>`,
   'storefront/assets/theme.css.liquid': `body { color: {{ settings.color_text }}; }`,
   'storefront/assets/theme.js': `console.log('theme');`,
@@ -141,4 +144,46 @@ test('a snippet nothing renders is flagged unused; templates and sections never 
   const text = JSON.stringify(graph.health.issues.filter((i) => i.kind === 'unused-file'));
   assert.match(text, /storefront\/snippets\/unused-badge\.liquid/);
   assert.doesNotMatch(text, /templates\/|sections\//);
+});
+
+test('a snippet another file names is used, as anywhere else, even when no tag the scan follows renders it', () => {
+  const text = JSON.stringify(graph.health.issues.filter((i) => i.kind === 'unused-file'));
+  assert.doesNotMatch(text, /promo-banner/);
+  assert.match(text, /unused-badge/, 'the near miss is still reported');
+});
+
+test("a theme's Liquid files and page JSON are mapped as code, so NOT MAPPED counts only what's left out", () => {
+  const out = JSON.parse(run('scan.mjs', root, '--json'));
+  // the server's page.liquid and welcome.json, outside the theme
+  assert.deepEqual(out.counts.notMapped, { data: 1, other: 1 });
+  assert.ok(scan.files.filter((f) => f.path.startsWith('storefront/') && /\.(liquid|json)$/.test(f.path)).every((f) => f.category === 'code' && f.lang === 'liquid'));
+});
+
+test('a JSON template gives each section and block the line it is on, however its JSON is spaced', () => {
+  const p = 'theme/templates/page.json';
+  const src = '{\n  "sections": {\n    "main": {\n      "type": "main-page",\n      "blocks": {\n        "a": { "type" : "review-stars" }\n      }\n    }\n  }\n}\n';
+  const r = extract(src, 'liquid', p);
+  assert.deepEqual(r.imports.map((i) => `${i.spec}:${i.line}`), ['../sections/main-page.liquid:4', '../blocks/review-stars.liquid:6']);
+});
+
+test('Liquid files built to make pattern matching slow are read quickly', () => {
+  const mb = (unit) => unit.repeat(Math.ceil((2 * 1024 * 1024) / unit.length));
+  const cases = {
+    'unclosed comments': ['snippets/slow.liquid', mb('{% comment %}x')],
+    'unclosed raw and doc blocks': ['snippets/slow.liquid', mb('{% raw %}{% doc %}x')],
+    'unclosed inline comments': ['snippets/slow.liquid', mb('{% # x ')],
+    'unclosed schemas': ['sections/slow.liquid', mb('{% schema %}{')],
+    'Accepts: with no endcomment': ['snippets/slow.liquid', mb('{% comment %} Accepts:\n - a: x\n')],
+    'Accepts: then blank lines': ['snippets/slow.liquid', `{% comment %}Accepts:\n${'\n'.repeat(2 * 1024 * 1024)}{% endcomment %}`],
+    'a leading comment of blank lines': ['snippets/slow.liquid', `{% comment %}${'\n'.repeat(2 * 1024 * 1024)}{% endcomment %}`],
+    '@param with unclosed types': ['snippets/slow.liquid', mb('@param {x ')],
+    'requests on one long line': ['snippets/slow.liquid', mb("fetch('/a'); ")],
+    'many blocks in a JSON template': ['templates/slow.json', JSON.stringify({ sections: { main: { type: 'main', blocks: Object.fromEntries(Array.from({ length: 60000 }, (_, i) => [`b${i}`, { type: `block-${i}` }])) } } })],
+  };
+  for (const [name, [p, src]] of Object.entries(cases)) {
+    const t = performance.now();
+    extract(src, 'liquid', p);
+    const ms = performance.now() - t;
+    assert.ok(ms < 2000, `${name} (${(src.length / 1048576).toFixed(1)} MB) took ${Math.round(ms)} ms`);
+  }
 });

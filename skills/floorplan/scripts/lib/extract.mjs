@@ -809,8 +809,37 @@ function extractSimple(src, lang) {
 // Theme files reach each other by name ({% render 'price' %} is snippets/price.liquid), turned here into relative paths.
 
 const THEME_ROOT = /^((?:.*\/)?)(?:layout|templates|sections|snippets|blocks|assets|config|locales)\//;
-// {% doc %} too: its @example renders aren't real
-const LIQUID_SKIP = /\{%-?\s*(comment|raw|doc)\s*-?%\}[\s\S]*?\{%-?\s*end\1\s*-?%\}|\{%-?\s*#[^%]*%\}/g;
+/**
+ * The {% comment %}, {% raw %} and {% doc %} blocks (a doc's @example renders aren't real) and {% # … %}
+ * comments of a Liquid file, in order, as { kind, start, body, close, end }. One pass: an opener whose
+ * closing tag never comes is left as it is, and so is every later opener of its kind, without looking again.
+ */
+function* liquidBlocks(src) {
+  const OPEN = /\{%-?\s*(?:(comment|raw|doc)\s*-?%\}|#)/g;
+  const CLOSE = { comment: /\{%-?\s*endcomment\s*-?%\}/g, raw: /\{%-?\s*endraw\s*-?%\}/g, doc: /\{%-?\s*enddoc\s*-?%\}/g };
+  const unclosed = new Set();
+  for (let m; (m = OPEN.exec(src));) {
+    const kind = m[1] || '#';
+    if (unclosed.has(kind)) continue;
+    const body = OPEN.lastIndex;
+    let close = -1, end = -1;
+    if (kind === '#') { close = src.indexOf('%}', body); end = close + 2; }
+    else {
+      CLOSE[kind].lastIndex = body;
+      const c = CLOSE[kind].exec(src);
+      if (c) { close = c.index; end = CLOSE[kind].lastIndex; }
+    }
+    if (close < 0) { unclosed.add(kind); continue; }
+    yield { kind, start: m.index, body, close, end };
+    OPEN.lastIndex = end;
+  }
+}
+/** A Liquid file with its comments, raw and doc blocks blanked out, line numbers kept. */
+function skipLiquid(src) {
+  let out = '', from = 0;
+  for (const b of liquidBlocks(src)) { out += src.slice(from, b.start) + blank(src.slice(b.start, b.end)); from = b.end; }
+  return out + src.slice(from);
+}
 const LIQUID_TAG = /(?:\{%-?\s*|\n[ \t]*)(render|include|section|sections|content_for)\s+(['"])([^'"\n]+)\2(?:\s*,\s*type:\s*(['"])([^'"\n]+)\4)?/g;
 const LIQUID_ASSET = /(['"])([^'"\n{}]+\.(?:js|css|scss)(?:\.liquid)?)\1\s*\|\s*asset_url/g;
 const LIQUID_REQUEST = /\bfetch\s*\(|\$\.(ajax|get|post|getJSON)\s*\(|\bXMLHttp\w+|\baxios\b/;
@@ -824,7 +853,6 @@ function extractLiquid(src, filePath) {
   const seen = new Set();
   const add = (spec, line, kind) => { if (seen.has(spec)) return; seen.add(spec); imports.push({ spec, names: [], line, ...(kind ? { kind } : {}) }); };
   const at = lineIndex(src);
-  const lineOf = (s) => { const i = src.indexOf(s); return i < 0 ? 1 : at(i); };
   const addTags = (code, at) => {
     for (const m of all(LIQUID_TAG, code)) {
       const [, tag, , name, , type] = m;
@@ -848,45 +876,69 @@ function extractLiquid(src, filePath) {
     if (/(^|\/)config\//.test(filePath)) return { imports, symbols, routes: [], mounts: [], calls: [], hosts: [] };
     let data = null;
     try { data = JSON.parse(src.replace(/^\s*\/\*[\s\S]*?\*\//, '')); } catch {}
-    const walkBlocks = (blocks) => { for (const b of Object.values(blocks || {})) { addBlock(b?.type, lineOf(`"${b?.type}"`)); walkBlocks(b?.blocks); } };
+    // the line where each "type" value first appears, found in one pass
+    const typeAt = new Map();
+    for (const m of all(/"type"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\n]|\\.){0,500}")/g, src)) {
+      let v;
+      try { v = JSON.parse(m[1]); } catch { continue; }
+      if (!typeAt.has(v)) typeAt.set(v, at(m.index));
+    }
+    const lineOf = (type) => typeAt.get(type) ?? 1;
+    const walkBlocks = (blocks, depth = 0) => {
+      if (depth > 20 || !blocks || typeof blocks !== 'object') return;
+      for (const b of Object.values(blocks)) { addBlock(b?.type, lineOf(b?.type)); walkBlocks(b?.blocks, depth + 1); }
+    };
     for (const s of Object.values(data?.sections || {})) {
       if (typeof s?.type !== 'string') continue;
       if (s.type.startsWith('shopify://')) { addBlock(s.type, 1); continue; }
-      const line = lineOf(`"type":"${s.type}"`);
+      const line = lineOf(s.type);
       // Shopify supplies _-prefixed sections like _blocks when the theme doesn't
       add(rel(`sections/${s.type}.liquid`), line, s.type.startsWith('_') ? 'theme-block' : undefined);
       if (!symbols.some((x) => x.name === s.type)) symbols.push({ name: s.type, kind: 'section', line });
       walkBlocks(s.blocks);
     }
     // Liquid typed into custom-code settings, JSON-escaped
-    const settings = src.replace(/\\"/g, '"').replace(LIQUID_SKIP, blank);
+    const settings = skipLiquid(src.replace(/\\"/g, '"'));
     addTags(settings, lineIndex(settings));
     return { imports, symbols, routes: [], mounts: [], calls: [], hosts: [] };
   }
 
-  const code = src.replace(LIQUID_SKIP, blank);
+  const code = skipLiquid(src);
   addTags(code, at);
   for (const m of all(LIQUID_ASSET, code)) add(rel(`assets/${m[2]}`), at(m.index));
   for (const m of all(APP_BLOCK, code)) add(`shopify://apps/${m[1]}`, at(m.index));
 
-  const schema = /\{%-?\s*schema\s*-?%\}([\s\S]*?)\{%-?\s*endschema\s*-?%\}/.exec(code);
-  if (schema) {
+  // the first {% schema %} and the {% endschema %} after it, each looked for once
+  const open = /\{%-?\s*schema\s*-?%\}/.exec(code);
+  const CLOSE = /\{%-?\s*endschema\s*-?%\}/g;
+  if (open) CLOSE.lastIndex = open.index + open[0].length;
+  const close = open && CLOSE.exec(code);
+  if (close) {
     let s = null;
-    try { s = JSON.parse(schema[1]); } catch {}
-    const line = at(schema.index);
+    try { s = JSON.parse(code.slice(open.index + open[0].length, close.index)); } catch {}
+    const line = at(open.index);
     if (typeof s?.name === 'string' && !s.name.startsWith('t:')) symbols.push({ name: s.name, kind: 'section', line });
     for (const b of Array.isArray(s?.blocks) ? s.blocks : []) if (typeof b?.type === 'string' && !b.type.startsWith('@')) symbols.push({ name: b.type, kind: 'block', line });
   }
-  for (const m of all(/@param\s+(?:\{[^}]*\}\s+)?\[?([\w-]+)/g, src)) symbols.push({ name: m[1], kind: 'param', line: at(m.index) });
-  const accepts = /\{%-?\s*comment\s*-?%\}[\s\S]*?\b(?:Accepts|Arguments|Receives|Parameters|Params):?\s*\n([\s\S]*?)\{%-?\s*endcomment/i.exec(src);
-  if (accepts) for (const m of all(/^\s*-\s*([\w-]+)\s*:/gm, accepts[1])) symbols.push({ name: m[1], kind: 'param', line: at(accepts.index) });
+  for (const m of all(/@param[ \t]+(?:\{[^}\n]{0,200}\}[ \t]+)?\[?([\w-]+)/g, src)) symbols.push({ name: m[1], kind: 'param', line: at(m.index) });
+  // the "Accepts:" list of the first comment that has one
+  for (const b of liquidBlocks(src)) {
+    if (b.kind !== 'comment') continue;
+    const body = src.slice(b.body, b.close);
+    const head = /\b(?:Accepts|Arguments|Receives|Parameters|Params):?[ \t]*\r?\n/i.exec(body);
+    if (!head) continue;
+    for (const m of all(/^[ \t]*-[ \t]*([\w-]+)[ \t]*:/gm, body.slice(head.index + head[0].length))) symbols.push({ name: m[1], kind: 'param', line: at(b.start) });
+    break;
+  }
 
   // a theme is full of page links and SVG namespaces, so only real requests count
   const lines = code.split('\n');
+  const requestLine = new Map(); // each line tested once, however many calls it holds
+  const isRequest = (n) => { if (!requestLine.has(n)) requestLine.set(n, LIQUID_REQUEST.test(lines[n - 1] || '')); return requestLine.get(n); };
   const { calls, hosts } = extractCalls(code, at);
   return {
     imports, symbols, routes: [], mounts: [],
-    calls: calls.filter((c) => !c.path.includes('{{') && LIQUID_REQUEST.test(lines[c.line - 1] || '')),
+    calls: calls.filter((c) => !c.path.includes('{{') && isRequest(c.line)),
     hosts: hosts.filter((h) => !/(^|\.)(w3|schema)\.org$/.test(h.host)),
   };
 }
@@ -895,7 +947,7 @@ function extractLiquid(src, filePath) {
 function liquidDoc(src) {
   const m = /^(?:\s|\{%-?\s*#[^%]*%\})*\{%-?\s*(comment|doc)\s*-?%\}([\s\S]*?)\{%-?\s*end\1\s*-?%\}/.exec(src);
   if (!m || /theme-check|prettier-ignore/i.test(m[2])) return null;
-  const head = m[2].split(/\n\s*(?:-\s|(?:snippet\s+)?(?:accepts|arguments|receives|usage|parameters|params|example)\b)|@param\b/i)[0];
+  const head = m[2].split(/\n[ \t]*(?:-\s|(?:snippet\s+)?(?:accepts|arguments|receives|usage|parameters|params|example)\b)|@param\b/i)[0];
   return cleanDoc(head);
 }
 
