@@ -20,6 +20,7 @@ function mountTarget(f, mount) {
   if (f.lang !== 'python') {
     // JS: match the mounted name to the local binding of an import or require (every router can be called `router`)
     const imp = imports.find((i) => i.locals && Object.hasOwn(i.locals, head));
+    if (!imp && f.routerVars?.includes(head)) return { file: f.path, v: head }; // a router var defined in this file (#98)
     return { file: imp ? imp.files[0] : f.path, v: '*' };
   }
   // First the import that binds the mounted name in this file: `from app.routes import campaigns as
