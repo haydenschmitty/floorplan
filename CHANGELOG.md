@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Fastify routes written as objects are found:** a Fastify server that declares its endpoints as `app.route({ method: 'POST', url: '/api/orders', handler })` had none of them on the map. They now count on any router the file makes (`const api = Fastify()`), with one endpoint per method when `method` is a list, and a `preHandler`, `onRequest` or `preValidation` check on the route protects only that route. A key inside the route's `schema`, and a `method` or `url` that isn't written out, don't make an endpoint. Fixed by @Bl0ck154 in #34.
+- **NestJS endpoints are on the map:** a NestJS server used to show no endpoints at all, so its requests from the website weren't connected and Health couldn't say which endpoints anyone can call. Endpoints now come from `@Controller('prefix')` (or `@Controller({ path })`) and the `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete`, `@All`, `@Options` and `@Head` decorators on its methods, each with its handler, in files that import `@nestjs/common`. Health reads a global sign-in guard (`{ provide: APP_GUARD, useClass: AuthGuard }`), the `@Public()`-style decorators that open a route past it (a public route that checks a token or signature itself still counts as checked), and `@UseGuards(...)` on a method or its class. Rate-limit and quota guards don't count as sign-in checks. A global prefix set at run time (`app.setGlobalPrefix`) isn't seen yet.
 
 ## 0.9.0 (2026-11-14)
 
