@@ -656,7 +656,103 @@ function findSql(src, f, out) {
     const open = cmd === 'insert' ? yes('with\\s+check') : cmd === 'all' ? yes('using') || yes('with\\s+check') : yes('using');
     if (open) found.push({ i: m.index, k: 'sql-open-policy', table: sqlName(m[2]), policy: m[1].replace(/^"|"$/g, ''), cmd, signedOut: roles.includes('anon') || !to });
   }
+  dynamicRls(s, found);
   for (const x of found.sort((a, b) => a.i - b.i)) { const { i, ...rest } = x; out.push({ ...rest, line: at(i) }); }
+}
+
+// Row-level security switched on with SQL built as it runs, the way one migration covers many tables:
+//   foreach t in array array['wallets', 'ledger'] loop
+//     execute format('alter table public.%I enable row level security', t);
+//   end loop;
+// The names in the loop's array literal count as switched on (or off). When the tables can't be read from the
+// migration (a loop over a query, a variable from elsewhere), it's recorded as `sql-rls-dynamic`, so the tables
+// it may cover are reported as "can't tell" instead of "never switched on".
+const RLS_WORDS = /(enable|disable|force|no\s+force)\s+row\s+level\s+security/gi;
+const SQL_ARRAY = String.raw`array\s*\[[^\]]{0,4000}\]|'\{[^}']{0,4000}\}'`;
+const ARRAY_CAST = String.raw`(?:\s*::\s*\w+(?:\s*\[\s*\])?)?`;
+/** The text of the statement starting at `from`, up to the `;` that ends it outside quotes (at most 2000 characters). */
+function statementFrom(s, from) {
+  let q = false;
+  for (let i = from; i < s.length && i < from + 2000; i++) {
+    if (s[i] === "'") q = !q;
+    else if (s[i] === ';' && !q) return s.slice(from, i);
+  }
+  return null;
+}
+/** The items of an array literal: array['a', 'b'] or '{a,b}'. */
+function arrayItems(lit) {
+  if (/^array/i.test(lit)) return [...lit.matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"));
+  return lit.slice(2, -2).split(',').map((x) => x.trim().replace(/^"|"$/g, '')).filter(Boolean);
+}
+/**
+ * What an `execute` runs, as a template with %I where a value goes in, and those values:
+ * format('alter table %I …', t) → { tpl: 'alter table %I …', args: ['t'] }, and the same for
+ * 'alter table ' || quote_ident(t) || ' …'. Null when it's something else.
+ */
+function executeTemplate(stmt) {
+  const f = /^\s*format\s*\(\s*'((?:[^']|''){0,1000})'\s*((?:,[^;]{0,500})?)\)\s*$/i.exec(stmt);
+  if (f) return { tpl: f[1].replace(/''/g, "'"), args: f[2].split(',').slice(1).map((a) => a.trim()) };
+  const parts = stmt.split('||').map((p) => p.trim());
+  if (parts.length < 2 || !parts.some((p) => p.startsWith("'"))) return null;
+  let tpl = '';
+  const args = [];
+  for (const p of parts) {
+    const lit = /^'((?:[^']|''){0,1000})'$/.exec(p);
+    if (lit) { tpl += lit[1].replace(/''/g, "'"); continue; }
+    tpl += '%I';
+    args.push(p);
+  }
+  return { tpl, args };
+}
+function dynamicRls(s, found) {
+  if (!/\bexecute\b/i.test(s) || !RLS_WORDS.test(s)) return;
+  RLS_WORDS.lastIndex = 0;
+  // loops over a list of names: foreach t in array <list> loop, for t in [select] unnest(<list>) loop
+  const loops = [];
+  const list = String.raw`(${SQL_ARRAY}|[A-Za-z_]\w*)${ARRAY_CAST}`;
+  for (const m of s.matchAll(new RegExp(String.raw`\bforeach\s+([A-Za-z_]\w*)\s+in\s+array\s+${list}\s+loop\b|\bfor\s+([A-Za-z_]\w*)\s+in\s+(?:select\s+(?:\*\s+from\s+)?)?unnest\s*\(\s*${list}\s*\)(?:\s+(?:as\s+)?[A-Za-z_]\w*)?\s+loop\b`, 'gi'))) {
+    const v = (m[1] || m[3]).toLowerCase();
+    let lit = m[2] || m[4];
+    if (!/^(array|')/i.test(lit)) {
+      // a variable declared with the list: tables text[] := array['a', 'b'];
+      const decl = [...s.slice(0, m.index).matchAll(new RegExp(String.raw`\b${lit}\s+(?:text|varchar|name|regclass|character\s+varying)\s*\[\s*\]\s*(?::=|=|default)\s*(${SQL_ARRAY})`, 'gi'))].pop();
+      lit = decl ? decl[1] : null;
+    }
+    loops.push({ v, items: lit ? arrayItems(lit) : null, start: m.index, end: m.index + m[0].length });
+  }
+  /** The innermost loop above `at` that is still open there. */
+  const loopAround = (at) => {
+    for (let k = loops.length - 1; k >= 0; k--) {
+      const lp = loops[k];
+      if (lp.end > at) continue;
+      let depth = 1;
+      for (const t of s.slice(lp.end, at).matchAll(/\bend\s+loop\b|\bloop\b/gi)) { depth += /^end/i.test(t[0]) ? -1 : 1; if (!depth) break; }
+      if (depth > 0) return lp;
+    }
+    return null;
+  };
+  for (const m of s.matchAll(/\bexecute\b(?!\s+(?:function|procedure|on)\b)/gi)) {
+    const stmt = statementFrom(s, m.index + m[0].length);
+    if (!stmt || !new RegExp(RLS_WORDS.source, 'i').test(stmt)) continue;
+    const ex = executeTemplate(stmt);
+    const unread = (on) => found.push({ i: m.index, k: 'sql-rls-dynamic', on });
+    if (!ex) { unread(!/\b(disable|no\s+force)\s+row/i.test(stmt)); continue; }
+    for (const w of ex.tpl.matchAll(RLS_WORDS)) {
+      const on = !/^(disable|no)/i.test(w[1]);
+      const target = /\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(\S+)\s+$/i.exec(ex.tpl.slice(0, w.index));
+      if (target && !target[1].includes('%')) continue; // a table named outright: read like any other alter table
+      const ph = target && new RegExp(String.raw`^(?:(${SQL_ID})\s*\.\s*)?%[IsL]$`).exec(target[1]);
+      if (!ph) { unread(on); continue; }
+      const nth = (ex.tpl.slice(0, w.index).replace(/%%/g, '').match(/%[IsL]/g) || []).length - 1;
+      const arg = (ex.args[nth] || '').replace(/^quote_ident\s*\(\s*([^)]*?)\s*\)$/i, '$1').replace(/::\s*\w+$/, '').trim();
+      const schema = ph[1] ? ph[1].replace(/^"|"$/g, '') + '.' : '';
+      const named = /^'((?:[^']|''){1,200})'$/.exec(arg);
+      if (named) { found.push({ i: m.index, k: 'sql-rls', table: sqlName(schema + named[1].replace(/''/g, "'")), on }); continue; }
+      const lp = /^[A-Za-z_]\w*$/.test(arg) ? loopAround(m.index) : null;
+      if (!lp || lp.v !== arg.toLowerCase() || !lp.items) { unread(on); continue; }
+      for (const name of lp.items) found.push({ i: m.index, k: 'sql-rls', table: sqlName(schema + name), on });
+    }
+  }
 }
 
 const USES_SUPABASE = /@supabase\/(?:supabase-js|ssr|auth-helpers[\w-]*)|from\s+supabase\s+import|^[ \t]*import\s+supabase\b/m;
@@ -904,13 +1000,16 @@ export function buildHealth({ graph, scan, arch, root }) {
       for (const p of sqlFiles.sort()) for (const x of findings(p)) {
         const t = tables.get(x.table);
         if (x.k === 'sql-table' && !t) tables.set(x.table, { file: p, line: x.line, rls: null });
-        else if (x.k === 'sql-rls' && t) { t.rls = x.on; t.off = x.on ? null : { file: p, line: x.line }; }
+        else if (x.k === 'sql-rls' && t) { t.rls = x.on; t.off = x.on ? null : { file: p, line: x.line }; t.dyn = null; }
+        // switched on (or off) for tables the migration doesn't name: each table it may cover becomes "can't tell"
+        else if (x.k === 'sql-rls-dynamic') { for (const u of tables.values()) if (x.on ? u.rls !== true : u.rls === true) { u.rls = 'unsure'; u.dyn = { file: p, line: x.line, on: x.on }; } }
         else if (x.k === 'sql-rename' && t) { tables.delete(x.table); tables.set(x.to, t); for (const pol of policies) if (pol.table === x.table) pol.table = x.to; }
         else if (x.k === 'sql-drop') tables.delete(x.table);
         else if (x.k === 'sql-open-policy') policies.push({ ...x, file: p });
       }
       const short = (t) => t.replace(/^public\./, '');
-      const open = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls !== true);
+      const open = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls !== true && t.rls !== 'unsure');
+      const unsure = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls === 'unsure');
       if (open.length) {
         const items = [], notes = {};
         for (const [name, t] of open) {
@@ -936,6 +1035,38 @@ export function buildHealth({ graph, scan, arch, root }) {
             `2. Write one new migration (don't edit the old ones) that runs \`alter table <table> enable row level security;\` for each table, plus policies so the app keeps working: usually signed-in users can read and change only their own rows (\`using (auth.uid() = user_id)\`), and tables meant to be public get a read-only policy. Server code that uses the service-role key isn't affected by these rules.`,
             `3. Explain the policies to me in plain words before applying anything, and don't loosen any existing policy.`,
             `4. Tell me how to apply the migration (for example \`supabase db push\`) and how to check, while signed out, that I can't read other people's rows.`,
+          ].join('\n'),
+        });
+      }
+      if (unsure.length) {
+        const items = [], notes = {};
+        for (const [name, t] of unsure) {
+          const it = itemFor(t.dyn.file);
+          if (!it) continue;
+          if (!items.includes(it)) items.push(it);
+          const note = `line ${t.dyn.line}: row-level security switched ${t.dyn.on ? 'on' : 'off'} for tables this migration doesn’t name`;
+          if (!(notes[it] || '').includes(note)) notes[it] = (notes[it] ? notes[it] + ' · ' : '') + note;
+        }
+        const list = unsure.map(([name]) => short(name));
+        const where = [...new Map(unsure.map(([, t]) => [`${t.dyn.file}:${t.dyn.line}`, t.dyn])).values()];
+        issues.push({
+          id: 'rls-unsure:' + repo, kind: 'database-rules', severity: 'medium',
+          title: unsure.length === 1 ? `Floorplan can’t tell whether your ${list[0]} table is protected` : `Floorplan can’t tell whether ${unsure.length} of your database tables are protected`,
+          detail: `A migration (${where[0].file.split('/').pop()}, line ${where[0].line}) switches row-level security ${unsure[0][1].dyn.on ? 'on' : 'off'} with SQL it puts together as it runs, so Floorplan can’t see which tables it covers. If ${unsure.length === 1 ? `the ${list[0]} table` : `any of ${list.slice(0, 6).join(', ')}${list.length > 6 ? ` or ${list.length - 6} more` : ''}`} ends up without it, anyone with your app’s public key could read or change every row there. Worth checking once in the Supabase dashboard, where a table without it is marked “RLS disabled”.`,
+          items, notes,
+          locations: where.map((w) => ({ file: w.file, line: w.line })),
+          fix: [
+            `Security check: Supabase tables whose row-level security (RLS) is set by dynamic SQL. Do not print any keys.`,
+            ``,
+            `Row-level security is switched on or off with SQL built at run time here:`,
+            ...where.map((w) => `- ${w.file}:${w.line}`),
+            ``,
+            `Check whether that covers each of these tables:`,
+            ...unsure.map(([name, t]) => `- ${name}: created in ${t.file}:${t.line}`),
+            ``,
+            `1. Read the migration and tell me in plain words which tables it switches row-level security on for.`,
+            `2. For any table it misses, write one new migration (don't edit the old ones) that runs \`alter table <table> enable row level security;\` plus policies so the app keeps working (usually \`using (auth.uid() = user_id)\` for rows that belong to a user). Show me before applying anything.`,
+            `3. Tell me how to check, while signed out, that I can't read other people's rows.`,
           ].join('\n'),
         });
       }
@@ -1388,6 +1519,7 @@ export function buildHealth({ graph, scan, arch, root }) {
   for (const i of kept) summary[i.severity]++;
   return { summary, issues: kept };
 }
+
 
 // ---------- "not a problem": issues people dismissed from the Health panel ----------
 // serve.mjs saves them to floorplan/health-dismissed.json as { dismissed: [{ id, locations: ['file:line'], reason, at }] }.

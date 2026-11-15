@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Row-level security switched on in a loop is recognised:** a Supabase migration that switches it on for many tables at once (`foreach t in array array['wallets', …] loop execute format('alter table public.%I enable row level security', t); end loop;`) left every one of those tables reported as "Anyone can read and change". The names in the loop's list now count as switched on, also for a list declared first, `FOR … IN SELECT unnest(…)` and statements glued together with `||`. When a migration switches it on for tables it doesn't name (a loop over `pg_tables`, say), the tables it may cover are reported as "Floorplan can't tell whether … is protected", worth fixing rather than important, and a loop that does something else still leaves its tables reported. Reported by @doramirdor in #113.
 - **Nuxt pages connect to the components and composables they use:** Nuxt auto-imports them, so pages had no import lines to follow and most Screens boards showed only the page itself. The scan now links a file to the components its template uses (`<WorkspaceTeam />`, `<workspace-team>`, `Lazy…`) and the composables and utils it calls, from the name lists Nuxt writes to `.nuxt/components.d.ts` and `.nuxt/imports.d.ts` (only those two files are read, and `.nuxt/` stays off the map), or from Nuxt's folder conventions when the app hasn't been built yet. Names a file imports or defines itself are left alone. Reported by @deniskern in #121.
 
 ## 0.8.0 (2026-11-12)

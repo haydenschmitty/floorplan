@@ -55,7 +55,7 @@ Drag the panel's left edge to resize it.
 A count of important issues, and a plain-language list of problems the scan found:
 - passwords and keys written into the code, or into a committed `.env` file;
 - secret keys in settings the browser gets, like an OpenAI key in a `VITE_` or `NEXT_PUBLIC_` variable;
-- Supabase tables with row-level security switched off, and database rules that let anyone change a table;
+- Supabase tables with row-level security switched off, and database rules that let anyone change a table (row-level security switched on in a loop over a list of tables counts for those tables; when a migration switches it on for tables it doesn't name, the tables it may cover are reported as "can't tell" instead);
 - Firebase rules that let anyone read or change your data or files, including "test mode" rules and when they run out;
 - Stripe webhooks that act on payments without checking Stripe's signature, so anyone could fake one;
 - servers that let any website call them, flagged as worth fixing when login cookies go along too;

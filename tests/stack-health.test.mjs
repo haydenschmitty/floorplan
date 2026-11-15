@@ -117,6 +117,97 @@ test('migrations: tables, row-level security on and off, renames, drops and open
   ]);
 });
 
+test('row-level security switched on in a loop of dynamic SQL counts for the tables the loop names (#113)', () => {
+  const rls = (sql) => findIssues(sql, { path: 'supabase/migrations/2_rls.sql', category: 'code', lang: 'sql' }).filter((x) => x.k.startsWith('sql-rls')).map(({ k, table, on, line }) => [k, table ?? null, on, line]);
+  // foreach over an array literal, with format()
+  assert.deepEqual(rls([
+    `do $$ declare t text; begin`,
+    `  foreach t in array array['wallets', 'ledger'] loop`,
+    `    execute format('alter table public.%I enable row level security', t);`,
+    `  end loop;`,
+    `end $$;`,
+  ].join('\n')), [['sql-rls', 'public.wallets', true, 3], ['sql-rls', 'public.ledger', true, 3]]);
+  // a list declared first, a statement glued together with ||, FOR … IN SELECT unnest('{…}'), and a name given outright
+  assert.deepEqual(rls([
+    `DO $body$`,
+    `DECLARE t text; tables text[] := ARRAY['orders', 'payments'];`,
+    `BEGIN`,
+    `  FOREACH t IN ARRAY tables LOOP`,
+    `    EXECUTE 'ALTER TABLE public.' || quote_ident(t) || ' ENABLE ROW LEVEL SECURITY';`,
+    `  END LOOP;`,
+    `  FOR t IN SELECT unnest('{invoices,refunds}'::text[]) LOOP`,
+    `    EXECUTE format('alter table %I force row level security', t);`,
+    `  END LOOP;`,
+    `  EXECUTE format('alter table %I enable row level security', 'audit_log');`,
+    `END $body$;`,
+  ].join('\n')), [
+    ['sql-rls', 'public.orders', true, 5], ['sql-rls', 'public.payments', true, 5],
+    ['sql-rls', 'public.invoices', true, 8], ['sql-rls', 'public.refunds', true, 8],
+    ['sql-rls', 'public.audit_log', true, 10],
+  ]);
+  // switched off the same way is switched off
+  assert.deepEqual(rls(`do $$ declare t text; begin foreach t in array array['wallets'] loop execute format('alter table public.%I disable row level security', t); end loop; end $$;`), [['sql-rls', 'public.wallets', false, 1]]);
+  // tables from a query: it plainly switches RLS on, but for tables the migration doesn't name
+  assert.deepEqual(rls([
+    `do $$ declare r record; begin`,
+    `  for r in select tablename from pg_tables where schemaname = 'public' loop`,
+    `    execute format('alter table public.%I enable row level security', r.tablename);`,
+    `  end loop;`,
+    `end $$;`,
+  ].join('\n')), [['sql-rls-dynamic', null, true, 3]]);
+  // near misses: a loop over the same list that does something else, an execute after its loop ended, a comment
+  assert.deepEqual(rls(`do $$ declare t text; begin\n  foreach t in array array['wallets'] loop\n    execute format('grant select on public.%I to authenticated', t);\n  end loop;\nend $$;`), []);
+  assert.deepEqual(rls(`do $$ declare t text; begin\n  foreach t in array array['wallets'] loop\n    perform 1;\n  end loop;\n  execute format('alter table public.%I enable row level security', t);\nend $$;`), [['sql-rls-dynamic', null, true, 5]]);
+  assert.deepEqual(rls(`-- foreach t in array array['wallets'] loop execute format('alter table public.%I enable row level security', t); end loop;\n`), []);
+});
+
+test('a whole app: tables a loop covers are protected, ones it can’t name are “can’t tell”, and the rest are still open (#113)', () => {
+  const root = makeProject({
+    'package.json': JSON.stringify({ name: 'wallet', dependencies: { '@supabase/supabase-js': '^2.45.0' } }),
+    'src/db.ts': `import { createClient } from '@supabase/supabase-js';\nexport const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);\n`,
+    'supabase/migrations/20250101000000_init.sql': [
+      `create table public.wallets (id uuid primary key, user_id uuid);`,
+      `create table public.ledger (id uuid primary key, wallet_id uuid);`,
+      `create table public.notes (id uuid primary key, body text);`,
+    ].join('\n'),
+    'supabase/migrations/20250102000000_rls.sql': [
+      `do $$ declare t text; begin`,
+      `  foreach t in array array['wallets', 'ledger'] loop`,
+      `    execute format('alter table public.%I enable row level security', t);`,
+      `  end loop;`,
+      `  foreach t in array array['notes'] loop`,
+      `    execute format('grant select on public.%I to authenticated', t);`,
+      `  end loop;`,
+      `end $$;`,
+    ].join('\n'),
+  }, { arch: { project: { name: 'Wallet', summary: 'A sample app.' }, nodes: [{ id: 'app', label: 'App', kind: 'ui', summary: 'The app.', paths: ['**'] }] } });
+  try {
+    scanAndBuild(root);
+    let issues = readGraph(root).health.issues.filter((i) => i.kind === 'database-rules');
+    // the loop that only grants access leaves notes open
+    assert.deepEqual(issues.map((i) => [i.severity, i.title]), [['high', 'Anyone can read and change your notes table']]);
+
+    // a later migration that switches it on for whatever pg_tables lists: notes can't be told either way, and a
+    // table created after it is still never switched on
+    fs.writeFileSync(path.join(root, 'supabase/migrations/20250103000000_all.sql'), [
+      `do $$ declare r record; begin`,
+      `  for r in select tablename from pg_tables where schemaname = 'public' loop`,
+      `    execute format('alter table public.%I enable row level security', r.tablename);`,
+      `  end loop;`,
+      `end $$;`,
+      `create table public.payouts (id uuid primary key);`,
+    ].join('\n'));
+    scanAndBuild(root);
+    issues = readGraph(root).health.issues.filter((i) => i.kind === 'database-rules');
+    const byId = Object.fromEntries(issues.map((i) => [i.id.split(':')[0], i]));
+    assert.equal(byId.rls.title, 'Anyone can read and change your payouts table');
+    assert.equal(byId['rls-unsure'].severity, 'medium');
+    assert.equal(byId['rls-unsure'].title, 'Floorplan can’t tell whether your notes table is protected');
+    assert.deepEqual(byId['rls-unsure'].locations, [{ file: 'supabase/migrations/20250103000000_all.sql', line: 3 }]);
+    assert.match(byId['rls-unsure'].fix, /- public\.notes: created in supabase\/migrations\/20250101000000_init\.sql:3/);
+  } finally { cleanup(root); }
+});
+
 // ---------- a whole app ----------
 
 const futureRules = `rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if request.time < timestamp.date(${NEXT_YEAR}, 3, 1);\n    }\n  }\n}\n`;
