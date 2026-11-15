@@ -52,7 +52,7 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | Field | What it is |
 |---|---|
 | `repos[]` | `path`, `name`, `branch`, `head`, `files`, and `listed`: false when git couldn't list it |
-| `counts` | `files`, `outsideRepos`, `byCategory` (code, config, docs…), `notMapped` (the files of each kind the map won't show: those architecture.json's `include` leaves out, or all but code before it's written), `code` ({ files, loc }), `byLanguage`, `routes`, `httpMatches`, `importEdges`, `unresolvedImports`, `externalPackages`, `notRead` |
+| `counts` | `files`, `outsideRepos`, `byCategory` (code, config, docs…), `notMapped` (the files of each kind the map won't show: those architecture.json's `include` leaves out, or all but code before it's written), `code` ({ files, loc }), `byLanguage`, `routes`, `httpMatches`, `importEdges`, `autoImportLinks` (Nuxt components and composables used without an import), `unresolvedImports`, `externalPackages`, `notRead` |
 | `problems[]` | `{ code, message }`: `git_failed` (with `repo` and git's own `error`) or `no_files` |
 | `warnings[]` | the problems' messages, when they aren't errors |
 | `summary` | the summary a model maps from: the same text the scan prints |
@@ -72,7 +72,7 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | `plainLanguage` | developer words in node labels and summaries on a map for everyone: `checked` (false when `audience` is `developers`), `count` (parts with any) and `items[]` ({ node, field: `label` or `summary`, term, say }). Each part also gets a `plain language:` line in `warnings[]`. Never an error |
 | `partsToSplit[]` | parts with no children and more than 24 files that sit in several folders of their own: `{ id, files, folders: [{ dir, files }] }`, also in `warnings[]` |
 | `secretsHidden[]` | `{ file, field }` for each piece of written text that looked like it held a secret and went into the map as «hidden», e.g. `{ "file": "descriptions/api.json", "field": "files[\"api/server.js\"].description" }`. Never the value. Each file also gets a `secret-looking text in …` line at the top of `warnings[]`. A warning, never an error; the files themselves are left as they are |
-| `health` | `kind` (`health`, or `design-review` for a blueprint), `high`, `medium`, `low`, and `important[]` ({ severity, kind, title }); `null` when there's none |
+| `health` | `kind` (`health`, or `design-review` for a blueprint), `high`, `medium`, `low`, and `important[]` ({ severity, kind, title }), and `checked[]` ({ check, label, checked, text, loud? }): one per check (`endpoints`, `supabase`, `firebase`, `stripe`, `secrets`), saying what it read or that it found nothing to read; `loud` marks a gap that matters, like code that runs a server with no endpoints found. `null` when there's none |
 | `screens` | how many screens were found |
 | `recentWork` | `cards` and `tasks` highlighted, and whether `recent-work.json` exists |
 | `agent`, `audience`, `blueprint`, `unattended`, `check` | how it was built |

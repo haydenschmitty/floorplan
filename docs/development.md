@@ -30,7 +30,7 @@ skills/floorplan/
     refresh.mjs    incremental update: re-scan, carry over, flag changes, rebuild
     recent.mjs     facts for marking recent work
     open.mjs       start or reuse the map's server, and open the browser
-    lib/           extraction, import resolution, route matching, Health, screens, which agent is running, helpers
+    lib/           extraction, import resolution, Nuxt auto-imports, route matching, Health, screens, which agent is running, helpers
   assets/
     viewer.html    the map (template the build fills in)
     ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
@@ -87,7 +87,9 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI, Flask and Express samples in `fixtures/`): sign-in checks recognised by name, and FastAPI dependencies by what their code does (a factory's result, a `Depends()` kept in a variable, a list kept in a constant, a function that raises a 401), with look-alikes that must stay open (logging decorators, schema validators, dependencies that check nothing) |
 | `fastapi-http-middleware.test.mjs` | a FastAPI `@app.middleware("http")` that turns callers away protects every route of that app, and one that only adds headers, logs or times requests protects nothing |
 | `public-by-design.test.mjs` | what Health leaves alone because it's public on purpose (feeds, addresses a project publishes, cached responses, routes with nothing private, Payload CMS, tracker tokens, files a tool opens, Expo Router screens, files another file names), each with a near miss it must still report |
-| `stack-health.test.mjs` | Health's checks for Supabase row-level security, Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
+| `health-checked.test.mjs` | Health's "What was checked": each check says what it read or that it found nothing, louder when code runs a server but no endpoints were found, in graph.json, the build's report and `--json`, and the Health panel (its code run against a stand-in viewer) |
+| `nuxt.test.mjs` | Nuxt auto-imports: pages linked to the components and composables they use without an import, from `.nuxt/`'s name lists or Nuxt's folder conventions, names a file imports or defines itself left alone, `.nuxt/` kept off the map |
+| `stack-health.test.mjs` | Health's checks for Supabase row-level security (including dynamic SQL in a loop), Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
 | `django.test.mjs` | Django: an app's `urls.py` included under a prefix, the website's requests matched to it, and absolute imports between apps reaching the other app rather than the importing app's own `apps.py` |
 | `jvm-imports.test.mjs` | Kotlin and Java: imports of top-level declarations not named after their file, names used from the file's own package or a `.*` import with no import line, the project's own packages never listed as outside ones, what must stay unlinked (comments, strings, private declarations, other packages, a name imported from elsewhere, test helpers), a package of thousands of files, and files built to slow the reading down |
 | `subpath-imports.test.mjs` | imports through package.json `"imports"` (`#lib/x`): the nearest package.json, the most specific key, arrays and conditions, falling back to tsconfig `paths`, near misses left unlinked, and odd or endlessly nested shapes that must not stop the scan |

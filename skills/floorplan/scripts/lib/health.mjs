@@ -752,7 +752,9 @@ const STRIPE_EVENT = /(?:\bcase\s*|[!=]==?\s*)["'](checkout\.session\.(?:complet
 const STRIPE_VERIFIED = /constructEvent(?:Async)?\s*\(|construct_event\s*\(|verifyHeader|verify_header|events\.retrieve\s*\(|Event\.retrieve\s*\(/;
 
 function findStripeWebhook(src, f, out) {
-  if (!/stripe/i.test(src) || STRIPE_VERIFIED.test(src)) return;
+  if (!/stripe/i.test(src)) return;
+  // checked and fine: counted in "What was checked"
+  if (STRIPE_VERIFIED.test(src)) { out.push({ k: 'stripe-signed' }); return; }
   const hits = [...src.matchAll(STRIPE_EVENT)];
   if (!hits.length) return;
   out.push({ k: 'stripe-unsigned', line: lineIndex(src)(hits[0].index), events: [...new Set(hits.map((m) => m[1]))].slice(0, 4) });
@@ -830,9 +832,107 @@ function findSql(src, f, out) {
     const open = cmd === 'insert' ? yes('with\\s+check') : cmd === 'all' ? yes('using') || yes('with\\s+check') : yes('using');
     if (open) found.push({ i: m.index, k: 'sql-open-policy', table: sqlName(m[2]), policy: m[1].replace(/^"|"$/g, ''), cmd, signedOut: roles.includes('anon') || !to });
   }
+  dynamicRls(s, found);
   for (const x of found.sort((a, b) => a.i - b.i)) { const { i, ...rest } = x; out.push({ ...rest, line: at(i) }); }
 }
 
+// Row-level security switched on with SQL built as it runs, the way one migration covers many tables:
+//   foreach t in array array['wallets', 'ledger'] loop
+//     execute format('alter table public.%I enable row level security', t);
+//   end loop;
+// The names in the loop's array literal count as switched on (or off). When the tables can't be read from the
+// migration (a loop over a query, a variable from elsewhere), it's recorded as `sql-rls-dynamic`, so the tables
+// it may cover are reported as "can't tell" instead of "never switched on".
+const RLS_WORDS = /(enable|disable|force|no\s+force)\s+row\s+level\s+security/gi;
+const SQL_ARRAY = String.raw`array\s*\[[^\]]{0,4000}\]|'\{[^}']{0,4000}\}'`;
+const ARRAY_CAST = String.raw`(?:\s*::\s*\w+(?:\s*\[\s*\])?)?`;
+/** The text of the statement starting at `from`, up to the `;` that ends it outside quotes (at most 2000 characters). */
+function statementFrom(s, from) {
+  let q = false;
+  for (let i = from; i < s.length && i < from + 2000; i++) {
+    if (s[i] === "'") q = !q;
+    else if (s[i] === ';' && !q) return s.slice(from, i);
+  }
+  return null;
+}
+/** The items of an array literal: array['a', 'b'] or '{a,b}'. */
+function arrayItems(lit) {
+  if (/^array/i.test(lit)) return [...lit.matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"));
+  return lit.slice(2, -2).split(',').map((x) => x.trim().replace(/^"|"$/g, '')).filter(Boolean);
+}
+/**
+ * What an `execute` runs, as a template with %I where a value goes in, and those values:
+ * format('alter table %I …', t) → { tpl: 'alter table %I …', args: ['t'] }, and the same for
+ * 'alter table ' || quote_ident(t) || ' …'. Null when it's something else.
+ */
+function executeTemplate(stmt) {
+  const f = /^\s*format\s*\(\s*'((?:[^']|''){0,1000})'\s*((?:,[^;]{0,500})?)\)\s*$/i.exec(stmt);
+  if (f) return { tpl: f[1].replace(/''/g, "'"), args: f[2].split(',').slice(1).map((a) => a.trim()) };
+  const parts = stmt.split('||').map((p) => p.trim());
+  if (parts.length < 2 || !parts.some((p) => p.startsWith("'"))) return null;
+  let tpl = '';
+  const args = [];
+  for (const p of parts) {
+    const lit = /^'((?:[^']|''){0,1000})'$/.exec(p);
+    if (lit) { tpl += lit[1].replace(/''/g, "'"); continue; }
+    tpl += '%I';
+    args.push(p);
+  }
+  return { tpl, args };
+}
+function dynamicRls(s, found) {
+  if (!/\bexecute\b/i.test(s) || !RLS_WORDS.test(s)) return;
+  RLS_WORDS.lastIndex = 0;
+  // loops over a list of names: foreach t in array <list> loop, for t in [select] unnest(<list>) loop
+  const loops = [];
+  const list = String.raw`(${SQL_ARRAY}|[A-Za-z_]\w*)${ARRAY_CAST}`;
+  for (const m of s.matchAll(new RegExp(String.raw`\bforeach\s+([A-Za-z_]\w*)\s+in\s+array\s+${list}\s+loop\b|\bfor\s+([A-Za-z_]\w*)\s+in\s+(?:select\s+(?:\*\s+from\s+)?)?unnest\s*\(\s*${list}\s*\)(?:\s+(?:as\s+)?[A-Za-z_]\w*)?\s+loop\b`, 'gi'))) {
+    const v = (m[1] || m[3]).toLowerCase();
+    let lit = m[2] || m[4];
+    if (!/^(array|')/i.test(lit)) {
+      // a variable declared with the list: tables text[] := array['a', 'b'];
+      const decl = [...s.slice(0, m.index).matchAll(new RegExp(String.raw`\b${lit}\s+(?:text|varchar|name|regclass|character\s+varying)\s*\[\s*\]\s*(?::=|=|default)\s*(${SQL_ARRAY})`, 'gi'))].pop();
+      lit = decl ? decl[1] : null;
+    }
+    loops.push({ v, items: lit ? arrayItems(lit) : null, start: m.index, end: m.index + m[0].length });
+  }
+  /** The innermost loop above `at` that is still open there. */
+  const loopAround = (at) => {
+    for (let k = loops.length - 1; k >= 0; k--) {
+      const lp = loops[k];
+      if (lp.end > at) continue;
+      let depth = 1;
+      for (const t of s.slice(lp.end, at).matchAll(/\bend\s+loop\b|\bloop\b/gi)) { depth += /^end/i.test(t[0]) ? -1 : 1; if (!depth) break; }
+      if (depth > 0) return lp;
+    }
+    return null;
+  };
+  for (const m of s.matchAll(/\bexecute\b(?!\s+(?:function|procedure|on)\b)/gi)) {
+    const stmt = statementFrom(s, m.index + m[0].length);
+    if (!stmt || !new RegExp(RLS_WORDS.source, 'i').test(stmt)) continue;
+    const ex = executeTemplate(stmt);
+    const unread = (on) => found.push({ i: m.index, k: 'sql-rls-dynamic', on });
+    if (!ex) { unread(!/\b(disable|no\s+force)\s+row/i.test(stmt)); continue; }
+    for (const w of ex.tpl.matchAll(RLS_WORDS)) {
+      const on = !/^(disable|no)/i.test(w[1]);
+      const target = /\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(\S+)\s+$/i.exec(ex.tpl.slice(0, w.index));
+      if (target && !target[1].includes('%')) continue; // a table named outright: read like any other alter table
+      const ph = target && new RegExp(String.raw`^(?:(${SQL_ID})\s*\.\s*)?%[IsL]$`).exec(target[1]);
+      if (!ph) { unread(on); continue; }
+      const nth = (ex.tpl.slice(0, w.index).replace(/%%/g, '').match(/%[IsL]/g) || []).length - 1;
+      const arg = (ex.args[nth] || '').replace(/^quote_ident\s*\(\s*([^)]*?)\s*\)$/i, '$1').replace(/::\s*\w+$/, '').trim();
+      const schema = ph[1] ? ph[1].replace(/^"|"$/g, '') + '.' : '';
+      const named = /^'((?:[^']|''){1,200})'$/.exec(arg);
+      if (named) { found.push({ i: m.index, k: 'sql-rls', table: sqlName(schema + named[1].replace(/''/g, "'")), on }); continue; }
+      const lp = /^[A-Za-z_]\w*$/.test(arg) ? loopAround(m.index) : null;
+      if (!lp || lp.v !== arg.toLowerCase() || !lp.items) { unread(on); continue; }
+      for (const name of lp.items) found.push({ i: m.index, k: 'sql-rls', table: sqlName(schema + name), on });
+    }
+  }
+}
+
+// a call that starts a web server: if the scan found no endpoints next to one, it may use a setup it doesn't know
+const SERVER_CODE = /\b(?:https?\.|http2\.)?createServer\s*\(|\bDeno\.serve\s*\(|\bBun\.serve\s*\(|\bserve\s*\(\s*\{\s*fetch\b|\.listen\s*\(\s*(?:\d|process\.env|PORT\b|port\b)|\buvicorn\.run\s*\(|\bhttp\.ListenAndServe\s*\(/;
 const USES_SUPABASE = /@supabase\/(?:supabase-js|ssr|auth-helpers[\w-]*)|from\s+supabase\s+import|^[ \t]*import\s+supabase\b/m;
 
 // ---------- per-file entry point ----------
@@ -847,6 +947,11 @@ export function findIssues(src, f) {
     if (['typescript', 'javascript', 'python'].includes(f.lang)) { findStripeWebhook(src, f, out); findCors(src, f, out); }
   }
   if (['typescript', 'javascript', 'python'].includes(f.lang) && USES_SUPABASE.test(src)) out.push({ k: 'uses-supabase' });
+  // code that starts a server, for "What was checked" when no endpoints were found
+  if (['typescript', 'javascript', 'python', 'go'].includes(f.lang) && !TEST_FILE.test(f.path) && !EXAMPLE_FILE.test(f.path)) {
+    const sv = SERVER_CODE.exec(src);
+    if (sv && !(/^createServer/.test(sv[0]) && /from\s+['"]vite['"]|require\(\s*['"]vite['"]/.test(src))) out.push({ k: 'server-code', line: lineIndex(src)(sv.index), what: sv[0].replace(/\s*\($/, '') });
+  }
   if (f.lang === 'python') pyRoutes(src, f, out);
   else if (['typescript', 'javascript'].includes(f.lang)) jsRoutes(src, f, out);
   // run directly or registered by name (so "nothing imports it" doesn't mean unused)
@@ -1069,6 +1174,7 @@ export function buildHealth({ graph, scan, arch, root }) {
 
   // ---------- Supabase tables anyone can read and change ----------
   const usesSupabase = scan.files.some((f) => /(^|\/)supabase\/(migrations\/|config\.toml$|functions\/)/.test(f.path) || findings(f.path).some((x) => x.k === 'uses-supabase'));
+  let supabaseTables = 0; // for "What was checked"
   if (usesSupabase) {
     const byRepo = new Map(); // repo -> [file, …] in path order (migrations are named by timestamp)
     for (const f of scan.files) if (f.lang === 'sql' && live(f.path) && findings(f.path).some((x) => x.k.startsWith('sql-'))) { const k = f.repo ?? ''; if (!byRepo.has(k)) byRepo.set(k, []); byRepo.get(k).push(f.path); }
@@ -1078,13 +1184,17 @@ export function buildHealth({ graph, scan, arch, root }) {
       for (const p of sqlFiles.sort()) for (const x of findings(p)) {
         const t = tables.get(x.table);
         if (x.k === 'sql-table' && !t) tables.set(x.table, { file: p, line: x.line, rls: null });
-        else if (x.k === 'sql-rls' && t) { t.rls = x.on; t.off = x.on ? null : { file: p, line: x.line }; }
+        else if (x.k === 'sql-rls' && t) { t.rls = x.on; t.off = x.on ? null : { file: p, line: x.line }; t.dyn = null; }
+        // switched on (or off) for tables the migration doesn't name: each table it may cover becomes "can't tell"
+        else if (x.k === 'sql-rls-dynamic') { for (const u of tables.values()) if (x.on ? u.rls !== true : u.rls === true) { u.rls = 'unsure'; u.dyn = { file: p, line: x.line, on: x.on }; } }
         else if (x.k === 'sql-rename' && t) { tables.delete(x.table); tables.set(x.to, t); for (const pol of policies) if (pol.table === x.table) pol.table = x.to; }
         else if (x.k === 'sql-drop') tables.delete(x.table);
         else if (x.k === 'sql-open-policy') policies.push({ ...x, file: p });
       }
       const short = (t) => t.replace(/^public\./, '');
-      const open = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls !== true);
+      const open = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls !== true && t.rls !== 'unsure');
+      const unsure = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls === 'unsure');
+      supabaseTables += [...tables.keys()].filter((name) => name.startsWith('public.')).length;
       if (open.length) {
         const items = [], notes = {};
         for (const [name, t] of open) {
@@ -1110,6 +1220,38 @@ export function buildHealth({ graph, scan, arch, root }) {
             `2. Write one new migration (don't edit the old ones) that runs \`alter table <table> enable row level security;\` for each table, plus policies so the app keeps working: usually signed-in users can read and change only their own rows (\`using (auth.uid() = user_id)\`), and tables meant to be public get a read-only policy. Server code that uses the service-role key isn't affected by these rules.`,
             `3. Explain the policies to me in plain words before applying anything, and don't loosen any existing policy.`,
             `4. Tell me how to apply the migration (for example \`supabase db push\`) and how to check, while signed out, that I can't read other people's rows.`,
+          ].join('\n'),
+        });
+      }
+      if (unsure.length) {
+        const items = [], notes = {};
+        for (const [name, t] of unsure) {
+          const it = itemFor(t.dyn.file);
+          if (!it) continue;
+          if (!items.includes(it)) items.push(it);
+          const note = `line ${t.dyn.line}: row-level security switched ${t.dyn.on ? 'on' : 'off'} for tables this migration doesn’t name`;
+          if (!(notes[it] || '').includes(note)) notes[it] = (notes[it] ? notes[it] + ' · ' : '') + note;
+        }
+        const list = unsure.map(([name]) => short(name));
+        const where = [...new Map(unsure.map(([, t]) => [`${t.dyn.file}:${t.dyn.line}`, t.dyn])).values()];
+        issues.push({
+          id: 'rls-unsure:' + repo, kind: 'database-rules', severity: 'medium',
+          title: unsure.length === 1 ? `Floorplan can’t tell whether your ${list[0]} table is protected` : `Floorplan can’t tell whether ${unsure.length} of your database tables are protected`,
+          detail: `A migration (${where[0].file.split('/').pop()}, line ${where[0].line}) switches row-level security ${unsure[0][1].dyn.on ? 'on' : 'off'} with SQL it puts together as it runs, so Floorplan can’t see which tables it covers. If ${unsure.length === 1 ? `the ${list[0]} table` : `any of ${list.slice(0, 6).join(', ')}${list.length > 6 ? ` or ${list.length - 6} more` : ''}`} ends up without it, anyone with your app’s public key could read or change every row there. Worth checking once in the Supabase dashboard, where a table without it is marked “RLS disabled”.`,
+          items, notes,
+          locations: where.map((w) => ({ file: w.file, line: w.line })),
+          fix: [
+            `Security check: Supabase tables whose row-level security (RLS) is set by dynamic SQL. Do not print any keys.`,
+            ``,
+            `Row-level security is switched on or off with SQL built at run time here:`,
+            ...where.map((w) => `- ${w.file}:${w.line}`),
+            ``,
+            `Check whether that covers each of these tables:`,
+            ...unsure.map(([name, t]) => `- ${name}: created in ${t.file}:${t.line}`),
+            ``,
+            `1. Read the migration and tell me in plain words which tables it switches row-level security on for.`,
+            `2. For any table it misses, write one new migration (don't edit the old ones) that runs \`alter table <table> enable row level security;\` plus policies so the app keeps working (usually \`using (auth.uid() = user_id)\` for rows that belong to a user). Show me before applying anything.`,
+            `3. Tell me how to check, while signed out, that I can't read other people's rows.`,
           ].join('\n'),
         });
       }
@@ -1144,6 +1286,7 @@ export function buildHealth({ graph, scan, arch, root }) {
   // ---------- Firebase security rules that let anyone in ----------
   const today = new Date();
   const longDate = (d) => d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
+  const firebaseFiles = []; // rules files read, for "What was checked"
   for (const f of scan.files) {
     const base = f.path.split('/').pop();
     if (!live(f.path) || !(/\.rules$/i.test(base) || /^database(\.[\w-]+)?\.rules\.json$/i.test(base))) continue;
@@ -1152,6 +1295,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     const rtdb = /\.json$/i.test(base);
     const service = rtdb ? 'Realtime Database' : /service\s+firebase\.storage/.test(src) ? 'Storage' : /service\s+cloud\.firestore/.test(src) ? 'Firestore' : null;
     if (!service) continue;
+    firebaseFiles.push(f.path);
     const rules = rtdb ? firebaseRtdbRules(src, today) : firebaseRules(src, today);
     // the whole database, or (Firestore and Storage) any change beyond adding new records to one place
     const severe = (r) => r.wide || (!rtdb && !r.createOnly);
@@ -1583,7 +1727,50 @@ export function buildHealth({ graph, scan, arch, root }) {
   const kept = issues.slice(0, 40);
   const summary = { high: 0, medium: 0, low: 0 };
   for (const i of kept) summary[i.severity]++;
-  return { summary, issues: kept };
+  return { summary, issues: kept, checked: whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTables, firebaseFiles, findings }) };
+}
+
+// ---------- what was checked ----------
+// A clean Health panel means something only if each check had something to look at, so every check says what it
+// read, or that it found nothing to read. `loud` marks the gaps that matter: the code looks like it runs a server
+// (or uses Supabase) but the scan found nothing for the check to look at.
+function whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTables, firebaseFiles, findings }) {
+  const out = [];
+  const add = (check, label, checked, text, loud) => out.push({ check, label, checked, text, ...(loud ? { loud: true } : {}) });
+
+  const found = graph.routes.filter((r) => !TEST_FILE.test(r.f)).length;
+  const checkedRoutes = [...perRepo.values()].reduce((s, pr) => s + pr.total, 0);
+  const servers = [];
+  for (const f of scan.files) {
+    if (!live(f.path) || f.category !== 'code') continue;
+    const sv = findings(f.path).find((x) => x.k === 'server-code');
+    if (sv) servers.push({ file: f.path, what: `it calls ${sv.what}` });
+    else if (/(^|\/)supabase\/functions\/[^/]+\/index\.[jt]s$/.test(f.path)) servers.push({ file: f.path, what: 'it’s a Supabase Edge Function' });
+  }
+  if (checkedRoutes) add('endpoints', 'Endpoint sign-in', true, found > checkedRoutes
+    ? `checked ${checkedRoutes} of the ${found} endpoints found (the others are set up in a way Floorplan can’t check yet, or belong to scripts and tests)`
+    : `checked ${plural(checkedRoutes, 'endpoint')}`);
+  else if (found) add('endpoints', 'Endpoint sign-in', false, `not checked: ${plural(found, 'endpoint')} found, but set up in a way Floorplan can’t check for a login yet`);
+  else if (servers.length) add('endpoints', 'Endpoint sign-in', false, `not checked: no endpoints found, but ${servers[0].file} looks like it runs a server (${servers[0].what})${servers.length > 1 ? `, and so ${servers.length === 2 ? 'does 1 other file' : `do ${servers.length - 1} other files`}` : ''}. Its endpoints may be set up in a way Floorplan doesn’t recognise yet, so nothing checked whether they need a login.`, true);
+  else add('endpoints', 'Endpoint sign-in', false, 'not checked: no endpoints found. If your app has a server, it may use a setup Floorplan doesn’t recognise yet.');
+
+  if (usesSupabase && supabaseTables) add('supabase', 'Supabase table rules', true, `checked ${plural(supabaseTables, 'table')} in the migrations`);
+  else if (usesSupabase) add('supabase', 'Supabase table rules', false, 'not checked: the app uses Supabase, but no migrations that create tables were found. Tables made in the Supabase dashboard can’t be checked from the code.', true);
+  else add('supabase', 'Supabase table rules', false, 'no Supabase found');
+
+  const firebaseJson = scan.files.some((f) => /(^|\/)firebase\.json$/.test(f.path));
+  if (firebaseFiles.length) add('firebase', 'Firebase rules', true, `checked ${plural(firebaseFiles.length, 'rules file')}`);
+  else add('firebase', 'Firebase rules', false, firebaseJson ? 'not checked: the project uses Firebase, but no rules files were found. Rules set in the Firebase console can’t be checked from the code.' : 'no rules files found');
+
+  const stripe = scan.files.filter((f) => live(f.path) && findings(f.path).some((x) => x.k === 'stripe-unsigned' || x.k === 'stripe-signed')).length;
+  const usesStripe = (scan.externals || []).some((e) => e.name === 'stripe' || /^@stripe\//.test(e.name || ''));
+  if (stripe) add('stripe', 'Stripe webhooks', true, `checked ${plural(stripe, 'file')} that receive${stripe === 1 ? 's' : ''} Stripe events`);
+  else add('stripe', 'Stripe webhooks', false, usesStripe ? 'the app uses Stripe, but no code that receives its events was found' : 'no Stripe code found');
+
+  const readable = scan.files.filter((f) => ['code', 'config', 'docs'].includes(f.category));
+  const big = readable.filter((f) => f.tooLarge).length;
+  add('secrets', 'Secrets in code', readable.length > big, `read ${plural(readable.length - big, 'file')}${big ? `; ${plural(big, 'file')} too big to read ${big === 1 ? 'wasn’t' : 'weren’t'} checked` : ''}`);
+  return out;
 }
 
 // ---------- "not a problem": issues people dismissed from the Health panel ----------
