@@ -59,7 +59,7 @@ A count of important issues, and a plain-language list of problems the scan foun
 - Firebase rules that let anyone read or change your data or files, including "test mode" rules and when they run out;
 - Stripe webhooks that act on payments without checking Stripe's signature, so anyone could fake one;
 - servers that let any website call them, flagged as worth fixing when login cookies go along too;
-- endpoints that let anyone change or read data without signing in;
+- endpoints that let anyone change or read data without signing in, ASP.NET Core apps included;
 - files nothing uses;
 - files over about 1,000 lines, which AI struggles to edit safely.
 
@@ -74,6 +74,8 @@ It also leaves alone what's public on purpose, as long as it only reads: feeds a
 For passwords and keys, Health goes by what's written, not just the name: a variable a script or pipeline fills in (`"$DB_PASSWORD"`, `${{ secrets.TOKEN }}`, `$(dbPassword)`, a psql `:'app_password'`), the browser's autofill words (`new-password`) and made-up keys with a run of the alphabet in them are left alone, while a password written in next to them is still flagged. For files nothing uses, it leaves alone Expo Router screens (every file in the `app/` folder of an app that uses `expo-router`) and files whose name another file mentions, such as `users.service` in a NestJS module.
 
 A login check that runs before every request, like Express's `app.use(requireAuth)` or Hono's `app.use('/api/*', auth)` for everything under a path, counts for the endpoints behind it, and so does a NestJS guard for the whole app (`{ provide: APP_GUARD, useClass: JwtAuthGuard }` or `app.useGlobalGuards(new JwtAuthGuard())`) for that app's controllers, except routes marked `@Public()`. Only middleware whose name says what it checks counts: `cors()`, `helmet()`, a session being loaded or a word in its options (a header named `X-Refreshed-Token`) doesn't. When such a check is all that protects some endpoints, the Health panel names it and where it is, so you can see what a clean result rests on.
+
+In ASP.NET Core, `[Authorize]` and `.RequireAuthorization()` count wherever they are: on the action or endpoint, its controller or route group, or a base controller. `[AllowAnonymous]` and `.AllowAnonymous()` mark an endpoint public on purpose, so it isn't reported. An app-wide fallback policy, an `AuthorizeFilter` on every controller or `MapControllers().RequireAuthorization()` counts only for the endpoints of its own project (the folder of its `.csproj`), so in a repo with several services one service's policy doesn't hide another's open endpoints.
 
 If an issue is wrong, press **Not a problem** and add a reason if you like. It moves to the bottom of the list and out of the count, and stays that way when the map is rebuilt. Editing elsewhere in the file won't bring it back, but it does show again if the same check finds something new in that file or the issue changes severity. **Show again** undoes it. Exported copies keep the issue set apart but leave your reason out.
 

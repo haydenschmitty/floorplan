@@ -1,10 +1,16 @@
 // Turn per-file route definitions + mounts into full paths, then match HTTP call literals to them.
 // This is what links a frontend repo to a backend repo when no import connects them.
+import { csRoutePath, csAccess, csAttrNames } from './extract.mjs';
 
 export const routeSegments = (p) => p.split('/').filter(Boolean).map((s) =>
   /^(<[^>]*>|\{[^}]*\}|:\w+|\[\.{0,3}[^\]]*\]|\*{1,2}|\$\{[^}]*\})$/.test(s) || /\$\{|\{[^}]*\}/.test(s) ? '*' : s);
 
 const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/;
+// .NET test projects are folders named like Orders.Api.Tests or Orders.IntegrationTests. Only C# files in
+// them count as tests: a JavaScript or Python folder can be named that way for other reasons
+// (Checkout.ABTests/), and its endpoints must stay on the map and in Health.
+const DOTNET_TEST_FILE = /(^|\/)[\w-]+(?:\.[\w-]+)*\.\w*Tests?\/(?:[^/]+\/)*[^/]+\.cs$/;
+const isTestFile = (p) => TEST_FILE.test(p) || DOTNET_TEST_FILE.test(p);
 
 const joinPath =(...parts) => '/' + parts.map((p) => (p || '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
 
@@ -103,7 +109,7 @@ export function resolveRoutes(files) {
   // middleware for every route under a path, registered on a router or app: app.use('/api/*', auth),
   // app.use(requireAuth), or the middleware before a handler: [{ file, on, prefix, line, mw }]
   const scoped = [];
-  for (const f of files) for (const mount of TEST_FILE.test(f.path) ? [] : f.mounts || []) {
+  for (const f of files) for (const mount of isTestFile(f.path) ? [] : f.mounts || []) {
     const t = mountTarget(f, mount, byPath);
     // JS: what app.use() is handed is a router only if it serves or mounts something
     if (mount.on && (!t || (t.file !== f.path && !servesOrMounts(t.file)))) {
@@ -193,9 +199,10 @@ export function resolveRoutes(files) {
   const wrapsApp = (file, prefix) => [...mountsTo].some(([to, ms]) => ms.some((m) => m.from === file && m.prefix === prefix) && byPath.get(to)?.routes?.some((r) => r.framework !== 'firebase'));
 
   const routes = [];
+  const mappers = mapperCallIndex(files);
   for (const f of files) {
     // Test files define throwaway apps and stub servers; their routes aren't part of the system.
-    if (!f.routes?.length || TEST_FILE.test(f.path)) continue;
+    if (!f.routes?.length || isTestFile(f.path)) continue;
     for (const r of f.routes) {
       if (r.framework === 'firebase') {
         if (r.method === 'ANY' && wrapsApp(f.path, r.path)) continue;
@@ -204,15 +211,110 @@ export function resolveRoutes(files) {
         continue;
       }
       const defPrefix = (r.var && f.routers?.[r.var]) || '';
+      const calls = r.mapper && mappers.get(`${f.repo ?? ''}|${r.mapper}`);
+      if (calls) { routes.push(...calls.map((c) => mappedRoute(f, r, c, defPrefix))); continue; }
       const fromMounts = mountMw(f.path, r.var);
       for (const mp of outerPrefixes(f.path, r.var)) {
         const path = joinPath(mp, defPrefix, r.path);
         const mw = scopes.length ? [...new Set([...fromMounts, ...scopedMw(f, r, path)])] : fromMounts;
-        routes.push({ file: f.path, method: r.method, path, line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}) });
+        routes.push({ file: f.path, method: r.method, path, line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}), ...(r.caseInsensitive ? { caseInsensitive: true } : {}) });
       }
     }
   }
+  routes.push(...conventionalRoutes(files), ...inheritedRoutes(files));
   return dedupe(routes, (r) => `${r.file}|${r.method}|${r.path}`);
+}
+
+/** Where each ASP.NET Core project mapper (MapOrders(this RouteGroupBuilder g)) is called: `${repo}|${name}` -> calls */
+function mapperCallIndex(files) {
+  const index = new Map();
+  for (const f of files) for (const c of f.mapperCalls || []) {
+    if (isTestFile(f.path)) continue;
+    const k = `${f.repo ?? ''}|${c.name}`;
+    index.set(k, [...(index.get(k) || []), c]);
+  }
+  return index;
+}
+
+const hasAccess = (a) => !!(a?.guard || a?.anonymous);
+const accessOf = (a) => (a.anonymous ? { anonymous: true } : { guard: a.guard });
+
+/** A route inside a project mapper, under the prefix (and sign-in check) of the group it was called on. */
+function mappedRoute(f, r, call, defPrefix) {
+  const access = !hasAccess(r.auth) && hasAccess(call.access) ? { access: { ...accessOf(call.access), mounted: true } } : {};
+  return {
+    file: f.path, method: r.method, path: joinPath(call.prefix, defPrefix, r.path), line: r.line,
+    ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), caseInsensitive: true, ...access,
+  };
+}
+
+/**
+ * Actions declared on a base controller with no [Route] of its own, served by each subclass under the
+ * subclass's [Route]. Who may call one: the action's own attributes, else the subclass's, else the base's.
+ */
+function inheritedRoutes(files) {
+  const bases = new Map(); // `${repo}|${base}` -> { actions, attrs }
+  for (const f of files) for (const a of f.baseActions || []) {
+    const k = `${f.repo ?? ''}|${a.base}`;
+    if (!bases.has(k)) bases.set(k, { actions: [], attrs: f.csTypes?.find((t) => t.name === a.base)?.attrs || '' });
+    bases.get(k).actions.push(a);
+  }
+  if (!bases.size) return [];
+  const out = [];
+  for (const f of files) {
+    if (isTestFile(f.path)) continue;
+    for (const t of f.csTypes || []) {
+      if (t.abstract) continue;
+      for (const b of t.bases) {
+        const base = bases.get(`${f.repo ?? ''}|${b}`);
+        // every action once per subclass: a real project has a handful of each, so stop well before code
+        // you didn't write could multiply them into millions
+        if (base) for (const a of base.actions) { for (const r of inheritedAction(f, t, a, base.attrs)) out.push(r); if (out.length >= 20000) return out; }
+      }
+    }
+  }
+  return out;
+}
+
+/** One base-controller action as served by subclass `t`, once per [Route] on the subclass. */
+function inheritedAction(f, t, a, baseAttrs) {
+  const tokens = { controller: t.name.replace(/Controller$/, ''), action: a.action, area: t.area };
+  const sub = csAccess(t.attrs);
+  const base = csAccess(baseAttrs);
+  const winner = [a.auth, sub, base].find(hasAccess);
+  const decos = [...a.auth.decos, ...csAttrNames(t.attrs), ...t.bases, ...csAttrNames(baseAttrs)];
+  const access = { ...(winner ? accessOf(winner) : {}), decos, inherited: true };
+  return (t.prefixes.length ? t.prefixes : ['']).map((prefix) => csRoutePath(prefix, a.template, tokens)).filter(Boolean)
+    .map((path) => ({ file: f.path, method: a.method, path, line: t.line, handler: a.handler, caseInsensitive: true, access }));
+}
+
+/**
+ * ASP.NET Core controllers without route attributes are reached through a MapControllerRoute pattern
+ * ("{controller=Home}/{action=Index}/{id?}") set up elsewhere in the same repo; area controllers only
+ * through a pattern with {area}.
+ */
+function conventionalRoutes(files) {
+  const patterns = new Map(); // repo -> [pattern]
+  for (const f of files) for (const p of f.controllerConventions || []) {
+    if (isTestFile(f.path)) continue;
+    const k = f.repo ?? '';
+    patterns.set(k, [...(patterns.get(k) || []), p]);
+  }
+  const out = [];
+  for (const f of files) {
+    const ps = patterns.get(f.repo ?? '');
+    if (!ps || !f.conventionalActions?.length || isTestFile(f.path)) continue;
+    for (const a of f.conventionalActions) {
+      const pattern = ps.find((p) => /\{area\b/.test(p) === !!a.area);
+      if (!pattern) continue;
+      const path = joinPath(...pattern.split('/').map((seg) => seg
+        .replace(/\{controller(?:=[^}]*)?\}/, a.controller)
+        .replace(/\{action(?:=[^}]*)?\}/, a.action)
+        .replace(/\{area(?::exists)?(?:=[^}]*)?\}/, a.area || '')));
+      for (const method of a.methods) out.push({ file: f.path, method, path, line: a.line, handler: a.handler, caseInsensitive: true });
+    }
+  }
+  return out;
 }
 
 function dedupe(list, key) {
@@ -250,7 +352,8 @@ function score(c, r) {
  * @returns [{ from, to, method, path, call, line }]
  */
 export function matchCalls(files, routes) {
-  const rs = routes.map((r) => ({ ...r, segs: routeSegments(r.path) }));
+  // ASP.NET Core matches paths ignoring case, so /api/Orders answers a call to /api/orders
+  const rs = routes.map((r) => ({ ...r, segs: routeSegments(r.caseInsensitive ? r.path.toLowerCase() : r.path) }));
   const pending = [];
   const learned = new Map(); // caller file or dir -> Map(prefix -> count)
   const learn = (key, prefix) => { if (!learned.has(key)) learned.set(key, new Map()); const m = learned.get(key); m.set(prefix, (m.get(prefix) || 0) + 1); };
@@ -258,6 +361,7 @@ export function matchCalls(files, routes) {
   for (const f of files) {
     for (const call of f.calls || []) {
       const cs = routeSegments(call.path);
+      const csLower = routeSegments(call.path.toLowerCase());
       let best = -Infinity, hits = [];
       const all = [];
       for (const r of rs) {
@@ -265,7 +369,7 @@ export function matchCalls(files, routes) {
         // a Firebase callable (CALL) is only ever reached through httpsCallable, and only reaches callables
         if ((call.method === 'CALL') !== (r.method === 'CALL')) continue;
         if (call.method && r.method !== 'ANY' && r.method !== call.method) continue;
-        const sc = score(cs, r.segs);
+        const sc = score(r.caseInsensitive ? csLower : cs, r.segs);
         if (!sc) continue;
         all.push({ r, ...sc });
         if (sc.s > best) { best = sc.s; hits = [{ r, ...sc }]; } else if (sc.s === best) hits.push({ r, ...sc });

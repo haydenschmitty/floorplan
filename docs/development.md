@@ -81,6 +81,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | File | What it checks |
 |---|---|
 | `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework |
+| `aspnet.test.mjs` | ASP.NET Core: controller, conventional, inherited, minimal-API (including mappers called from another file) and SignalR endpoints, `using` and `global using` links between C# files, requests matched ignoring case and .NET test-project folders skipped (both for C# only, so other frameworks match exactly and keep their endpoints), and Health (who may call each endpoint, handlers and base classes in other files, app-wide policies per project, CORS, Stripe webhooks, connection-string passwords, each with look-alikes it must leave alone), and C# files built to make pattern matching slow |
 | `tsconfig-inheritance.test.mjs` | local configuration inheritance: arrays and single bases, alias links, relative paths, overrides, legacy baseUrl and cycles |
 | `helpers-lib.test.mjs` | globs, file types, command-line flags, fallback names |
 | `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders: variables a script or pipeline fills in, file paths, record ids, autofill words, made-up keys and publishable keys, each with a real secret it must still find |

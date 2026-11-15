@@ -15,7 +15,7 @@ import { discover, listGitFiles, explainGitError, gitInfo, classify, themeRoots,
 import { extract, callableCallsVia } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
-import { createResolver } from './lib/resolve.mjs';
+import { createResolver, applyGlobalUsings } from './lib/resolve.mjs';
 import { resolveRoutes, matchCalls } from './lib/routes.mjs';
 import { nuxtAutoImports } from './lib/nuxt.mjs';
 
@@ -125,6 +125,7 @@ function countLines(abs) {
 }
 
 // ---------- 3. resolve imports ----------
+applyGlobalUsings(files);
 const resolve = createResolver(root, files);
 const edges = [];
 const externals = new Map(); // `${eco}:${name}` -> { eco, name, count, files:Set }
