@@ -37,11 +37,11 @@ The most useful lines on the map connect a screen's web requests to the server c
   - addresses built in a variable first: `const url = …; api.get(url)`;
   - template strings with nested parts;
   - small helpers in the same file that add a prefix, like `call('/definitions')`;
-  - an app's own request helpers, like `apiGet('/tasks')` or `apiSend('PATCH', `/tasks/${id}`, body)`, with the method from the name or the first argument;
+  - an app's own request helpers, like `apiGet('/tasks')` or `` apiSend('PATCH', `/tasks/${id}`, body) ``, with the method from the name or the first argument;
   - methods of a service class that build the address, like `this.http.post(this.url(id, '/ship'), body)` (Angular services and the like), including one that builds on another;
   - calls whose address is on the line below, like `this.http.patch<Order>(` followed by the template string.
 - **Firebase Cloud Functions** are called by name rather than by address. A callable function (`onCall`) shows up as `CALL /approveItem` under the name your functions entry file exports it as, and the website's `httpsCallable(functions, 'approveItem')` calls reach it, including through a helper of your own that wraps `httpsCallable`. An `onRequest` function is an ordinary endpoint at `/<name>`, and an Express app passed to it keeps its own routes under that name. Scheduled and other background functions (Firestore, Storage, Pub/Sub) are listed for the AI to place on the map.
-- **Matches** the two. When a request only spells out part of the address, because the base URL lives in settings, Floorplan learns each client's base path from the calls only one endpoint could answer, and prefers matches that fit it, even over a shorter address elsewhere that looks closer.
+- **Matches** the two. When a request only spells out part of the address, because the base URL lives in settings, Floorplan learns each client's base path from the calls only one endpoint could answer (shared across that client's files, up to the folder with its package.json or its repo, never with another app beside it), and prefers matches that fit it, even over a shorter address elsewhere that looks closer.
 
 It's pattern matching, not a compiler, so it catches most connections but not all. If an important link is missing, ask for it to be added to the floorplan, and it will record it as an explicit connection.
 

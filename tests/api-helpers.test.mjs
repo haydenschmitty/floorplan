@@ -3,7 +3,7 @@
 // /api/v2), a shorter address elsewhere that looks closer doesn't win, even in the same server file.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeProject, scanAndBuild, readGraph, cleanup } from './helpers.mjs';
+import { lib, makeProject, scanAndBuild, readGraph, cleanup } from './helpers.mjs';
 
 let root, graph;
 before(() => {
@@ -48,4 +48,39 @@ after(() => cleanup(root));
 test("a phone app's helper calls reach the API under its base, not the website's closer-looking page", () => {
   const http = graph.links.filter((l) => l.k === 'http').map((l) => `${l.a.slice(2)} -> ${l.b.slice(2)} ${[...l.labels].sort().join(', ')}`);
   assert.deepEqual(http, ['phone/src/tasks.ts -> server/app.js GET /api/v2/me, GET /api/v2/tasks/:id, PATCH /api/v2/tasks/:id']);
+});
+
+// A base learned in one client is shared with that client's other files (the nearest folder with a package.json,
+// or its repo), never with another client beside it in the same folder (apps/ in a monorepo).
+test("a client's base reaches its other files, but not another client in the same folder", async () => {
+  const { matchCalls } = await lib('routes.mjs');
+  const routes = [
+    { file: 'server/app.js', method: 'GET', path: '/tasks/:id/comments', line: 1 },
+    { file: 'server/app.js', method: 'GET', path: '/api/v2/tasks/:id/comments', line: 2 },
+    { file: 'server/app.js', method: 'GET', path: '/api/v2/me', line: 3 },
+  ];
+  const where = (files) => matchCalls(files, routes).map((h) => `${h.from} -> ${h.path}`).sort();
+  const comments = { path: '/tasks/${x}/comments', method: 'GET', line: 1 };
+  const me = { path: '/me', method: 'GET', line: 1 };
+  // a monorepo: each app has its own package.json
+  assert.deepEqual(where([
+    { path: 'package.json' }, { path: 'apps/phone/package.json' }, { path: 'apps/web/package.json' }, { path: 'server/package.json' },
+    { path: 'apps/phone/src/api/me.ts', calls: [me] },
+    { path: 'apps/phone/src/screens/comments.ts', calls: [comments] },
+    { path: 'apps/web/src/pages/comments.ts', calls: [comments] },
+  ]), [
+    'apps/phone/src/api/me.ts -> /api/v2/me',
+    'apps/phone/src/screens/comments.ts -> /api/v2/tasks/:id/comments',
+    'apps/web/src/pages/comments.ts -> /tasks/:id/comments',
+  ]);
+  // repos side by side in one folder, with no package.json to go by
+  assert.deepEqual(where([
+    { path: 'clients/phone/src/api/me.ts', repo: 'clients/phone', calls: [me] },
+    { path: 'clients/phone/src/screens/comments.ts', repo: 'clients/phone', calls: [comments] },
+    { path: 'clients/web/src/pages/comments.ts', repo: 'clients/web', calls: [comments] },
+  ]), [
+    'clients/phone/src/api/me.ts -> /api/v2/me',
+    'clients/phone/src/screens/comments.ts -> /api/v2/tasks/:id/comments',
+    'clients/web/src/pages/comments.ts -> /tasks/:id/comments',
+  ]);
 });

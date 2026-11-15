@@ -86,7 +86,8 @@ function keyedRouteTable(code, at) {
 const HTTP_CONTEXT = /\b(fetch|axios|ky|got|request|requests|httpx|aiohttp|session|client|http|https|api|Api|API|endpoint|Endpoint|url|Url|URL|BASE|base)\b|\.(get|post|put|patch|delete|head)\s*(<[^>]*>)?\s*\(|(?<![.\w$])(get|post|put|patch|delete)\s*\(\s*[rf]?["'`]\/|\b(?:api[A-Z]\w*|(?:http|fetch|request)(?:Get|Post|Put|Patch|Delete|Send|Json|Data|Api)\w*)\s*(?:<[^()]*>)?\s*\(/;
 // An app's own API helpers: apiGet('/tasks'), httpPost('/orders', body), apiSend('PATCH', `/tasks/${id}`, body)
 const HELPER_VERB = /\b(?:api|http|fetch|request)(Get|Post|Put|Patch|Delete)\w*\s*(?:<[^()]*>)?\s*\(/;
-const HELPER_ARG_VERB = /\b(?:api|http|fetch|request)[A-Z]\w*\s*(?:<[^()]*>)?\s*\(\s*["'`](GET|POST|PUT|PATCH|DELETE)["'`]\s*,/i;
+// A helper taking the method first is named in camelCase (apiSend, not requestedBy); the method may be either case
+const HELPER_ARG_VERB = /\b(?:api|http|fetch|request)[A-Z]\w*\s*(?:<[^()]*>)?\s*\(\s*["'`](GET|POST|PUT|PATCH|DELETE|get|post|put|patch|delete)["'`]\s*,/;
 const NAV_CONTEXT = /\b(router\.(push|replace|prefetch)|navigate|redirect|href|revalidatePath|pathname|Link|to=|location\.)\b|window\.location/;
 const STR_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
 const IGNORED_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$|\.(test|example|invalid|local|localhost|internal)(:\d+)?$|(^|\.)example\.(com|org|net)$/;

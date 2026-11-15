@@ -26,9 +26,11 @@ test("JavaScript: requests through an app's own API helpers, with the method fro
     `export const list = () => apiGet<Task[], Meta>('/tasks', filters);`,
     'export const edit = (id) => apiSend<Task>(\'PATCH\', `/tasks/${id}`, body);',
     `export const note = () => httpPost('/notes', body);`,
+    'export const close = (id) => apiSend(\'patch\', `/tasks/${id}/close`);',
+    `session.log(requestedBy('DELETE', '/audit'));`,
     `requestAnimationFrame(() => draw('/static/x'));`,
   ].join('\n'), 'typescript', 'app/api/tasks.ts');
-  assert.deepEqual(r.calls.map((c) => `${c.method} ${c.path}`), ['GET /tasks', 'PATCH /tasks/${x}', 'POST /notes']);
+  assert.deepEqual(r.calls.map((c) => `${c.method} ${c.path}`), ['GET /tasks', 'PATCH /tasks/${x}', 'POST /notes', 'PATCH /tasks/${x}/close', 'null /audit']);
 });
 
 test('Next.js app router: each exported method is an endpoint at the folder path', () => {
