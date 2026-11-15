@@ -330,7 +330,7 @@ const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permiss
 // but not `login_required` or `logged_in_required`; validating a payload's shape (`validate`, `validate_body`,
 // `validate_user_input`) but not a credential (`validate_jwt`, `validate_api_key`, `validateToken`).
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log(?!in(?:_|$)|ged_?in(?:_|$))\w*|swag_from|validate(?!_(?:\w+_)?(?:login|auth|authenticated|authorized?|jwt|tokens?|permissions?|perms?|roles?|staff|admin|superuser|owner|scopes?|session|api_?key|signature|signed|hmac|device|member|user|credentials?|bearer)$)\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
-const isGuardName = (name) => !!name && !NOT_GUARD.test(snake(name)) && GUARD_NAME.test(snake(name));
+const isGuardName = (name) => !!name && !NOT_GUARD.test(snake(name)) && (GUARD_NAME.test(snake(name)) || /^(authenticate|authorize)$/.test(snake(name)));
 // JavaScript checks GUARD_NAME doesn't spell out: passport.authenticate('jwt'), expressjwt({ … }), isLoggedIn
 const JS_GUARD_NAME = /(^|_)authenticate(_|$)|^express_?jwt$|(^|_)logged_in(_|$)/;
 const isJsGuardName = (name) => isGuardName(name) || (!!name && !NOT_GUARD.test(snake(name)) && JS_GUARD_NAME.test(snake(name)));
@@ -477,6 +477,36 @@ function pyDepRefs(text, sig = '') {
   return [...refs];
 }
 
+// Read one Python argument/list expression without stopping at a nested call.
+// Ignore delimiters inside strings and comments; an incomplete expression is
+// not evidence of a guard, and must not swallow later routers or handlers.
+function pyEnclosed(src, start) {
+  const pairs = { '(': ')', '[': ']', '{': '}' }, stack = [pairs[src[start]]];
+  if (!stack[0]) return '';
+  let quote = '', comment = false;
+  for (let i = start + 1; i < src.length; i++) {
+    const c = src[i];
+    if (comment) { if (c === '\n') comment = false; continue; }
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (src.startsWith(quote, i)) { i += quote.length - 1; quote = ''; }
+      continue;
+    }
+    if (c === '#') { comment = true; continue; }
+    if (c === '"' || c === "'") {
+      quote = src.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      i += quote.length - 1;
+      continue;
+    }
+    if (pairs[c]) stack.push(pairs[c]);
+    else if (/[)\]}]/.test(c)) {
+      if (c !== stack.pop()) return '';
+      if (!stack.length) return src.slice(start + 1, i);
+    }
+  }
+  return '';
+}
+
 function pyRoutes(src, f, out) {
   const lines = src.split('\n');
   const lineAt = (() => { const at = lineIndex(src); return (i) => at(i) - 1; })(); // 0-based line of an offset
@@ -499,9 +529,10 @@ function pyRoutes(src, f, out) {
   // APIRouter(dependencies=[...]): a check named as one counts here; anything else (a factory's result,
   // a Depends() kept in a variable, a list kept in a constant) is left for build to judge (routerRefs)
   const routerRefs = new Map();
-  for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\(((?:[^()]|\([^()]{0,500}\)){0,3000})\)/gm)) {
-    if (!/\bdependencies\s*=/.test(m[2])) continue;
-    const refs = pyDepRefs(m[2]);
+  for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\s*\(/gm)) {
+    const args = pyEnclosed(src, m.index + m[0].length - 1);
+    if (!/\bdependencies\s*=/.test(args)) continue;
+    const refs = pyDepRefs(args);
     const named = refs.find((r) => r.startsWith('fn:') && isGuardDep(r.slice(3)));
     if (named) guardedVars.set(m[1], named.slice(3));
     else if (refs.length) routerRefs.set(m[1], refs);
