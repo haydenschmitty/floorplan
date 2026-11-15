@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Flask login checks are recognised** (#123): routes protected by `@login_required`, `@login_required_json` or `@logged_in_required` were reported as open, because names starting with "log" were taken for logging decorators. Logging decorators such as `@log_call` still do not count as login checks, and a login decorator placed above the route remains a warning. Fixed by @daniyyell-dev.
+- **FastAPI apps protected by one HTTP middleware** (#86): an `@app.middleware("http")` function that turns callers away (a 401 or 403 response, or `HTTPException`) now counts as the app's login check, so its endpoints are no longer reported as open to anyone. It works the same way Flask's `@app.before_request` already does. A middleware that only adds headers, measures time or reads a 401 from the response still protects nothing, whatever its name, and neither protects a JavaScript server in the same repo. Fixed by @ahmedjanwar.
+- **FastAPI checks named `validate_…`** (#112): a dependency like `Depends(validate_jwt)` or `Depends(validate_api_key)` now counts as a login check. One that validates a request's shape, like `@validate` or `Depends(validate_payload)`, still doesn't.
+- **FastAPI checks judged by what they do, not only their name** (#117, #102): a route was reported as open when its check was the result of a factory (`editor = require_role("editor")`, then `Depends(editor)`, on the route or on the whole `APIRouter`), a dependency with an ordinary name that turns callers away with a 401 or 403 (`Depends(current_vehicle)`, or a class whose `__call__` does), a `Depends()` kept in a variable (`api = Depends(require_key)`, then `dependencies=[api]` or `_: None = api`), or a list kept in a constant (`dependencies=WRITE`). These now count. A dependency that checks nothing about the caller, like a page number or a lookup that answers 404, still protects nothing however it's passed.
+
 ## 0.8.0 (2026-11-12)
 
 - **An embedded map can hand "Ask about this" to the page around it:** an exported copy shown inside another page has no Ask bar, so its right-click menu had no Ask items. The page can now opt in by adding `ask=host` to the map's address. **Ask about this** then appears on cards, lines and the background, and sends that page a `floorplan:ask` message with the chosen items' ids and names, so its own Ask can take the question. Nothing changes for maps opened without it. See [Embedding the map](docs/using-the-map.md#handing-ask-about-this-to-the-page-around-the-map).

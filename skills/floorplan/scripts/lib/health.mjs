@@ -268,8 +268,11 @@ function bounded(re) {
 
 // Decorators / middleware / dependencies whose names say "check who is calling".
 const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permission|permissions|perm|role|roles|staff|admin|superuser|owner|scope|scopes|session|api_?key|signature|signed|hmac|device|member|user)(_|$)|_required$|^requires?_|^ensure_|^verify_|^guard(?:_|$)|_guard$|^check_(auth|token|user|session|permission|role|api)|protect|^is_?authenticated|^is_?admin/i;
-const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log\w*|swag_from|validate\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
-const isGuardName = (name) => !!name && !NOT_GUARD.test(name) && GUARD_NAME.test(snake(name));
+// …and names that only look like it, matched on the snake_case name. Logging (`log_call`, `logged_request`)
+// but not `login_required` or `logged_in_required`; validating a payload's shape (`validate`, `validate_body`,
+// `validate_user_input`) but not a credential (`validate_jwt`, `validate_api_key`, `validateToken`).
+const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log(?!in(?:_|$)|ged_?in(?:_|$))\w*|swag_from|validate(?!_(?:\w+_)?(?:login|auth|authenticated|authorized?|jwt|tokens?|permissions?|perms?|roles?|staff|admin|superuser|owner|scopes?|session|api_?key|signature|signed|hmac|device|member|user|credentials?|bearer)$)\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
+const isGuardName = (name) => !!name && !NOT_GUARD.test(snake(name)) && GUARD_NAME.test(snake(name));
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
 const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_session|sessionmaker)$|(^|_)(db|database|sql\w*|engine|conn|connection|cursor|uow|unit_of_work)(_|$)|session_?(local|maker|factory)/i;
@@ -319,6 +322,56 @@ function blockAfter(lines, defIdx) {
   return lines.slice(defIdx, end).join('\n');
 }
 
+// Does a Python body send the caller away: a `return` or `raise` whose statement carries a 401 or 403
+// (JSONResponse(..., status_code=401), HTTPException(403), status.HTTP_401_UNAUTHORIZED…)? A dependency
+// can only turn the caller away by raising, so pass 'raise' alone for one.
+const PY_DENIED = /\b40[13]\b|HTTP_40[13]_\w+|Unauthorized|Forbidden/;
+function pyRejectsCaller(body, stmt = 'return|raise') {
+  for (const m of body.matchAll(new RegExp('^[ \\t]*(?:' + stmt + ')\\b', 'gm'))) {
+    let depth = 0, i = m.index + m[0].length;
+    for (; i < body.length && !(body[i] === '\n' && depth <= 0); i++) {
+      if ('([{'.includes(body[i])) depth++;
+      else if (')]}'.includes(body[i])) depth--;
+    }
+    if (PY_DENIED.test(body.slice(m.index, i))) return true;
+  }
+  return false;
+}
+
+/** The top-level items of the Python list that opens at text[open]. */
+function pyListItems(text, open) {
+  const items = [];
+  let depth = 0, start = open + 1;
+  for (let i = open; i < text.length && i - open < 3000; i++) {
+    const c = text[i];
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) { if (!--depth) { items.push(text.slice(start, i)); break; } }
+    else if (c === ',' && depth === 1) { items.push(text.slice(start, i)); start = i + 1; }
+  }
+  return items.map((x) => x.trim()).filter(Boolean);
+}
+
+/** The function in a `Depends(fn)` / `Security(fn)` at the start of text, if any. */
+const PY_DEPENDS = /^(?:[\w.]+\.)?(?:Depends|Security)\(\s*([\w.]+)/;
+
+/**
+ * What a FastAPI route or router names as its dependencies, for build to judge repo-wide (pyDependencyGuards):
+ * `fn:name` for `Depends(name)` / `Security(name)`, `dep:name` for a `Depends(...)` kept in a variable
+ * (`dependencies=[api]`, or a parameter default `_: None = api`), and `list:NAME` for `dependencies=NAME`.
+ */
+function pyDepRefs(text, sig = '') {
+  const refs = new Set();
+  const short = (n) => n.split('.').pop();
+  for (const m of text.matchAll(/\b(?:Depends|Security)\(\s*([\w.]+)/g)) refs.add('fn:' + short(m[1]));
+  for (const m of text.matchAll(/\bdependencies\s*=\s*/g)) {
+    const at = m.index + m[0].length;
+    if (text[at] === '[') { for (const item of pyListItems(text, at)) if (/^[A-Za-z_][\w.]*$/.test(item)) refs.add('dep:' + short(item)); }
+    else { const name = /^[A-Za-z_][\w.]*(?![\w.(])/.exec(text.slice(at, at + 200))?.[0]; if (name) refs.add('list:' + short(name)); }
+  }
+  for (const m of sig.matchAll(/=\s*([A-Za-z_][\w.]*)(?=\s*(?:[,)]|$))/gm)) if (!/^(None|True|False)$/.test(m[1])) refs.add('dep:' + short(m[1]));
+  return [...refs];
+}
+
 function pyRoutes(src, f, out) {
   const lines = src.split('\n');
   const lineAt = (() => { const at = lineIndex(src); return (i) => at(i) - 1; })(); // 0-based line of an offset
@@ -331,29 +384,64 @@ function pyRoutes(src, f, out) {
     guardedVars.set(m[1], m[2]);
     if (m[1] === 'app') out.push({ k: 'global-guard', framework: 'flask', name: m[2], line: defIdx + 1 });
   }
+  // FastAPI / Starlette: an @app.middleware("http") function runs before every route, so it guards
+  // them all when it turns callers away itself. One that only adds headers, logs or reads a 401 from
+  // the response doesn't count.
+  for (const m of src.matchAll(/^@\w+\.middleware\(\s*["']http["']\s*\)\s*\n(?:@.*\n)*\s*(?:async\s+)?def\s+(\w+)/gm)) {
+    const defIdx = lineAt(m.index + m[0].length);
+    if (pyRejectsCaller(blockAfter(lines, defIdx))) out.push({ k: 'global-guard', framework: 'fastapi', name: m[1], line: defIdx + 1 });
+  }
+  // APIRouter(dependencies=[...]): a check named as one counts here; anything else (a factory's result,
+  // a Depends() kept in a variable, a list kept in a constant) is left for build to judge (routerRefs)
+  const routerRefs = new Map();
   for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\(((?:[^()]|\([^()]{0,500}\)){0,3000})\)/gm)) {
-    const dep = /dependencies\s*=\s*\[[^\]]*Depends\(\s*([\w.]+)/.exec(m[2]);
-    if (dep && isGuardDep(dep[1].split('.').pop())) guardedVars.set(m[1], dep[1]);
+    if (!/\bdependencies\s*=/.test(m[2])) continue;
+    const refs = pyDepRefs(m[2]);
+    const named = refs.find((r) => r.startsWith('fn:') && isGuardDep(r.slice(3)));
+    if (named) guardedVars.set(m[1], named.slice(3));
+    else if (refs.length) routerRefs.set(m[1], refs);
   }
   // FastAPI dependency aliases, `AdminUser = Annotated[Session, Depends(admin_user)]`, and the dependency
   // functions behind them. They're usually imported from a shared deps.py, so build decides repo-wide
-  // which ones check the caller (see pyAliasGuards).
+  // which ones check the caller (see pyDependencyGuards).
   const sigAt = (idx) => lines.slice(idx, idx + 15).join('\n').split(/\)\s*(->[^:]*)?:\s*$/m)[0];
   const depsIn = (text) => [...text.matchAll(/\b(?:Depends|Security)\(\s*([\w.]+)/g)].map((m) => m[1].split('.').pop());
   const typesIn = (sig) => [...new Set([...sig.matchAll(/\b\w+\s*:\s*(?:[\w.]*Annotated\[\s*)?([A-Za-z_][\w.]*)/g)].map((m) => m[1].split('.').pop()))];
-  if (/\b(Depends|Security)\(/.test(src)) {
+  if (/\b(?:Depends|Security)\(|\bHTTPException\b/.test(src)) {
     for (const m of src.matchAll(/^(?:type\s+)?(\w+)\s*(?::[^=\n]*)?=\s*(?:[\w.]+\.)?Annotated\[/gm)) {
       let depth = 1, j = m.index + m[0].length;
       while (j < src.length && depth && j - m.index < 800) { if (src[j] === '[') depth++; else if (src[j] === ']') depth--; j++; }
       const fn = depsIn(src.slice(m.index, j))[0];
       if (fn) out.push({ k: 'py-alias', name: m[1], fn, line: lineAt(m.index) + 1 });
     }
-    // top-level functions that aren't routes, with the dependencies and types they take
-    for (const m of src.matchAll(/^(?:async\s+)?def\s+(\w+)\s*\(/gm)) {
+    // top-level functions that aren't routes, with the dependencies and types they take, and whether they
+    // turn the caller away themselves (raise a 401 or 403) or return a function that does (a factory
+    // like require_role("admin")); a class counts by its __call__
+    for (const m of src.matchAll(/^(?:async\s+)?def\s+(\w+)\s*\(|^class\s+(\w+)\b/gm)) {
       const idx = lineAt(m.index);
       if (idx > 0 && /^\s*@/.test(lines[idx - 1])) continue;
-      const sig = sigAt(idx), deps = depsIn(sig), types = typesIn(sig);
-      if (deps.length || types.length) out.push({ k: 'py-dep-fn', name: m[1], ...(deps.length ? { deps } : {}), ...(types.length ? { types } : {}) });
+      const body = blockAfter(lines, idx);
+      if (m[2] && !/^\s+(?:async\s+)?def\s+__call__\s*\(/m.test(body)) continue;
+      const sig = m[2] ? '' : sigAt(idx), deps = [...new Set(depsIn(body))], types = typesIn(sig);
+      const rejects = pyRejectsCaller(body, 'raise');
+      if (deps.length || types.length || rejects) out.push({ k: 'py-dep-fn', name: m[1] || m[2], ...(deps.length ? { deps } : {}), ...(types.length ? { types } : {}), ...(rejects ? { rejects } : {}) });
+    }
+    // module-level names a route can depend on: `api = Depends(require_key)`, a factory's result
+    // (`editor = require_role("editor")`) and lists of dependencies (`WRITE = [Depends(require_login)]`)
+    for (const m of src.matchAll(/^(\w+)\s*(?::[^=\n]*)?=(?!=)\s*(?:([\w.]+)\s*\(|(\[))/gm)) {
+      const callee = m[2]?.split('.').pop();
+      if (callee === 'Depends' || callee === 'Security') {
+        const fn = depsIn(src.slice(m.index, m.index + m[0].length + 200))[0];
+        if (fn) out.push({ k: 'py-dep-var', name: m[1], depends: fn });
+      } else if (callee && !/^(Annotated|APIRouter|FastAPI|Blueprint|Flask)$/.test(callee)) {
+        out.push({ k: 'py-dep-var', name: m[1], call: callee });
+      } else if (m[3]) {
+        const list = pyListItems(src, m.index + m[0].length - 1).map((item) => {
+          const fn = PY_DEPENDS.exec(item)?.[1];
+          return fn ? 'fn:' + fn.split('.').pop() : /^[A-Za-z_][\w.]*$/.test(item) ? 'dep:' + item.split('.').pop() : null;
+        }).filter(Boolean);
+        if (list.length) out.push({ k: 'py-dep-var', name: m[1], list });
+      }
     }
   }
   // Only treat a helper as a verifier if its body visibly checks the
@@ -412,9 +500,13 @@ function pyRoutes(src, f, out) {
       // other decorators may be auth wrappers defined in another file; build resolves them
       const other = below.filter((d) => !/^(route|get|post|put|patch|delete|api_route|websocket)$/.test(d));
       if (other.length) rec.decos = other;
-      // so may parameter types: `user: AdminUser`, a dependency alias (pyAliasGuards)
+      // so may parameter types: `user: AdminUser`, a dependency alias (pyDependencyGuards)
       const types = typesIn(sig);
       if (types.length) rec.types = types;
+      // and dependencies whose names don't say what they do: a factory's result, a Depends() kept in a
+      // variable, a list kept in a constant, a function that raises a 401 (pyDependencyGuards)
+      const refs = [...new Set([...pyDepRefs(decoText + '\n' + sig, sig), ...(routerRefs.get(r.var) || [])])];
+      if (refs.length) rec.depRefs = refs;
     }
     if (body) rec.calls = [...new Set([...body.matchAll(/\b(?:await\s+)?([A-Za-z_]\w*)\s*\(/g)].map((m) => m[1]))];
     if (SIGNATURE_CHECK.test(body)) rec.signed = true;
@@ -493,31 +585,55 @@ function jsRoutes(src, f, out) {
 }
 
 /**
- * FastAPI dependency aliases that check the caller, per repo: Map(repo -> Map(alias -> file)).
- * An alias checks the caller when its dependency function does: by its name (admin_user), by taking a
- * checking dependency (Depends(require_login)), or by taking a checking alias itself, e.g.
- * `AdminOffice = Annotated[Office, Depends(admin_owned_office)]` where admin_owned_office takes `admin: AdminUser`.
- * An alias whose own name reads as a check counts too (`AdminAccess = Annotated[dict, Depends(check)]`),
+ * FastAPI dependencies that check the caller, per repo: Map(repo -> { aliases: Map(alias -> file), checks(ref) }).
+ * A dependency function checks the caller by its name (admin_user, validate_jwt), by raising a 401 or 403
+ * itself or in the function it returns (a factory like require_role), or by taking a checking dependency
+ * (Depends(require_login)) or a checking alias (`admin: AdminUser`). A module-level name checks when what it
+ * holds does: `api = Depends(require_key)`, `editor = require_role("editor")`, `WRITE = [Depends(require_login)]`.
+ * An alias checks the caller when its dependency function does, e.g.
+ * `AdminOffice = Annotated[Office, Depends(admin_owned_office)]` where admin_owned_office takes `admin: AdminUser`,
+ * or when its own name reads as a check (`AdminAccess = Annotated[dict, Depends(check)]`),
  * unless either name says it's a database session (`SqlSessionDep` over `get_sql_session`).
+ * `checks` takes a route's depRefs (see pyDepRefs).
  */
-function pyAliasGuards(files, findings) {
-  const byRepo = new Map(); // repo -> { aliases: Map(name -> {fn, file}), fns: Map(name -> {deps, types}) }
+function pyDependencyGuards(files, findings) {
+  const byRepo = new Map(); // repo -> { aliases: Map(name -> {fn, file}), fns: Map(name -> {deps, types, rejects}), vars: Map(name -> finding) }
   for (const f of files) for (const x of findings(f.path)) {
-    if (x.k !== 'py-alias' && x.k !== 'py-dep-fn') continue;
+    if (x.k !== 'py-alias' && x.k !== 'py-dep-fn' && x.k !== 'py-dep-var') continue;
     const k = f.repo ?? '';
-    if (!byRepo.has(k)) byRepo.set(k, { aliases: new Map(), fns: new Map() });
+    if (!byRepo.has(k)) byRepo.set(k, { aliases: new Map(), fns: new Map(), vars: new Map() });
     const r = byRepo.get(k);
     if (x.k === 'py-alias') r.aliases.set(x.name, { fn: x.fn, file: f.path });
-    else r.fns.set(x.name, { deps: x.deps || [], types: x.types || [] });
+    else if (x.k === 'py-dep-var') r.vars.set(x.name, x);
+    else r.fns.set(x.name, { deps: x.deps || [], types: x.types || [], rejects: !!x.rejects });
   }
   const out = new Map();
-  for (const [repo, { aliases, fns }] of byRepo) {
+  for (const [repo, { aliases, fns, vars }] of byRepo) {
     const ok = new Map();
-    const checks = (fn) => isGuardDep(fn) || (!isDbDep(fn) && !!fns.get(fn) && (fns.get(fn).deps.some(isGuardDep) || fns.get(fn).types.some((t) => ok.has(t))));
+    const looking = new Set(); // names being looked at, so a loop of names ends
+    const via = (name, look) => {
+      if (looking.has(name) || looking.size > 12) return false;
+      looking.add(name);
+      try { return look(); } finally { looking.delete(name); }
+    };
+    // a function (or the result of calling one) passed to Depends()
+    const checks = (fn) => !!fn && !isDbDep(fn) && (isGuardDep(fn) || via(fn, () => {
+      const d = fns.get(fn);
+      if (d && (d.rejects || d.deps.some(checks) || d.types.some((t) => ok.has(t)))) return true;
+      const v = vars.get(fn);
+      return !!v?.call && checks(v.call);
+    }));
+    const ref = (r) => {
+      const at = r.indexOf(':'), kind = r.slice(0, at), name = r.slice(at + 1);
+      if (kind === 'fn') return checks(name);
+      const v = vars.get(name);
+      if (kind === 'dep') return !!v?.depends && checks(v.depends);
+      return kind === 'list' && !!v?.list && via(name, () => v.list.some(ref));
+    };
     const aliasChecks = (name, fn) => checks(fn) || (isGuardDep(name) && !isDbDep(fn));
     // a few passes, so aliases built on other aliases resolve in any file order
     for (let pass = 0; pass < 3; pass++) for (const [name, a] of aliases) if (!ok.has(name) && aliasChecks(name, a.fn)) ok.set(name, a.file);
-    if (ok.size) out.set(repo, ok);
+    out.set(repo, { aliases: ok, checks: ref });
   }
   return out;
 }
@@ -1128,8 +1244,8 @@ export function buildHealth({ graph, scan, arch, root }) {
     const mod = moduleName.replaceAll('.', '\\.');
     return new RegExp('^\\s*from\\s+' + mod + '\\s+import\\s+[^\\n]*\\b' + name + '\\b', 'm').test(src);
   };
-  const aliasGuards = pyAliasGuards(scan.files.filter((f) => !TEST_FILE.test(f.path)), findings);
-  for (const [repo, aliases] of aliasGuards) for (const [name, file] of aliases) {
+  const depGuards = pyDependencyGuards(scan.files.filter((f) => !TEST_FILE.test(f.path)), findings);
+  for (const [repo, { aliases }] of depGuards) for (const [name, file] of aliases) {
     if (!guardDefs.has(name)) guardDefs.set(name, []);
     guardDefs.get(name).push({ file, alias: true, repo });
   }
@@ -1195,17 +1311,20 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (!perRepo.has(repo)) perRepo.set(repo, { guarded: 0, total: 0, open: [], misplaced: [], guardCounts: new Map(), fileGuards: new Map(), guardedIn: new Map() });
     const pr = perRepo.get(repo);
     pr.total++;
-    const global = (globalGuards.get(repo) || []).find((g) => g.framework === 'flask' || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m));
+    // a Flask before_request or FastAPI middleware guards that Python app, not a JavaScript server beside it
+    const global = (globalGuards.get(repo) || []).find((g) => ((g.framework === 'flask' || g.framework === 'fastapi') && /\.py$/.test(r.f)) || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);
     // a parameter typed with a dependency alias that checks the caller: `user: AdminUser`
-    const viaAlias = !fnd.via && fnd.types?.find((t) => aliasGuards.get(repo)?.has(t));
+    const viaAlias = !fnd.via && fnd.types?.find((t) => depGuards.get(repo)?.aliases.has(t));
+    // a FastAPI dependency whose name doesn't say it checks, but whose code does (pyDependencyGuards)
+    const viaDep = !fnd.via && fnd.depRefs?.find((ref) => depGuards.get(repo)?.checks(ref))?.replace(/^w+:/, '');
     const viaSignatureHelper = !fnd.via && fnd.calls?.find((name) =>
       (verifiedHelpers.get(repo)?.get(name) || []).some((helper) => helperImported(r.f, helper, name)));
-    if (fnd.via || global || viaWrapper || mounted || viaAlias || viaSignatureHelper) {
+    if (fnd.via || global || viaWrapper || mounted || viaAlias || viaDep || viaSignatureHelper) {
       pr.guarded++; pr.guardedIn.set(r.f, (pr.guardedIn.get(r.f) || 0) + 1);
-      const name = fnd.guard || viaWrapper || mounted || viaAlias;
+      const name = fnd.guard || viaWrapper || mounted || viaAlias || viaDep;
       if (name) {
         pr.guardCounts.set(name, (pr.guardCounts.get(name) || 0) + 1);
         if (!pr.fileGuards.has(r.f)) pr.fileGuards.set(r.f, new Map());
