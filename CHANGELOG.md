@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fastify route objects:** detect static `app.route({ method, url })` endpoints, including method arrays and per-route auth hooks.
+
 ## 0.9.0 (2026-11-14)
 
 - **Flask login checks are recognised:** routes protected by `@login_required`, `@login_required_json` or `@logged_in_required` were reported as open, because names starting with "log" were taken for logging decorators. Logging decorators such as `@log_call` still do not count as login checks, and a login decorator placed above the route remains a warning. Reported by @SmmSrg in #123, fixed by @daniyyell-dev in #125.
