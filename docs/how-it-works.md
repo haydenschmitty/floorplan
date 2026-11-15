@@ -18,7 +18,7 @@ flowchart TD
 
 `scan.mjs` finds every git repository under the folder you point it at (one repo, a monorepo, or several repos side by side), skipping duplicate worktrees. It lists files with git, so your `.gitignore` is respected, then extracts from each file:
 
-- **imports**, resolved to real files: TypeScript path aliases, Python packages, Go modules, Rust crates, JVM packages;
+- **imports**, resolved to real files: TypeScript path aliases (including ones inherited through `extends`), package.json `"imports"` (`#lib/x`), Python packages, Go modules, Rust crates, JVM packages (and, in Kotlin and Java, the names a file uses from its own package without an import);
 - **exported definitions** and their doc comments;
 - **endpoints** the server defines;
 - **web requests** the code makes;
