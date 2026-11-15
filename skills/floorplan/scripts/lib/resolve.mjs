@@ -1,13 +1,26 @@
 // Resolve import specifiers to files in the codebase, or to named external packages.
 import fs from 'node:fs';
 import path from 'node:path';
-import { readJsonLoose } from './common.mjs';
+import { readJsonLoose, stripJsonComments, MAX_CONFIG_BYTES } from './common.mjs';
 
 const P = path.posix;
 
 const NODE_BUILTINS = new Set(['assert', 'async_hooks', 'buffer', 'child_process', 'cluster', 'console', 'constants', 'crypto', 'dgram', 'dns', 'domain', 'events', 'fs', 'http', 'http2', 'https', 'inspector', 'module', 'net', 'os', 'path', 'perf_hooks', 'process', 'punycode', 'querystring', 'readline', 'repl', 'stream', 'string_decoder', 'timers', 'tls', 'tty', 'url', 'util', 'v8', 'vm', 'wasi', 'worker_threads', 'zlib', 'test']);
 const PY_STDLIB = new Set('__future__ abc argparse array ast asyncio atexit base64 bisect builtins bz2 calendar cgi cmath codecs collections colorsys concurrent configparser contextlib contextvars copy csv ctypes curses dataclasses datetime decimal difflib dis email encodings enum errno faulthandler fcntl filecmp fileinput fnmatch fractions ftplib functools gc getopt getpass gettext glob graphlib gzip hashlib heapq hmac html http imaplib importlib inspect io ipaddress itertools json keyword linecache locale logging lzma mailbox math mimetypes mmap multiprocessing netrc numbers operator optparse os pathlib pdb pickle pkgutil platform plistlib poplib posixpath pprint profile pstats pty queue quopri random re readline reprlib resource rlcompleter runpy sched secrets select selectors shelve shlex shutil signal site smtplib socket socketserver sqlite3 ssl stat statistics string stringprep struct subprocess sys sysconfig syslog tarfile tempfile termios textwrap threading time timeit tkinter token tokenize tomllib trace traceback tracemalloc tty turtle types typing typing_extensions unicodedata unittest urllib uuid venv warnings wave weakref webbrowser winreg wsgiref xml xmlrpc zipfile zipimport zlib zoneinfo'.split(' '));
 const RUST_STD = new Set(['std', 'core', 'alloc', 'crate', 'self', 'super']);
+// Modules that come with Swift or Apple's SDKs: imported everywhere, never part of the codebase.
+const SWIFT_SYSTEM = new Set(('Swift Foundation FoundationEssentials FoundationNetworking Dispatch Darwin Glibc Musl WinSDK ObjectiveC os OSLog Observation Synchronization ' +
+  'RegexBuilder Distributed Cxx CxxStdlib System MachO XCTest Testing PackageDescription PackagePlugin SwiftUI SwiftData UIKit AppKit Cocoa Carbon WatchKit ' +
+  'Combine CoreGraphics CoreFoundation CoreData CoreImage CoreText CoreML CoreLocation CoreMedia CoreVideo CoreAudio CoreAudioKit CoreAudioTypes CoreBluetooth ' +
+  'CoreServices CoreSpotlight CoreTransferable CoreWLAN CoreMotion CoreMIDI CoreHaptics CoreNFC CoreTelephony QuartzCore Quartz ApplicationServices ColorSync ' +
+  'AVFoundation AVFAudio AVKit AudioToolbox AudioUnit Accelerate Accessibility AppIntents AuthenticationServices BackgroundTasks Charts CloudKit Contacts ContactsUI ' +
+  'CryptoKit CommonCrypto DeveloperToolsSupport DiskArbitration EventKit EventKitUI ExtensionFoundation ExtensionKit FileProvider FoundationModels GameController ' +
+  'GameKit GameplayKit HealthKit HomeKit Hypervisor IOKit IOBluetooth IOSurface ImageIO ImageCaptureCore InputMethodKit Intents IntentsUI LinkPresentation ' +
+  'LocalAuthentication MapKit MediaPlayer MessageUI Metal MetalKit MetalPerformanceShaders MultipeerConnectivity MusicKit NaturalLanguage Network NetworkExtension ' +
+  'NotificationCenter OpenDirectory OSAKit PDFKit Photos PhotosUI QuickLook QuickLookThumbnailing QuickLookUI RealityKit ReplayKit SafariServices SceneKit ' +
+  'ScreenCaptureKit ScriptingBridge Security SecurityFoundation SecurityInterface ServiceManagement ShazamKit SoundAnalysis Speech SpriteKit StoreKit ' +
+  'SystemConfiguration SystemExtensions TipKit Translation UniformTypeIdentifiers UserNotifications UserNotificationsUI VideoToolbox Virtualization Vision ' +
+  'VisionKit WebKit WidgetKit ARKit Automator zlib SQLite3 simd MetricKit CoreMediaIO').split(' '));
 
 const JS_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.vue', '.svelte', '.d.ts', '.json'];
 
@@ -365,6 +378,92 @@ export function createResolver(root, files) {
     return { external: parts.slice(0, Math.min(3, parts.length - 1)).join('.'), eco: 'maven' };
   };
 
+  // ---- Swift ----
+  // A Swift import names a module (a Swift package target), and the files of one module use each other's
+  // code without importing anything. So a file links to the files declaring the top-level names it uses,
+  // in its own module and in the modules it imports. Targets come from every Package.swift: `path:` when
+  // given, else Sources/<name> (Tests/<name> for test targets). Code outside every package is one module
+  // per Xcode project (else per repo), and an import no target answers falls back to a folder named like it.
+  const swiftModules = new Map();
+  for (const dir of dirsWith('Package.swift')) {
+    let txt;
+    try {
+      const file = path.join(root, dir, 'Package.swift');
+      if (fs.statSync(file).size > MAX_CONFIG_BYTES) continue;
+      txt = stripJsonComments(fs.readFileSync(file, 'utf8'));
+    } catch { continue; }
+    let skipUntil = -1; // `.target(name: "B")` inside another target's dependencies is a reference, not a target
+    for (const m of txt.matchAll(/\.(target|executableTarget|testTarget|macro|plugin|systemLibrary|binaryTarget)\s*\(/g)) {
+      if (m.index < skipUntil) continue;
+      const body = balancedArgs(txt, m.index + m[0].length - 1);
+      skipUntil = m.index + m[0].length + body.length;
+      const name = /\bname\s*:\s*"([^"]+)"/.exec(body)?.[1];
+      if (!name || swiftModules.has(name)) continue;
+      const given = /\bpath\s*:\s*"([^"]+)"/.exec(body)?.[1];
+      const base = m[1] === 'testTarget' ? 'Tests' : m[1] === 'plugin' ? 'Plugins' : 'Sources';
+      swiftModules.set(name, P.normalize(P.join(dir, given ?? `${base}/${name}`)));
+    }
+  }
+  const swiftFiles = files.filter((f) => f.lang === 'swift');
+  const swiftDirByName = new Map();
+  for (const f of swiftFiles) {
+    for (let d = P.dirname(f.path); d && d !== '.'; d = P.dirname(d)) {
+      const b = P.basename(d);
+      if (!swiftDirByName.has(b)) swiftDirByName.set(b, d);
+      else if (swiftDirByName.get(b) !== d) swiftDirByName.set(b, null);
+    }
+  }
+  const targetDirs = [...new Set(swiftModules.values())].sort((a, b) => b.length - a.length);
+  const isTarget = new Set(targetDirs);
+  const under = (p, dir) => dir === '.' || p.startsWith(dir + '/');
+  // Code outside any package belongs to the Xcode project around it (the folder holding the
+  // .xcodeproj), else to its repo: a whole app target is one module, whatever its folders.
+  const xcodeRoots = files.map((f) => /^(?:(.*)\/)?[^/]+\.xcodeproj\/project\.pbxproj$/.exec(f.path)).filter(Boolean)
+    .map((m) => m[1] || '.').sort((a, b) => b.length - a.length);
+  const ownModule = (file) => targetDirs.find((d) => under(file.path, d)) || xcodeRoots.find((d) => under(file.path, d)) || file.repo || '.';
+  // module folder -> top-level name -> the files declaring it
+  const swiftNames = new Map();
+  const namesIn = (dir) => {
+    if (swiftNames.has(dir)) return swiftNames.get(dir);
+    const names = new Map();
+    // a target is its folder; an Xcode app or loose code is its folder minus the packages inside it
+    for (const f of swiftFiles) if (under(f.path, dir) && (isTarget.has(dir) || !targetDirs.some((d) => under(f.path, d)))) {
+      for (const n of f.decls || []) { if (!names.has(n)) names.set(n, []); names.get(n).push(f.path); }
+    }
+    swiftNames.set(dir, names);
+    return names;
+  };
+  // Tests see the code they test, but nothing outside them sees a test's helpers (in an Xcode app, the
+  // test folders sit in the same module as the app)
+  const SWIFT_TEST = /(^|\/)(Tests|\w+Tests)\/|Tests?\.swift$/;
+  /** The files of module `dir` declaring names `file` mentions; `shadow`: a module whose names win (the file's own). */
+  const swiftMentioned = (file, dir, shadow) => {
+    const names = namesIn(dir);
+    if (!names.size || !file.mentions) return [];
+    const own = shadow ? namesIn(shadow) : null;
+    const fromTest = SWIFT_TEST.test(file.path);
+    const out = new Set();
+    for (const n of file.mentions.split(' ')) {
+      const hits = names.get(n);
+      if (!hits || own?.has(n)) continue;
+      for (const h of hits) if (h !== file.path && (fromTest || !SWIFT_TEST.test(h))) out.add(h);
+    }
+    return [...out].sort();
+  };
+  const resolveSwift = (file, imp) => {
+    const own = ownModule(file);
+    // A module of the project's own is linked to what's used from it, and never listed as an outside
+    // package. Nothing used from it (only its extensions or nested types, say) means no link: no one file
+    // stands for a whole module.
+    const link = (dir) => { const hits = swiftMentioned(file, dir, dir === own ? null : own); return hits.length ? { files: hits } : { internal: true }; };
+    if (imp.implicit) return link(own);
+    if (swiftModules.has(imp.spec)) return link(swiftModules.get(imp.spec));
+    if (SWIFT_SYSTEM.has(imp.spec) || imp.spec.startsWith('_')) return { builtin: true };
+    const dir = swiftDirByName.get(imp.spec);
+    if (dir) return link(dir);
+    return { external: imp.spec, eco: 'swiftpm' };
+  };
+
   // ---- generic relative (C, Ruby, PHP, CSS) ----
   const byBasename = new Map();
   for (const f of files) { const b = P.basename(f.path); byBasename.set(b, byBasename.has(b) ? null : f.path); }
@@ -376,6 +475,15 @@ export function createResolver(root, files) {
     return { unresolved: true };
   };
 
+  // ---- Shopify themes ----
+  const resolveLiquid = (from, imp) => {
+    const app = /^shopify:\/\/apps\/([\w-]+)/.exec(imp.spec);
+    if (app) return { external: app[1], eco: 'shopify-app' };
+    const p = P.normalize(P.join(P.dirname(from), imp.spec));
+    for (const c of [p, p + '.liquid']) if (fileSet.has(c)) return { file: c };
+    return imp.kind === 'theme-block' ? { builtin: true } : { unresolved: true }; // a block from its section's schema has no file
+  };
+
   return function resolve(file, imp) {
     const lang = file.lang;
     switch (lang) {
@@ -384,10 +492,24 @@ export function createResolver(root, files) {
       case 'go': return resolveGo(file.path, imp.spec);
       case 'rust': return resolveRust(file.path, imp);
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file, imp);
+      case 'swift': return resolveSwift(file, imp);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
+      case 'liquid': return resolveLiquid(file.path, imp);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);
       default: return resolveRelative(file.path, imp.spec, []);
     }
   };
+}
+
+// The text between the parenthesis at `open` and its match, skipping strings.
+function balancedArgs(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"') { i++; while (i < src.length && src[i] !== '"' && src[i] !== '\n') i += src[i] === '\\' ? 2 : 1; continue; }
+    if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) return src.slice(open + 1, i);
+  }
+  return src.slice(open + 1);
 }

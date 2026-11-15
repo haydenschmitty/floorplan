@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { discover, listGitFiles, explainGitError, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson, skippedConfigs, MAX_CONFIG_BYTES, readJsonFile, notMapped } from './lib/common.mjs';
+import { discover, listGitFiles, explainGitError, gitInfo, classify, themeRoots, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson, skippedConfigs, MAX_CONFIG_BYTES, readJsonFile, notMapped } from './lib/common.mjs';
 import { extract, callableCallsVia } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
@@ -77,12 +77,13 @@ if (unattended && problems.length) {
 
 // ---------- 2. classify, read, extract ----------
 const files = [];
+const themes = themeRoots(fileList.map((f) => f.path));
 for (const { path: p, repo } of fileList) {
   const abs = path.join(root, p);
   let st;
   try { st = fs.statSync(abs); } catch { continue; }
   if (!st.isFile()) continue;
-  const { category, lang } = classify(p, st.size);
+  const { category, lang } = classify(p, st.size, { themes });
   const f = { path: p, repo, category, lang, bytes: st.size, loc: 0 };
   if ((category === 'code' || category === 'config' || category === 'docs') && st.size <= maxBytes) {
     let src;

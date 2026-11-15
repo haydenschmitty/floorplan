@@ -3,6 +3,10 @@
 import { forwardIndexOf, importStatements, callArgs } from './common.mjs';
 import { dataRoutes } from './route-tables.mjs';
 
+import path from 'node:path';
+
+const P = path.posix;
+
 const lineIndex = (src) => {
   const starts = [0];
   for (let i = 0; i < src.length; i++) if (src.charCodeAt(i) === 10) starts.push(i + 1);
@@ -811,6 +815,51 @@ function extractGo(src) {
   return { imports, symbols, routes, mounts: [], calls, hosts };
 }
 
+// ---------- Swift ----------
+
+// Swift imports name a module, not a file: `import Core`, `@testable import Core`,
+// `import struct Core.Settings`. The resolver maps the module to its Swift package target.
+const SWIFT_ATTRS = String.raw`(?:@\w+(?:\([^)\n]{0,300}\))?[ \t]+){0,10}`;
+const SWIFT_MODS = String.raw`(?:(?:public|open|internal|package|fileprivate|private|final|indirect|nonisolated|static|(?:private|fileprivate|internal|public)\(set\))[ \t]+){0,10}`;
+const SWIFT_IMPORT = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRS}import[ \t]+(?:(?:typealias|struct|class|enum|protocol|let|var|func|actor)[ \t]+)?([A-Za-z_]\w*)`, 'gm');
+const SWIFT_TYPE = new RegExp(String.raw`^[ \t]*${SWIFT_ATTRS}${SWIFT_MODS}(class|struct|enum|protocol|actor)[ \t]+([A-Za-z_]\w*)`, 'gm');
+// Top-level declarations other files of the module (and of the modules importing it) can use: written
+// at the start of a line, so a type's members and nested types (Kind, State, Row…) aren't among them
+const SWIFT_TOP = new RegExp(String.raw`^${SWIFT_ATTRS}(${SWIFT_MODS})(class|struct|enum|protocol|actor|typealias|func|let|var)[ \t]+([A-Za-z_]\w*)`, 'gm');
+
+function extractSwift(src) {
+  const code = stripCStyle(src);
+  const at = lineIndex(code);
+  const imports = all(SWIFT_IMPORT, code).map((m) => ({ spec: m[1], names: [], line: at(m.index) }));
+  // Files of one module use each other's code without importing it, as if each imported its own module
+  imports.push({ spec: '.', names: [], line: 1, implicit: true });
+  const symbols = [];
+  for (const m of all(SWIFT_TYPE, code)) {
+    if (m[1] === 'class' && /^(func|var|let)$/.test(m[2])) continue; // `class func`, `class var`
+    symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
+  }
+  const decls = [];
+  for (const m of all(SWIFT_TOP, code)) {
+    if (/\b(?:private|fileprivate)[ \t]/.test(m[1])) continue; // can't be seen from other files
+    if (!decls.includes(m[3])) decls.push(m[3]);
+  }
+  const { calls, hosts } = extractCalls(code, at);
+  return { imports, symbols, routes: [], mounts: [], calls, hosts, decls, mentions: swiftMentions(code) };
+}
+
+/** Every name the file's code mentions outside strings and import lines, as one space-separated string, minus the names it declares itself. */
+function swiftMentions(code) {
+  const text = stripJvmStrings(code).replace(/^[ \t]*(?:@\w+[ \t]+)*import[ \t][^\n]*/gm, '');
+  const own = new Set();
+  for (const m of text.matchAll(/\b(?:class|struct|enum|protocol|actor|typealias|associatedtype|func|let|var|case)[ \t]+`?([A-Za-z_]\w*)/g)) own.add(m[1]);
+  const seen = new Set();
+  for (const m of text.matchAll(/[A-Za-z_]\w{0,99}/g)) {
+    if (seen.size >= 20000) break;
+    if (!own.has(m[0])) seen.add(m[0]);
+  }
+  return [...seen].join(' ');
+}
+
 // ---------- Rust ----------
 
 function extractRust(src) {
@@ -925,16 +974,164 @@ function extractSimple(src, lang) {
   const symbols = [];
   if (lang === 'ruby') for (const m of all(/^[ \t]*(class|module)\s+([A-Z][\w:]*)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
   if (lang === 'csharp') for (const m of all(/^[ \t]*public\s+(?:static\s+|abstract\s+|sealed\s+|partial\s+)*(class|interface|enum|record|struct)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
-  const { calls, hosts } = ['ruby', 'php', 'csharp', 'swift', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
+  const { calls, hosts } = ['ruby', 'php', 'csharp', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
   return { imports, symbols, routes: [], mounts: [], calls, hosts };
+}
+
+// ---------- Shopify themes (Liquid) ----------
+// Theme files reach each other by name ({% render 'price' %} is snippets/price.liquid), turned here into relative paths.
+
+const THEME_ROOT = /^((?:.*\/)?)(?:layout|templates|sections|snippets|blocks|assets|config|locales)\//;
+/**
+ * The {% comment %}, {% raw %} and {% doc %} blocks (a doc's @example renders aren't real) and {% # … %}
+ * comments of a Liquid file, in order, as { kind, start, body, close, end }. One pass: an opener whose
+ * closing tag never comes is left as it is, and so is every later opener of its kind, without looking again.
+ */
+function* liquidBlocks(src) {
+  const OPEN = /\{%-?\s*(?:(comment|raw|doc)\s*-?%\}|#)/g;
+  const CLOSE = { comment: /\{%-?\s*endcomment\s*-?%\}/g, raw: /\{%-?\s*endraw\s*-?%\}/g, doc: /\{%-?\s*enddoc\s*-?%\}/g };
+  const unclosed = new Set();
+  for (let m; (m = OPEN.exec(src));) {
+    const kind = m[1] || '#';
+    if (unclosed.has(kind)) continue;
+    const body = OPEN.lastIndex;
+    let close = -1, end = -1;
+    if (kind === '#') { close = src.indexOf('%}', body); end = close + 2; }
+    else {
+      CLOSE[kind].lastIndex = body;
+      const c = CLOSE[kind].exec(src);
+      if (c) { close = c.index; end = CLOSE[kind].lastIndex; }
+    }
+    if (close < 0) { unclosed.add(kind); continue; }
+    yield { kind, start: m.index, body, close, end };
+    OPEN.lastIndex = end;
+  }
+}
+/** A Liquid file with its comments, raw and doc blocks blanked out, line numbers kept. */
+function skipLiquid(src) {
+  let out = '', from = 0;
+  for (const b of liquidBlocks(src)) { out += src.slice(from, b.start) + blank(src.slice(b.start, b.end)); from = b.end; }
+  return out + src.slice(from);
+}
+const LIQUID_TAG = /(?:\{%-?\s*|\n[ \t]*)(render|include|section|sections|content_for)\s+(['"])([^'"\n]+)\2(?:\s*,\s*type:\s*(['"])([^'"\n]+)\4)?/g;
+const LIQUID_ASSET = /(['"])([^'"\n{}]+\.(?:js|css|scss)(?:\.liquid)?)\1\s*\|\s*asset_url/g;
+const LIQUID_REQUEST = /\bfetch\s*\(|\$\.(ajax|get|post|getJSON)\s*\(|\bXMLHttp\w+|\baxios\b/;
+const APP_BLOCK = /shopify:(?:\\?\/){2}apps(?:\\?\/)([\w-]+)/g;
+
+function extractLiquid(src, filePath) {
+  const root = THEME_ROOT.exec(filePath)?.[1] ?? '';
+  const dir = P.dirname(filePath);
+  const rel = (target) => { const r = P.relative(dir, root + target); return r.startsWith('.') ? r : './' + r; };
+  const imports = [], symbols = [];
+  const seen = new Set();
+  const add = (spec, line, kind) => { if (seen.has(spec)) return; seen.add(spec); imports.push({ spec, names: [], line, ...(kind ? { kind } : {}) }); };
+  const at = lineIndex(src);
+  const addTags = (code, at) => {
+    for (const m of all(LIQUID_TAG, code)) {
+      const [, tag, , name, , type] = m;
+      const line = at(m.index + (m[0].startsWith('\n') ? 1 : 0));
+      if (tag === 'render' || tag === 'include') add(rel(`snippets/${name}.liquid`), line);
+      else if (tag === 'section') add(rel(`sections/${name}.liquid`), line);
+      else if (tag === 'sections') add(rel(`sections/${name}.json`), line);
+      else if (name === 'block' && type) add(rel(`blocks/${type}.liquid`), line);
+    }
+  };
+  // an app's block, a file in blocks/, or a block defined in its section's schema
+  const addBlock = (type, line) => {
+    if (!type || type.startsWith('@')) return;
+    const app = /^shopify:\/\/apps\/([\w-]+)/.exec(type);
+    if (app) add(`shopify://apps/${app[1]}`, line);
+    else add(rel(`blocks/${type}.liquid`), line, 'theme-block');
+  };
+
+  if (filePath.endsWith('.json')) {
+    for (const m of all(APP_BLOCK, src)) add(`shopify://apps/${m[1]}`, at(m.index));
+    if (/(^|\/)config\//.test(filePath)) return { imports, symbols, routes: [], mounts: [], calls: [], hosts: [] };
+    let data = null;
+    try { data = JSON.parse(src.replace(/^\s*\/\*[\s\S]*?\*\//, '')); } catch {}
+    // the line where each "type" value first appears, found in one pass
+    const typeAt = new Map();
+    for (const m of all(/"type"[ \t\r\n]*:[ \t\r\n]*("(?:[^"\\\n]|\\.){0,500}")/g, src)) {
+      let v;
+      try { v = JSON.parse(m[1]); } catch { continue; }
+      if (!typeAt.has(v)) typeAt.set(v, at(m.index));
+    }
+    const lineOf = (type) => typeAt.get(type) ?? 1;
+    const walkBlocks = (blocks, depth = 0) => {
+      if (depth > 20 || !blocks || typeof blocks !== 'object') return;
+      for (const b of Object.values(blocks)) { addBlock(b?.type, lineOf(b?.type)); walkBlocks(b?.blocks, depth + 1); }
+    };
+    for (const s of Object.values(data?.sections || {})) {
+      if (typeof s?.type !== 'string') continue;
+      if (s.type.startsWith('shopify://')) { addBlock(s.type, 1); continue; }
+      const line = lineOf(s.type);
+      // Shopify supplies _-prefixed sections like _blocks when the theme doesn't
+      add(rel(`sections/${s.type}.liquid`), line, s.type.startsWith('_') ? 'theme-block' : undefined);
+      if (!symbols.some((x) => x.name === s.type)) symbols.push({ name: s.type, kind: 'section', line });
+      walkBlocks(s.blocks);
+    }
+    // Liquid typed into custom-code settings, JSON-escaped
+    const settings = skipLiquid(src.replace(/\\"/g, '"'));
+    addTags(settings, lineIndex(settings));
+    return { imports, symbols, routes: [], mounts: [], calls: [], hosts: [] };
+  }
+
+  const code = skipLiquid(src);
+  addTags(code, at);
+  for (const m of all(LIQUID_ASSET, code)) add(rel(`assets/${m[2]}`), at(m.index));
+  for (const m of all(APP_BLOCK, code)) add(`shopify://apps/${m[1]}`, at(m.index));
+
+  // the first {% schema %} and the {% endschema %} after it, each looked for once
+  const open = /\{%-?\s*schema\s*-?%\}/.exec(code);
+  const CLOSE = /\{%-?\s*endschema\s*-?%\}/g;
+  if (open) CLOSE.lastIndex = open.index + open[0].length;
+  const close = open && CLOSE.exec(code);
+  if (close) {
+    let s = null;
+    try { s = JSON.parse(code.slice(open.index + open[0].length, close.index)); } catch {}
+    const line = at(open.index);
+    if (typeof s?.name === 'string' && !s.name.startsWith('t:')) symbols.push({ name: s.name, kind: 'section', line });
+    for (const b of Array.isArray(s?.blocks) ? s.blocks : []) if (typeof b?.type === 'string' && !b.type.startsWith('@')) symbols.push({ name: b.type, kind: 'block', line });
+  }
+  for (const m of all(/@param[ \t]+(?:\{[^}\n]{0,200}\}[ \t]+)?\[?([\w-]+)/g, src)) symbols.push({ name: m[1], kind: 'param', line: at(m.index) });
+  // the "Accepts:" list of the first comment that has one
+  for (const b of liquidBlocks(src)) {
+    if (b.kind !== 'comment') continue;
+    const body = src.slice(b.body, b.close);
+    const head = /\b(?:Accepts|Arguments|Receives|Parameters|Params):?[ \t]*\r?\n/i.exec(body);
+    if (!head) continue;
+    for (const m of all(/^[ \t]*-[ \t]*([\w-]+)[ \t]*:/gm, body.slice(head.index + head[0].length))) symbols.push({ name: m[1], kind: 'param', line: at(b.start) });
+    break;
+  }
+
+  // a theme is full of page links and SVG namespaces, so only real requests count
+  const lines = code.split('\n');
+  const requestLine = new Map(); // each line tested once, however many calls it holds
+  const isRequest = (n) => { if (!requestLine.has(n)) requestLine.set(n, LIQUID_REQUEST.test(lines[n - 1] || '')); return requestLine.get(n); };
+  const { calls, hosts } = extractCalls(code, at);
+  return {
+    imports, symbols, routes: [], mounts: [],
+    calls: calls.filter((c) => !c.path.includes('{{') && isRequest(c.line)),
+    hosts: hosts.filter((h) => !/(^|\.)(w3|schema)\.org$/.test(h.host)),
+  };
+}
+
+/** A Liquid file's description: its leading {% comment %} or {% doc %}, up to its parameter list. */
+function liquidDoc(src) {
+  const m = /^(?:\s|\{%-?\s*#[^%]*%\})*\{%-?\s*(comment|doc)\s*-?%\}([\s\S]*?)\{%-?\s*end\1\s*-?%\}/.exec(src);
+  if (!m || /theme-check|prettier-ignore/i.test(m[2])) return null;
+  const head = m[2].split(/\n[ \t]*(?:-\s|(?:snippet\s+)?(?:accepts|arguments|receives|usage|parameters|params|example)\b)|@param\b/i)[0];
+  return cleanDoc(head);
 }
 
 function extractByLang(src, lang, filePath) {
   switch (lang) {
+    case 'liquid': return extractLiquid(src, filePath);
     case 'typescript': case 'javascript': case 'vue': case 'svelte': case 'astro': return extractJs(src, filePath);
     case 'python': return extractPy(src);
     case 'go': return extractGo(src);
     case 'rust': return extractRust(src);
+    case 'swift': return extractSwift(src);
     case 'java': case 'kotlin': case 'scala': case 'groovy': return extractJvm(src);
     default: return extractSimple(src, lang);
   }
@@ -1033,7 +1230,8 @@ function headerComment(lines) {
 
 function addDocs(src, lang, r) {
   const lines = src.split('\n');
-  r.doc = lang === 'python' ? pyDocAfter(lines, -1) : HASH_LANGS.has(lang) ? hashHeader(lines) : headerComment(lines);
+  r.doc = lang === 'python' ? pyDocAfter(lines, -1) : lang === 'liquid' ? liquidDoc(src) : HASH_LANGS.has(lang) ? hashHeader(lines) : headerComment(lines);
+  if (lang === 'liquid') return;
   for (const s of r.symbols || []) {
     const d = lang === 'python' ? pyDocAfter(lines, s.line - 1) : commentBefore(lines, s.line - 1);
     if (d) s.doc = d;
