@@ -2,7 +2,17 @@
 // file they point at, using the package.json nearest to the importing file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeProject, scanAndBuild, readGraph, cleanup } from './helpers.mjs';
+import { lib, makeProject, scanAndBuild, readGraph, cleanup } from './helpers.mjs';
+
+const { createResolver } = await lib('resolve.mjs');
+
+/** Resolves `spec` imported from `from` in a throwaway project made of `files`. */
+function resolveIn(files, from, spec) {
+  const root = makeProject(files);
+  try {
+    return createResolver(root, Object.keys(files).map((p) => ({ path: p })))({ path: from, lang: 'typescript' }, { spec });
+  } finally { cleanup(root); }
+}
 
 const ARCH = { project: { name: 'App', summary: 'A sample app.' }, nodes: [{ id: 'app', label: 'App', kind: 'service', summary: 'The app.', paths: ['**'] }] };
 
@@ -59,4 +69,39 @@ test('subpath imports: "#…" specifiers link to the files package.json "imports
   } finally {
     cleanup(root);
   }
+});
+
+test('subpath imports: near misses stay unlinked instead of reaching the wrong file', () => {
+  const files = {
+    'package.json': JSON.stringify({ name: 'shop', imports: { '#*': './src/*', '#db': './src/db.ts' } }),
+    'src/main.ts': '',
+    'src/db.ts': '',
+    'src/index.ts': '',
+    // A package of its own with no "imports": Node doesn't look further up, and neither do we
+    'packages/tools/package.json': JSON.stringify({ name: 'tools' }),
+    'packages/tools/run.ts': '',
+  };
+  // `*` must stand for something: "#" alone isn't "#*" with nothing in place of the star
+  assert.deepEqual(resolveIn(files, 'src/main.ts', '#'), { unresolved: true });
+  // No key matches: unresolved, and never an npm package
+  assert.deepEqual(resolveIn({ ...files, 'package.json': JSON.stringify({ imports: { '#db': './src/db.ts' } }) }, 'src/main.ts', '#lib/money'), { unresolved: true });
+  assert.deepEqual(resolveIn(files, 'packages/tools/run.ts', '#db'), { unresolved: true });
+  // The key exists but its file doesn't
+  assert.deepEqual(resolveIn(files, 'src/main.ts', '#lib/missing'), { unresolved: true });
+  assert.deepEqual(resolveIn(files, 'src/main.ts', '#db'), { file: 'src/db.ts' });
+});
+
+test('subpath imports: odd package.json and tsconfig shapes in code you did not write never stop the scan', () => {
+  // Written as text: nested this deep, JSON.stringify would run out of stack itself
+  const deep = '[{"node":'.repeat(2500) + '"./src/db.ts"' + '}]'.repeat(2500);
+  const odd = {
+    'src/main.ts': '',
+    'src/db.ts': '',
+    'tsconfig.json': JSON.stringify({ compilerOptions: { paths: { '@x/*': 5, '@y/*': [null, 7, './src/*'] } } }),
+  };
+  assert.deepEqual(resolveIn({ ...odd, 'package.json': `{"imports":{"#db":${deep}}}` }, 'src/main.ts', '#db'), { unresolved: true });
+  assert.deepEqual(resolveIn({ ...odd, 'package.json': JSON.stringify({ imports: ['#db'] }) }, 'src/main.ts', '#db'), { unresolved: true });
+  assert.deepEqual(resolveIn({ ...odd, 'package.json': JSON.stringify({ imports: '#db' }) }, 'src/main.ts', '#db'), { unresolved: true });
+  assert.deepEqual(resolveIn({ ...odd, 'package.json': '{}' }, 'src/main.ts', '@x/db'), { external: '@x/db', eco: 'npm' });
+  assert.deepEqual(resolveIn({ ...odd, 'package.json': '{}' }, 'src/main.ts', '@y/db'), { file: 'src/db.ts' });
 });

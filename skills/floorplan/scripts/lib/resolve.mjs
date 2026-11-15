@@ -32,7 +32,7 @@ function bestSubpathImport(entries, spec) {
   for (const [key, target] of entries) {
     if (!key.includes('*')) continue;
     const matched = matchStarPattern(key, spec);
-    if (matched === null) continue;
+    if (!matched) continue; // Node needs `*` to stand for at least one character here, unlike tsconfig paths
     const prefixLength = key.indexOf('*');
     if (!best || prefixLength > best.prefixLength || (prefixLength === best.prefixLength && key.length > best.key.length)) {
       best = { key, target, matched, prefixLength };
@@ -46,12 +46,14 @@ function bestSubpathImport(entries, spec) {
  * statically, so all are tried; "types" goes last because Node never picks it, but it is often
  * the only target that points at source rather than a build folder.
  */
-function subpathTargets(target) {
+function subpathTargets(target, depth = 0) {
   if (typeof target === 'string') return [target];
-  if (Array.isArray(target)) return target.flatMap(subpathTargets);
+  // A package.json in code you didn't write can nest arrays and conditions without end; real ones go a few levels.
+  if (depth > 16) return [];
+  if (Array.isArray(target)) return target.flatMap((t) => subpathTargets(t, depth + 1));
   if (!target || typeof target !== 'object') return [];
   const conditions = Object.entries(target);
-  return [...conditions.filter(([c]) => c !== 'types'), ...conditions.filter(([c]) => c === 'types')].flatMap(([, t]) => subpathTargets(t));
+  return [...conditions.filter(([c]) => c !== 'types'), ...conditions.filter(([c]) => c === 'types')].flatMap(([, t]) => subpathTargets(t, depth + 1));
 }
 
 export function createResolver(root, files) {
@@ -123,7 +125,10 @@ export function createResolver(root, files) {
   const nearestPackageScope = (dir) => {
     if (subpathScopeCache.has(dir)) return subpathScopeCache.get(dir);
     let scope = null;
-    if (packageJsons.has(dir)) scope = { dir, imports: Object.entries(packageJsons.get(dir)?.imports || {}) };
+    if (packageJsons.has(dir)) {
+      const imports = packageJsons.get(dir)?.imports;
+      scope = { dir, imports: imports && typeof imports === 'object' && !Array.isArray(imports) ? Object.entries(imports) : [] };
+    }
     else if (dir !== '.' && dir !== '') scope = nearestPackageScope(P.dirname(dir));
     subpathScopeCache.set(dir, scope);
     return scope;
@@ -152,8 +157,9 @@ export function createResolver(root, files) {
     if (cfg) {
       for (const [pattern, targets] of cfg.paths) {
         const matched = matchStarPattern(pattern, spec);
-        if (matched === null) continue;
+        if (matched === null || !Array.isArray(targets)) continue;
         for (const t of targets) {
+          if (typeof t !== 'string') continue;
           const hit = tryJsFile(P.join(cfg.baseDir, t.split('*').join(matched)));
           if (hit) return { file: hit };
         }
