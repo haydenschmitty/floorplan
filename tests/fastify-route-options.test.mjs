@@ -26,6 +26,28 @@ test('Fastify object-form routes handle nested schema and method arrays', () => 
   assert.equal(r.routes[0].line, 1);
 });
 
+test('Fastify object-form routes on a router with any name, and not on things that are not routers', () => {
+  const src = [
+    "const api = Fastify({ logger: true });",
+    "api.route({",
+    "  method: 'POST',",
+    "  url: '/api/orders',",
+    "  handler: createOrder,",
+    "});",
+    "export default async function (fastify) {",
+    "  fastify.route({ method: 'GET', url: '/api/orders/:id', handler: getOrder });",
+    "}",
+    "const client = createClient();",
+    "client.route({ method: 'GET', url: '/api/reports', handler: onReport });",
+  ].join('\n');
+  const r = extract(src, 'typescript', 'api/src/app.ts');
+  assert.deepEqual(r.routes.map((x) => [x.method, x.path, x.var]), [
+    ['POST', '/api/orders', 'api'], ['GET', '/api/orders/:id', 'fastify'],
+  ]);
+  // a route's own url isn't a request from this file
+  assert.ok(!r.calls.some((c) => c.path === '/api/orders' || c.path === '/api/orders/:id'), JSON.stringify(r.calls));
+});
+
 test('Fastify object-form endpoints match real website calls through scan', () => {
   const root = makeProject({
     'api/src/app.ts': [

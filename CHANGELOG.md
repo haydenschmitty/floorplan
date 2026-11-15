@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Fastify route objects:** detect static `app.route({ method, url })` endpoints, including method arrays and per-route auth hooks.
+- **Fastify routes written as objects are found:** a Fastify server that declares its endpoints as `app.route({ method: 'POST', url: '/api/orders', handler })` had none of them on the map. They now count on any router the file makes (`const api = Fastify()`), with one endpoint per method when `method` is a list, and a `preHandler`, `onRequest` or `preValidation` check on the route protects only that route. A key inside the route's `schema`, and a `method` or `url` that isn't written out, don't make an endpoint. Fixed by @Bl0ck154 in #34.
 
 ## 0.9.0 (2026-11-14)
 

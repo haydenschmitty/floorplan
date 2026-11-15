@@ -376,7 +376,10 @@ function extractJs(src, filePath) {
 
   // Fastify route({ method, url, handler, schema, ... }): only literal method(s) and URL.
   // Flatten nested option objects so a schema's own keys cannot be mistaken for route options.
-  for (const m of all(/\b(app|server|fastify|instance|router|routes|[a-z]*Router)\.route\(\s*\{/g, code)) {
+  // The receiver is any router this file made (`const api = Fastify()`) or one named like a router.
+  const objectRoutes = []; // [first line, last line, url]: the url inside isn't a request
+  for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.route\(\s*\{/g, code)) {
+    if (!ROUTER_NAME.test(m[1]) && !routerVars.has(m[1])) continue;
     const start = m.index + m[0].length;
     let depth = 0, quote = '', escaped = false, close = -1, top = '';
     for (let i = start; i < Math.min(code.length, start + 4000); i++) {
@@ -410,6 +413,7 @@ function extractJs(src, filePath) {
       method: method.toUpperCase(), path: url, var: m[1], line: at(m.index),
       ...(guardOptions.length ? { guardOptions } : {}),
     });
+    if (methods.length) objectRoutes.push([at(m.index), at(close), url]);
   }
 
   // Next.js app/pages API routes, derived from the file path
@@ -431,6 +435,10 @@ function extractJs(src, filePath) {
     ? new RegExp(`(?<![\\w$])(?:${[...routerVars].slice(0, 200).map((v) => v.replace(/\$/g, '\\$')).join('|')})\\.(?:get|post|put|patch|delete|all|options|head)\\(\\s*["'\`]\\/`)
     : null;
   const { calls, hosts } = extractCalls(code, at, { skip: routeOnVar ? { test: (line) => serverLine.test(line) || routeOnVar.test(line) } : serverLine });
+  // a route object's own `url: '/api/x'` reads like a request (because of `url`), but it's the route
+  if (objectRoutes.length) for (let i = calls.length - 1; i >= 0; i--) {
+    if (objectRoutes.some(([a, b, url]) => calls[i].line >= a && calls[i].line <= b && calls[i].path === url)) calls.splice(i, 1);
+  }
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
