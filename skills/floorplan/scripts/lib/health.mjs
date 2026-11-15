@@ -622,7 +622,8 @@ function pyRoutes(src, f, out) {
 }
 
 function jsRoutes(src, f, out) {
-  const routes = f.routes || [];
+  // route tables and Bun.serve check logins in a dispatcher or wrapper this can't follow
+  const routes = (f.routes || []).filter((r) => r.framework !== 'route-table' && r.framework !== 'bun');
   if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path) && !/\bAPP_GUARD\b|\.useGlobalGuards\s*\(/.test(src)) return;
   const lines = src.split('\n');
   // NestJS: `{ provide: APP_GUARD, useClass: AuthGuard }` in a module, or `app.useGlobalGuards(new JwtAuthGuard())`
