@@ -3,8 +3,10 @@
 // Approximate, like the rest of extract.mjs: a small literal-aware scanner, no parser.
 
 const VERBS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
-const HANDLER_KEYS = new Set(['handle', 'handler', 'fetch', 'action', 'resolve']);
-const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'await', 'async', 'function', 'typeof', 'new', 'void', 'yield', 'super']);
+// `handle` and `handler` name what serves a route; `action`, `resolve` and `fetch` are just as common in
+// a website's list of the requests it makes, so they count only in a file that serves (see dataRoutes)
+const HANDLER_KEYS = ['handle', 'handler', 'action', 'resolve', 'fetch'];
+const SERVING_KEYS = new Set(['handle', 'handler']);
 const MAX_EXPANSIONS = 8;
 
 function quotedEnd(code, i) {
@@ -111,19 +113,6 @@ function enclosingBrace(code, i) {
     else if (code[j] === '{' && depth-- === 0) return j;
   }
   return -1;
-}
-
-/** `listItems` for a bare name, else the first function an arrow or function body calls. */
-function handlerName(value) {
-  const ident = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.exec(value)?.[0];
-  if (ident) return ident.split('.').pop();
-  const body = /=>|\bfunction\b[^{]*\{/.exec(value);
-  if (!body) return undefined;
-  for (const m of value.slice(body.index + body[0].length).matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*\(/g)) {
-    const name = m[1].split('.').pop().trim();
-    if (!KEYWORDS.has(name)) return name;
-  }
-  return undefined;
 }
 
 const PARAM = '\u0001', STAR = '\u0002', SYNTAX = '\u0003';
@@ -257,34 +246,44 @@ function pathValues(value) {
   return re ? regexRoutePaths(re[1]) : [];
 }
 
-function tableRoutes(list, at) {
+/**
+ * One `{ method, path, handle }` object: { routes, serving } or null. The handler must be a function, by
+ * `handlerOf` (extract.mjs's tableHandler, as for keyed tables): a name, an inline function, a wrapped one.
+ * A string (`action: 'list'`), an object or a number isn't a handler, so the object isn't a route.
+ */
+function tableRoutes(list, at, handlerOf) {
   const method = list.find((e) => e.key === 'method');
   const pathEntry = list.find((e) => e.key === 'path');
-  const handle = list.find((e) => HANDLER_KEYS.has(e.key));
-  if (!method || !pathEntry || !handle) return [];
+  const handle = HANDLER_KEYS.map((k) => list.find((e) => e.key === k)).find(Boolean);
+  if (!method || !pathEntry || !handle) return null;
   const verb = /^(["'`])([A-Za-z]+)\1$/.exec(method.value)?.[2].toUpperCase();
-  if (!VERBS.has(verb)) return [];
-  const handler = handlerName(handle.value);
+  if (!VERBS.has(verb)) return null;
+  const h = handlerOf(handle.value);
+  if (!h) return null;
   const line = at(pathEntry.at);
-  return pathValues(pathEntry.value).map((path) => ({ method: verb, path, var: null, line, framework: 'route-table', ...(handler ? { handler } : {}) }));
+  const routes = pathValues(pathEntry.value).map((path) => ({ method: verb, path, var: null, line, framework: 'table', ...(h.handler ? { handler: h.handler } : {}) }));
+  return routes.length ? { routes, serving: SERVING_KEYS.has(handle.key) } : null;
 }
 
 /** `{ method: "GET", path: …, handle: … }` objects, found from each `method:` key. */
-function routeTableRoutes(code, at) {
+function routeTableRoutes(code, at, { handlerOf, serves, skip }) {
   if (!/\bmethod\s*:\s*["'`]/.test(code) || !/\bpath\s*:/.test(code)) return [];
-  const routes = [];
-  const seen = new Set();
+  const found = [];
+  const seen = new Set(skip);
   for (const m of code.matchAll(/\bmethod\s*:\s*["'`]/g)) {
     const open = enclosingBrace(code, m.index);
     if (open < 0 || seen.has(open)) continue;
     seen.add(open);
-    routes.push(...tableRoutes(entries(code, open), at));
+    const t = tableRoutes(entries(code, open), at, handlerOf);
+    if (t) found.push(t);
   }
-  return routes;
+  // an object handled by `action`, `resolve` or `fetch` counts in a file that serves, or beside one with `handle`
+  const table = serves || found.some((t) => t.serving);
+  return found.filter((t) => t.serving || table).flatMap((t) => t.routes);
 }
 
 /** `routes: { "/api/x": { GET: a, POST: b }, "/y": handler }` in a file that starts Bun.serve. */
-function bunRoutes(code, at) {
+function bunRoutes(code, at, handlerOf) {
   if (!/\bBun\.serve\s*(?:<[^>]*>)?\s*\(/.test(code)) return [];
   const routes = [];
   for (const m of code.matchAll(/\broutes\s*:\s*\{/g)) {
@@ -294,15 +293,22 @@ function bunRoutes(code, at) {
       const methods = e.value.startsWith('{') ? entries(code, e.start).filter((x) => VERBS.has(x.key)) : [];
       const targets = methods.length ? methods : [{ key: 'ANY', value: e.value }];
       for (const t of targets) {
-        const handler = handlerName(t.value);
-        routes.push({ method: t.key, path: e.key, var: null, line, framework: 'bun', ...(handler ? { handler } : {}) });
+        if (/^(?:false|null|undefined)$/.test(t.value)) continue; // left to the server's fetch()
+        // a static response (`new Response("ok")`, `Bun.file(…)`) serves the route too, with no handler to name
+        const handler = handlerOf(t.value)?.handler;
+        routes.push({ method: t.key, path: e.key, var: null, line, framework: 'table', ...(handler ? { handler } : {}) });
       }
     }
   }
   return routes;
 }
 
-/** Route records ({ method, path, var, line, framework, handler? }) declared as data in comment-stripped JS/TS. */
-export function dataRoutes(code, at) {
-  return [...routeTableRoutes(code, at), ...bunRoutes(code, at)];
+/**
+ * Route records ({ method, path, var, line, framework: 'table', handler? }) declared as data in
+ * comment-stripped JS/TS. `handlerOf(text)` names a value's handler ({ handler } or null when it isn't a
+ * function); `serves` says the file runs a server or makes routes; `skip` holds the offsets of objects
+ * already read as routes (Fastify's `app.route({ … })`), so they aren't counted twice.
+ */
+export function dataRoutes(code, at, { handlerOf, serves = false, skip = [] }) {
+  return [...routeTableRoutes(code, at, { handlerOf, serves, skip }), ...bunRoutes(code, at, handlerOf)];
 }

@@ -622,8 +622,9 @@ function pyRoutes(src, f, out) {
 }
 
 function jsRoutes(src, f, out) {
-  // route tables and Bun.serve check logins in a dispatcher or wrapper this can't follow
-  const routes = (f.routes || []).filter((r) => r.framework !== 'route-table' && r.framework !== 'bun');
+  // route tables (keyed, listed, Bun.serve's) are checked by the dispatcher or inside the handler, where this can't
+  // see; leaving them out also keeps them from cutting short the code read for the routes around them
+  const routes = (f.routes || []).filter((r) => r.framework !== 'table');
   if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path) && !/\bAPP_GUARD\b|\.useGlobalGuards\s*\(/.test(src)) return;
   const lines = src.split('\n');
   // NestJS: `{ provide: APP_GUARD, useClass: AuthGuard }` in a module, or `app.useGlobalGuards(new JwtAuthGuard())`
@@ -662,7 +663,6 @@ function jsRoutes(src, f, out) {
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
 
   routes.forEach((r, idx) => {
-    if (r.framework === 'table') return; // sign-in is checked by the dispatcher or inside the handler
     const rec = { k: 'route', line: r.line, method: r.method };
     if (r.framework === 'nest') {
       // the decorators stacked on this method (above and below the route one, up to the handler), and the
@@ -733,7 +733,8 @@ function jsRoutes(src, f, out) {
       .find(isJsGuardName);
     const mw = objectMw || (args.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || [])
       .map((name) => name.split('.').pop()).find(isJsGuardName);
-    const next = routes[idx + 1]?.line || r.line + 60;
+    // the next route below this one (routes are listed by kind, not in file order)
+    const next = Math.min(...routes.map((x) => x.line).filter((l) => l > r.line), r.line + 60);
     const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
     const prior = uses.find((u) => u.v === r.var && u.line < r.line);
     if (mw) Object.assign(rec, { guard: mw, via: 'middleware' });

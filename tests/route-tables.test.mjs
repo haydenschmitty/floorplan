@@ -74,13 +74,13 @@ test('route-table objects are endpoints, in any key order, with the line of thei
     `export function formatItem(item) { return item; }`,
   ].join('\n');
   assert.deepEqual(routesOf(src), [
-    'GET /api/items route-table L3 listItems',
-    'POST /api/items/:p1/notes route-table L5 addNote',
-    'DELETE /api/items/:id route-table L12 removeItem',
-    'PATCH /api/items/:id/tags route-table L13 tagItem',
-    'GET /api/search route-table L14 run',
-    'PUT /api/items/:p1 route-table L15 saveItem',
-    'PUT /api/products/:p1 route-table L15 saveItem',
+    'GET /api/items table L3 listItems',
+    'POST /api/items/:p1/notes table L5 addNote',
+    'DELETE /api/items/:id table L12 removeItem',
+    'PATCH /api/items/:id/tags table L13 tagItem',
+    'GET /api/search table L14 run',
+    'PUT /api/items/:p1 table L15 saveItem',
+    'PUT /api/products/:p1 table L15 saveItem',
   ]);
 });
 
@@ -121,18 +121,64 @@ test('Bun.serve routes: method objects give one endpoint per method, anything el
     `});`,
   ].join('\n');
   assert.deepEqual(routesOf(src, 'server/index.ts'), [
-    'ANY /api/status bun L5 -',
-    'GET /api/carts bun L6 listCarts',
-    'POST /api/carts bun L6 createCart',
-    'ANY /api/carts/:id bun L10 showCart',
-    'ANY /static/* bun L11 -',
-    'ANY /api/ping bun L12 -',
-    'ANY /api/health bun L13 healthHandler',
+    'ANY /api/status table L5 -',
+    'GET /api/carts table L6 listCarts',
+    'POST /api/carts table L6 createCart',
+    'ANY /api/carts/:id table L10 showCart',
+    'ANY /static/* table L11 -',
+    'ANY /api/ping table L12 -',
+    'ANY /api/health table L13 healthHandler',
   ]);
   // with a type argument for websocket data
   assert.deepEqual(routesOf(src.replace('Bun.serve(', 'Bun.serve<SocketData>('), 'server/index.ts').length, 7);
   // the same object outside a file that starts Bun.serve is just data
   assert.deepEqual(routesOf(src.replace('Bun.serve(', 'configure('), 'server/index.ts'), []);
+});
+
+test("a website's list of the requests it makes is not a route table", () => {
+  // `action`, `resolve` and `fetch` are as common in an API client's call list as in a server's routes
+  const client = [
+    `export const CALLS = [`,
+    `  { method: "GET", path: "/api/orders", resolve: (res) => res.json() },`,
+    `  { method: "POST", path: "/api/orders", action: "createOrder" },`,
+    `  { method: "DELETE", path: "/api/orders/:id", fetch: (url) => send(url, { method: "DELETE" }) },`,
+    `  { method: "PUT", path: "/api/orders/:id", action: saveOrder },`,
+    `];`,
+  ].join('\n');
+  assert.deepEqual(routesOf(client, 'web/src/calls.ts'), []);
+  // a handler that's a string or an object isn't a function, so that object isn't a route either
+  assert.deepEqual(routesOf(`export const R = [{ method: "GET", path: "/api/orders", handler: "listOrders" }, { method: "GET", path: "/api/x", handle: { cache: true } }];`), []);
+});
+
+test('the same objects are routes in a file that serves, or beside one with a handle', () => {
+  const routes = [
+    `const ROUTES = [`,
+    `  { method: "GET", path: "/api/orders", resolve: (ctx) => listOrders(ctx) },`,
+    `  { method: "PUT", path: "/api/orders/:id", action: saveOrder },`,
+    `  { method: "DELETE", path: "/api/orders/:id", fetch: (req) => removeOrder(req) },`,
+    `];`,
+  ];
+  const expected = ['GET /api/orders table L2 listOrders', 'PUT /api/orders/:id table L3 saveOrder', 'DELETE /api/orders/:id table L4 removeOrder'];
+  assert.deepEqual(routesOf([...routes, `createServer((req, res) => dispatch(ROUTES, req, res)).listen(3000);`].join('\n'), 'server/index.ts'), expected);
+  assert.deepEqual(routesOf([...routes, `export default { fetch: (req) => dispatch(ROUTES, req) };`].join('\n'), 'server/index.ts'), expected);
+  assert.deepEqual(routesOf([...routes.slice(0, -1), `  { method: "GET", path: "/api/health", handle: health },`, `];`].join('\n'), 'server/routes.ts'),
+    [...expected, 'GET /api/health table L5 health']);
+  // the route's own path isn't a request this file makes
+  assert.deepEqual(extract([...routes, `Bun.serve({ port: 3000, routes: { "/api/carts": { GET: listCarts } }, fetch: (req) => dispatch(ROUTES, req) });`].join('\n'), 'typescript', 'server/index.ts').calls, []);
+});
+
+test("a Fastify route object is one endpoint, and hapi's lists of them are read as a table", () => {
+  const src = [
+    `const app = Fastify();`,
+    `app.route({ method: "GET", path: "/api/items", handler: listItems });`,
+    `server.route([`,
+    `  { method: "POST", path: "/api/items", handler: createItem },`,
+    `  { method: "DELETE", path: "/api/items/{id}", handler: (request) => removeItem(request.params.id) },`,
+    `]);`,
+  ].join('\n');
+  assert.deepEqual(extract(src, 'typescript', 'api/src/app.ts').routes.map((r) => `${r.method} ${r.path}`), [
+    'GET /api/items', 'POST /api/items', 'DELETE /api/items/{id}',
+  ]);
 });
 
 test('Health still reads the login check of an Express route in a file that also has a route table', () => {

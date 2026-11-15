@@ -259,6 +259,8 @@ function requireBinding(code, i, floor) {
 
 // What makes a router or app: express(), express.Router(), Router(), new Hono(), new Koa(), new Router() (koa-router), fastify()
 const ROUTER_MAKER = /^(?:express|Router|Hono|OpenAPIHono|Koa|KoaRouter|fastify|Fastify|polka|createRouter)$/;
+// Code that runs a server itself: Bun.serve, Deno.serve, createServer, listen(port), `export default { fetch }`
+const SERVES = /\b(?:Bun|Deno)\.serve\s*(?:<[^;()]{0,200}?>\s*)?\(|\bcreateServer\s*\(|\.listen\s*\(\s*(?:\d|process\.env|PORT\b|port\b)|^[ \t]*export\s+default\s*\{[^}]{0,300}?\bfetch\b/m;
 // Names that read as a router when this file didn't make it (one passed in as a parameter)
 const ROUTER_NAME = /^(?:app|server|fastify|hono|routes?|router|[a-z][\w$]*(?:Router|Routes))$/;
 /** One argument of app.use(…): { spec } for require('./x'), { name } for a name, { name, call } for a call, {} otherwise. */
@@ -378,7 +380,7 @@ function extractJs(src, filePath) {
   // Fastify route({ method, url, handler, schema, ... }): only literal method(s) and URL.
   // Flatten nested option objects so a schema's own keys cannot be mistaken for route options.
   // The receiver is any router this file made (`const api = Fastify()`) or one named like a router.
-  const objectRoutes = []; // [first line, last line, url]: the url inside isn't a request
+  const objectRoutes = []; // [first line, last line, url, offset of its {]: the url inside isn't a request
   for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.route\(\s*\{/g, code)) {
     if (!ROUTER_NAME.test(m[1]) && !routerVars.has(m[1])) continue;
     const start = m.index + m[0].length;
@@ -414,7 +416,7 @@ function extractJs(src, filePath) {
       method: method.toUpperCase(), path: url, var: m[1], line: at(m.index),
       ...(guardOptions.length ? { guardOptions } : {}),
     });
-    if (methods.length) objectRoutes.push([at(m.index), at(close), url]);
+    if (methods.length) objectRoutes.push([at(m.index), at(close), url, start - 1]);
   }
 
   // Next.js app/pages API routes, derived from the file path
@@ -424,7 +426,11 @@ function extractJs(src, filePath) {
     const methods = all(/export\s+(?:async\s+)?(?:function|const)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g, code).map((m) => m[1]);
     for (const method of methods.length ? methods : ['ANY']) routes.push({ method, path: p, var: null, line: 1, framework: 'next' });
   }
-  routes.push(...dataRoutes(code, at));
+  // Endpoints listed as data: `[{ method: 'GET', path: /^\/api\/items$/, handle: listItems }]` and Bun.serve({ routes })
+  // (route-tables.mjs). A route object Fastify's reading above already took isn't counted again.
+  const dataAt = routes.length;
+  routes.push(...dataRoutes(code, at, { handlerOf: tableHandler, serves: dataAt > 0 || routerVars.size > 0 || SERVES.test(code), skip: objectRoutes.map((o) => o[3]) }));
+  for (const r of routes.slice(dataAt)) objectRoutes.push([r.line, r.line, r.path]);
 
   routes.push(...keyedRouteTable(code, at));
   if (/@nestjs\/common/.test(code) && /@Controller\s*\(/.test(code)) routes.push(...nestRoutes(code, at));
@@ -438,7 +444,8 @@ function extractJs(src, filePath) {
     ? new RegExp(`(?<![\\w$])(?:${[...routerVars].slice(0, 200).map((v) => v.replace(/\$/g, '\\$')).join('|')})\\.(?:get|post|put|patch|delete|all|options|head)\\(\\s*["'\`]\\/`)
     : null;
   const { calls, hosts } = extractCalls(code, at, { skip: routeOnVar ? { test: (line) => serverLine.test(line) || routeOnVar.test(line) } : serverLine });
-  // a route object's own `url: '/api/x'` reads like a request (because of `url`), but it's the route
+  // a route object's own `url: '/api/x'` reads like a request (because of `url`), and so can a route listed as
+  // data (`"/api/carts": {` in Bun.serve, `fetch: …` beside its path), but each is the route
   if (objectRoutes.length) for (let i = calls.length - 1; i >= 0; i--) {
     if (objectRoutes.some(([a, b, url]) => calls[i].line >= a && calls[i].line <= b && calls[i].path === url)) calls.splice(i, 1);
   }
@@ -952,7 +959,6 @@ function addDocs(src, lang, r) {
     // (the first symbol below could be the next controller class, or a DTO, in the same file)
     if (rt.framework === 'nest') { const d = commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     if (rt.framework === 'table') { const d = r.symbols?.find((s) => s.name === rt.handler)?.doc; if (d) rt.doc = d; continue; }
-    if (rt.framework === 'route-table' || rt.framework === 'bun') continue;
     if (rt.framework === 'firebase') { const d = r.symbols.find((s) => s.name === rt.handler)?.doc || commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     const h = syms.find((s) => s.line >= rt.line && s.line - rt.line <= 12);
     if (h) { rt.handler = h.name; if (h.doc) rt.doc = h.doc; }
