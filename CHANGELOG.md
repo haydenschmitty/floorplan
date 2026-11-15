@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Routes are found even when a router has an unusual name:** the scan finds routes on Hono and Express routers regardless of the name used in the code, and keeps routes from different routers in the same file under their own prefixes. Reported in [#98](https://github.com/haydenschmitty/floorplan/issues/98) and fixed by @xunguangzlj-cloud in [#103](https://github.com/haydenschmitty/floorplan/pull/103).
+- **Open Express endpoints no longer hidden by look-alike middleware** (#72, reported by @xumbou): an app-wide `app.use(...)` counted as a login check whenever a guard-like word appeared anywhere in it, so Health stopped reporting every open endpoint behind it. A header name inside a string (`cors({ exposedHeaders: ['X-Refreshed-Token'] })`), middleware that never turns anyone away (`cors`, `helmet`, `express-session`, `passport.session()` and the like) and a name that only says "guard" (`createShutdownGuard()`) no longer count. Real checks still do, including one listed after other middleware, as in `app.use(cors(), requireUser)`, which was missed before. The "None of your endpoints check who is calling" title no longer shows `.` in place of a name for a project that is one repo at its root. Fixed by @ahmedjanwar.
+
 ## 0.8.0 (2026-11-12)
 
 - **An embedded map can hand "Ask about this" to the page around it:** an exported copy shown inside another page has no Ask bar, so its right-click menu had no Ask items. The page can now opt in by adding `ask=host` to the map's address. **Ask about this** then appears on cards, lines and the background, and sends that page a `floorplan:ask` message with the chosen items' ids and names, so its own Ask can take the question. Nothing changes for maps opened without it. See [Embedding the map](docs/using-the-map.md#handing-ask-about-this-to-the-page-around-the-map).
@@ -14,7 +19,6 @@
 - **`build.mjs --json` always prints its JSON object:** when the build stopped on something it didn't expect, it exited 1 with nothing on stdout, so a program reading the result couldn't tell what had happened. It now prints the usual object with `ok: false` and one error, like `build stopped unexpectedly (EACCES); see stderr`. The details still go to stderr, and never into the object, because they can quote your files.
 - **A description file that isn't an object is reported, not a crash:** a file in `floorplan/descriptions/` holding `null` stopped the build, a refresh and `describe.mjs` with a stack trace. Now a file that holds `null`, a list or plain text, or whose `files` or `routes` holds a list, a number or text, is a build error that names it, like `descriptions/api.json must be an object like { "files": { … }, "routes": { … } }, not null`. `describe.mjs` treats such a file as empty and writes a fresh one to fill in, and a refresh leaves it for the build to name.
 - **A tsconfig that extends itself no longer crashes the scan:** a `tsconfig.json` or `jsconfig.json` whose `extends` led back to itself, directly or through other configs, sent the scan round in circles until it ran out of stack. The loop now simply ends there.
-- **Routes are found even when a router has an unusual name:** the scan finds routes on Hono and Express routers regardless of the name used in the code, and keeps routes from different routers in the same file under their own prefixes. Reported in [#98](https://github.com/haydenschmitty/floorplan/issues/98) and fixed by @xunguangzlj-cloud in [#103](https://github.com/haydenschmitty/floorplan/pull/103).
 
 ## 0.7.1 (2026-11-10)
 
