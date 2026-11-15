@@ -209,7 +209,6 @@ export function createResolver(root, files) {
   };
   const resolvePy = (from, imp, repoPath) => {
     const spec = imp.spec;
-    const targets = [];
     if (spec.startsWith('.')) {
       const dots = spec.match(/^\.+/)[0].length;
       let base = P.dirname(from);
@@ -225,7 +224,8 @@ export function createResolver(root, files) {
     }
     const top = spec.split('.')[0];
     const modPath = spec.replace(/\./g, '/');
-    for (const r of pyRootsFor(from, repoPath)) {
+    const roots = pyRootsFor(from, repoPath);
+    for (const r of roots) {
       const base = r ? `${r}/${modPath}` : modPath;
       if (imp.from && imp.names?.length) {
         const subs = imp.names.map((n) => tryPyModule(`${base}/${n}`)).filter(Boolean);
@@ -233,13 +233,17 @@ export function createResolver(root, files) {
       }
       const hit = tryPyModule(base);
       if (hit) return { file: hit };
-      // `import a.b.c` where only a/b exists
-      const parts = modPath.split('/').slice(0, 20); // no real module path is deeper; each try joins them again
-      for (let k = parts.length - 1; k >= 1; k--) {
-        const h = tryPyModule((r ? r + '/' : '') + parts.slice(0, k).join('/'));
-        if (h && targets.length === 0) { targets.push(h); break; }
+    }
+    // `import a.b.c` where only a/b exists. Only once no root has the whole module, and the longest prefix
+    // in any root wins: otherwise a nearer root's short prefix is taken first (`apps.orders.models`
+    // imported inside a Django app hits that app's own apps.py).
+    const parts = modPath.split('/').slice(0, 20); // no real module path is deeper; each try joins them again
+    for (let k = parts.length - 1; k >= 1; k--) {
+      const prefix = parts.slice(0, k).join('/');
+      for (const r of roots) {
+        const h = tryPyModule(r ? `${r}/${prefix}` : prefix);
+        if (h) return { file: h };
       }
-      if (targets.length) return { file: targets[0] };
     }
     if (PY_STDLIB.has(top)) return { builtin: true };
     return { external: top, eco: 'pypi' };
