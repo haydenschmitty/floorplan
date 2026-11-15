@@ -2,14 +2,14 @@
 
 ## Unreleased
 
-- **PHP and Laravel apps get a real map** (from @Basel-Alsemsam): a Laravel app showed no endpoints, and its PHP files no connections, because Floorplan only followed `require`. Now:
+- **PHP and Laravel apps get a real map:** a Laravel app showed no endpoints, and its PHP files no connections, because Floorplan only followed `require`. Reported by @epistex-dev in #67, fixed by @Basel-Alsemsam in #106. Now:
   - **PHP files link to the classes they use**: `use` statements (grouped and aliased ones too), traits, and classes named without one (`new Order`, `Order::class`, parameter types, `extends`), found by namespace and through `composer.json`'s PSR-4 folders. Outside packages are named by vendor (`composer:Illuminate`). PHP is read, never run.
   - **Laravel endpoints with their full address**: `Route::get/post/…`, `match`, `resource` and `apiResource` (with `only`/`except`), `Route::view` and `Route::inertia`, under prefix, name, middleware and controller groups. A route file loaded inside a group (`require`, `->group(base_path(…))`, files required in a loop over a fixed list, `withRouting` in `bootstrap/app.php`) gets the group's prefix, name and middleware.
   - **Each endpoint sits in the controller method that answers it**, with that method's doc comment, so requests lead to the code that handles them rather than to the routes file.
   - **Laravel Wayfinder calls** (`import { show } from '@/routes/orders'`, `OrderController.update.form(…)`) reach their endpoints by route name or controller method, though Wayfinder's generated files aren't in git. A name defined twice is left unlinked rather than guessed.
   - **Inertia pages are screens**: a controller method that renders a page makes it a screen at the endpoint's address, with the controller and its data behind it.
   - **Health checks who may call each Laravel endpoint**: middleware on the route, its groups and the route files around it (through the app's own aliases and groups), the controller's own middleware, a form request whose `authorize()` looks at the user, and checks inside the method (`$this->authorize`, `Gate::`, `abort_unless(…, 403)`). Sign-in pages (`guest`), closures that only redirect or answer something fixed, and plain pages aren't reported. Each open endpoint's fix names the file it's registered in.
-- **Privacy, terms and legal pages are public on purpose:** Health no longer reports reading `/privacy`, `/privacy-policy`, `/terms`, `/terms-of-service`, `/legal` or an imprint as open to anyone. An address that only starts the same way, like `/api/privacy-requests`, is still checked. Fixed by @Basel-Alsemsam.
+- **Privacy, terms and legal pages are public on purpose:** Health no longer reports reading a site's `/privacy`, `/privacy-policy`, `/terms`, `/terms-of-service`, `/tos`, `/legal` or imprint page as open to anyone. Only reading counts, and only when the whole address is the page (`/legal/imprint` too), so someone's privacy settings (`/account/privacy`), data under a legal address (`/api/legal/cases`), a request like `/api/privacy-requests` and a change to one of those pages are still checked. Fixed by @Basel-Alsemsam in #106.
 
 ## 0.9.0 (2026-11-14)
 

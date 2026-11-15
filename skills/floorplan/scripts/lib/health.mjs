@@ -1130,7 +1130,10 @@ export function findIssues(src, f) {
 // ======================= build: turn findings into issues =======================
 
 const SEV_ORDER = { high: 0, medium: 1, low: 2 };
-const PUBLIC_PATH = /(^|\/)(health|healthz|healthcheck|ping|status|ready|readyz|readiness|live|livez|liveness|version|metrics|robots\.txt|sitemap[\w.]*|favicon[\w.]*|\.well-known|login|logout|signin|pair|sign-in|signout|signup|sign-up|register|forgot[\w-]*|reset[\w-]*|verify[\w-]*|oauth\w*|callback|auth|token|refresh|static|assets|public|newsletter|contact|waitlist|unsubscribe|privacy(?:-policy|-notice|-statement)?|terms(?:-of-(?:service|use)|-and-conditions|-conditions)?|tos|legal|imprint|impressum|openapi\.json|docs|swagger[\w.]*|i|images?)(\/|$)/i;
+const PUBLIC_PATH = /(^|\/)(health|healthz|healthcheck|ping|status|ready|readyz|readiness|live|livez|liveness|version|metrics|robots\.txt|sitemap[\w.]*|favicon[\w.]*|\.well-known|login|logout|signin|pair|sign-in|signout|signup|sign-up|register|forgot[\w-]*|reset[\w-]*|verify[\w-]*|oauth\w*|callback|auth|token|refresh|static|assets|public|newsletter|contact|waitlist|unsubscribe|openapi\.json|docs|swagger[\w.]*|i|images?)(\/|$)/i;
+// A site's privacy, terms and legal pages, which every visitor may read: only reading them, and only when the whole
+// address is the page (/privacy, /legal/imprint), so /account/privacy (someone's settings) or /api/legal/cases is still checked
+const LEGAL_PAGE = /^\/(?:legal\/)?(?:privacy(?:-policy|-notice|-statement)?|terms(?:-of-(?:service|use)|-and-conditions|-conditions)?|tos|legal|imprint|impressum)\/?$/i;
 // Files and feeds that exist to be read by crawlers, feed readers and AI tools. Only for reading: see publicByDesign.
 const PUBLIC_FILE_PATH = /(^|\/)(llms(-full)?\.txt|ai\.txt|humans\.txt|(app-)?ads\.txt|security\.txt|rss(\.xml)?|atom(\.xml)?|feed\.(xml|rss|atom|json)|index\.xml|opensearch\.xml|site\.webmanifest|manifest\.(json|webmanifest)|openapi\.ya?ml)$/i;
 const LISTING_FILE = /(^|\/)(llms(-full)?\.txt|robots\.txt)$/i;
@@ -1748,7 +1751,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     // a Stripe webhook that doesn't check Stripe's signature has its own, more specific issue
     if (stripeFiles.has(r.f) && (webhook || /stripe|payment|hook/i.test(r.p) || graph.routes.filter((x) => x.f === r.f && x.m !== 'GET').length === 1)) return;
     if (!webhook && PUBLIC_PATH.test(r.p.replace(/<[^>]*>|\{[^}]*\}|:\w+|\[[^\]]*\]/g, 'x'))) return;
-    if (r.p === '/' && r.m === 'GET') return;
+    if ((r.p === '/' || LEGAL_PAGE.test(r.p)) && r.m === 'GET') return;
     if (!webhook && publicByDesign(r, fnd, repo)) return;
     const entry = { i, r, fnd, write: !['GET', 'ANY'].includes(r.m), webhook };
     if (fnd.misplaced) pr.misplaced.push(entry); else pr.open.push(entry);
