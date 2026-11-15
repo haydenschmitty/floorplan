@@ -6,6 +6,17 @@ export const routeSegments = (p) => p.split('/').filter(Boolean).map((s) =>
 
 const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/;
 
+/** offset → 1-based line number in src, from one pass over it. */
+const lineIndex = (src) => {
+  const starts = [0];
+  for (let i = 0; i < src.length; i++) if (src.charCodeAt(i) === 10) starts.push(i + 1);
+  return (offset) => {
+    let lo = 0, hi = starts.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= offset) lo = mid; else hi = mid - 1; }
+    return lo + 1;
+  };
+};
+
 const joinPath =(...parts) => '/' + parts.map((p) => (p || '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
 
 /**
@@ -131,6 +142,17 @@ export function resolveRoutes(files) {
   // a Laravel route is answered by a controller method: its endpoint sits in that controller's file
   const classFile = new Map();
   for (const f of files) if (f.lang === 'php') for (const c of f.classes || []) if (!classFile.has(c.toLowerCase())) classFile.set(c.toLowerCase(), f);
+  // a controller's methods by name (exact, then any case), looked up once per route
+  const methodsOf = new Map();
+  const methodIn = (ctrl, fn) => {
+    if (!methodsOf.has(ctrl.path)) {
+      const exact = new Map(), loose = new Map();
+      for (const m of ctrl.methods || []) { if (!exact.has(m.name)) exact.set(m.name, m); if (!loose.has(m.name.toLowerCase())) loose.set(m.name.toLowerCase(), m); }
+      methodsOf.set(ctrl.path, { exact, loose });
+    }
+    const { exact, loose } = methodsOf.get(ctrl.path);
+    return exact.get(fn) || loose.get(String(fn).toLowerCase()) || null;
+  };
   // Every prefix a file's routes live under, composing nested mounts (a router mounted into a router
   // that is itself mounted), e.g. app.use('/api', api) + api.use('/users', users) → /api/users.
   // Each file's answer is remembered (files mounted twice into each other would otherwise be walked once per
@@ -215,7 +237,7 @@ export function resolveRoutes(files) {
       if (r.framework === 'laravel') {
         const ctrl = r.action && classFile.get(r.action.cls.toLowerCase());
         const fn = r.action?.fn;
-        const meth = ctrl && ((ctrl.methods || []).find((m) => m.name === fn) || (ctrl.methods || []).find((m) => m.name.toLowerCase() === fn.toLowerCase()));
+        const meth = ctrl && methodIn(ctrl, fn);
         const mw = mountMw(f.path, null);
         const names = r.routeName ? outerNames(f.path) : '';
         for (const mp of outerPrefixes(f.path, null)) routes.push({
@@ -346,36 +368,43 @@ export function matchWayfinder(files, routes, readSource) {
     const imps = (f.imports || []).filter((i) => i.wayfinder);
     if (!imps.length) continue;
     const src = readSource(f.path) || '';
-    const lineOf = (idx) => src.slice(0, idx).split('\n').length;
-    for (const imp of imps) {
+    const lineOf = lineIndex(src);
+    // what's used off each binding: posts.show.url(…) → show, PostController.update.form(…) → update, found in
+    // one pass over the file for all of them (a pass per name would read a file importing thousands many times)
+    const bindings = new Map();
+    for (const imp of imps) for (const [local, orig] of Object.entries(imp.locals || {})) {
+      if (!bindings.has(local)) bindings.set(local, []);
+      bindings.get(local).push({ imp, orig, uses: [] });
+    }
+    for (const m of src.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)((?:\s*\??\.\s*[A-Za-z_$][\w$]*)*)/g)) {
+      const bs = bindings.get(m[1]);
+      if (!bs) continue;
+      const line = lineOf(m.index);
+      const chain = m[2].split('.').map((s) => s.replace(/[?\s]/g, '')).filter(Boolean);
+      while (chain.length && WAYFINDER_HELPERS.has(chain[chain.length - 1])) chain.pop();
+      for (const b of bs) if (line !== b.imp.line) b.uses.push({ chain: chain.map(unreserve), line }); // not the import itself
+    }
+    const done = new Set(); // each call once per file: the first use stands for the rest
+    for (const bs of bindings.values()) for (const { imp, orig, uses } of bs) {
       const w = imp.wayfinder;
-      for (const [local, orig] of Object.entries(imp.locals || {})) {
-        const whole = orig === 'default' || orig === '*';
-        // what's used off the binding: posts.show.url(…) → show, PostController.update.form(…) → update
-        const uses = [];
-        const re = new RegExp(String.raw`(?<![\w$.])${local.replace(/\$/g, '\\$')}((?:\s*\??\.\s*[A-Za-z_$][\w$]*)*)`, 'g');
-        for (const m of src.matchAll(re)) {
-          const line = lineOf(m.index);
-          if (line === imp.line) continue; // the import itself
-          const chain = m[1].split('.').map((s) => s.replace(/[?\s]/g, '')).filter(Boolean);
-          while (chain.length && WAYFINDER_HELPERS.has(chain[chain.length - 1])) chain.pop();
-          uses.push({ chain: chain.map(unreserve), line });
+      const whole = orig === 'default' || orig === '*';
+      if (!whole && !uses.length) uses.push({ chain: [], line: imp.line });
+      for (const u of uses) {
+        let key, hits;
+        if (w.kind === 'route') {
+          const name = [w.prefix, ...(whole ? [] : [unreserve(orig)]), ...u.chain].filter(Boolean).join('.');
+          if (!name || (whole && !u.chain.length) || done.has('route|' + name)) continue;
+          key = name; hits = byName.get(squash(name));
+          // Laravel keeps one route per name; the same name in two places is a clash we can't settle by reading
+          if (new Set((hits || []).map((r) => r.file)).size > 1) hits = null;
+        } else {
+          const fn = whole ? u.chain[0] || '__invoke' : unreserve(orig);
+          key = `${w.cls}@${fn}`;
+          if (done.has('action|' + key)) continue;
+          hits = byAction.get(`${w.cls.toLowerCase()}@${fn.toLowerCase()}`);
         }
-        if (!whole && !uses.length) uses.push({ chain: [], line: imp.line });
-        for (const u of uses) {
-          let key, hits;
-          if (w.kind === 'route') {
-            const name = [w.prefix, ...(whole ? [] : [unreserve(orig)]), ...u.chain].filter(Boolean).join('.');
-            if (!name || (whole && !u.chain.length)) continue;
-            key = name; hits = byName.get(squash(name));
-            // Laravel keeps one route per name; the same name in two places is a clash we can't settle by reading
-            if (new Set((hits || []).map((r) => r.file)).size > 1) hits = null;
-          } else {
-            const fn = whole ? u.chain[0] || '__invoke' : unreserve(orig);
-            key = `${w.cls}@${fn}`; hits = byAction.get(`${w.cls.toLowerCase()}@${fn.toLowerCase()}`);
-          }
-          for (const r of hits || []) out.push({ from: f.path, to: r.file, method: r.method, path: r.path, call: key, line: u.line, routeLine: r.line });
-        }
+        done.add(`${w.kind}|${key}`);
+        for (const r of hits || []) out.push({ from: f.path, to: r.file, method: r.method, path: r.path, call: key, line: u.line, routeLine: r.line });
       }
     }
   }

@@ -331,7 +331,12 @@ if (laravel.length) {
   const routeFiles = new Set(laravel.map((r) => r.defFile || r.file));
   line(`LARAVEL  ${laravel.length} endpoints from ${routeFiles.size} route file(s), ${laravel.filter((r) => r.defFile).length} answered by controller methods (their endpoints sit in the controller's file)`);
   line(`  ${wayfinderLinks.length} Wayfinder call(s) matched to endpoints · ${inertia.hints.length} Inertia page(s) linked to the endpoint that opens them`);
-  const loaded = new Set(files.flatMap((f) => (f.mounts || []).flatMap((m) => (f.imports || []).filter((i) => i.spec === m.spec).flatMap((i) => i.files || []))));
+  const loaded = new Set();
+  for (const f of files) {
+    if (!f.mounts?.length) continue;
+    const specs = new Set(f.mounts.map((m) => m.spec));
+    for (const i of f.imports || []) if (specs.has(i.spec)) for (const p of i.files || []) loaded.add(p);
+  }
   const loose = [...routeFiles].filter((p) => !loaded.has(p) && !/(^|\/)bootstrap\/app\.php$|(^|\/)Providers\//.test(p));
   if (loose.length) line(`  route files nothing loads (their addresses may be missing a prefix): ${loose.slice(0, 6).join(', ')}${loose.length > 6 ? ' …' : ''}`);
   line();

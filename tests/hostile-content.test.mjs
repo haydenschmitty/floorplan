@@ -467,6 +467,14 @@ test('files built to make pattern matching slow are scanned quickly', () => {
     'defs.py': kb('def a(\n', 300), 'spaces.js': 'import a' + ' '.repeat(2000), 'keys.js': kb('sk-', 300), 'sql/schema.sql': kb('/* ', 300),
     'app/routes.ts': kb('route("a", ', 200), 'header.js': '// tool reads ' .repeat(1500) + '\nexport const x = 1;\n',
     ...mounts,
+    // a Laravel app: route groups that never close, thousands of named routes to one controller, and a page
+    // that uses a Wayfinder import thousands of times
+    'shop/composer.json': '{"require":{"laravel/framework":"^11.0"},"autoload":{"psr-4":{"App\\\\":"app/"}}}',
+    'shop/tsconfig.json': '{"compilerOptions":{"paths":{"@/*":["./resources/js/*"]}}}',
+    'shop/routes/web.php': '<?php\n' + kb("Route::prefix('a')->group(function () {\n", 200),
+    'shop/routes/api.php': '<?php\n' + kb("Route::get('/a', [App\\Http\\Controllers\\A::class, 'b'])->name('a');\nrequire __DIR__.'/web.php';\n", 300),
+    'shop/app/Http/Controllers/A.php': '<?php\nnamespace App\\Http\\Controllers;\nclass A {\n' + kb('  public function b() {}\n', 200) + '}\n',
+    'shop/resources/js/pages/a.tsx': "import { a } from '@/routes';\nimport A from '@/actions/App/Http/Controllers/A';\n" + kb('a.url(); A.b.url(); ', 300),
   });
   try {
     const t = Date.now();
@@ -578,6 +586,44 @@ test('files of unclosed lists and brackets are still read quickly', async () => 
     const t = performance.now();
     extract(src, lang, lang === 'python' ? 'app/routes.py' : lang === 'go' ? 'app/routes.go' : 'app/routes.ts');
     if (lang === 'typescript' || lang === 'javascript') findScreens(src, { path: 'app/routes.ts', category: 'code', lang });
+    const ms = performance.now() - t;
+    assert.ok(ms < 2000, `${name} (${(src.length / 1048576).toFixed(1)} MB) took ${Math.round(ms)} ms`);
+  }
+});
+
+test('PHP files of unclosed brackets, route groups and statements are still read quickly', async () => {
+  const { extract } = await lib('extract.mjs');
+  const { findIssues } = await lib('health.mjs');
+  const half = (unit) => '<?php\n' + unit.repeat(Math.ceil((512 * 1024) / unit.length));
+  const inClass = (head, unit) => '<?php\nclass A {\n' + head + unit.repeat(Math.ceil((512 * 1024) / unit.length));
+  const cases = {
+    'Route::get( with no )': half('Route::get('),
+    'route groups never closed': half("Route::prefix('a')->group(function () {\n"),
+    'Route::group([...]) never closed': half("Route::group(['prefix' => 'a'], function () {\n"),
+    'closures nested in routes': half("Route::get('/a', fn () => "),
+    'closures kept in variables, nested': half("Route::get('/a', $v);\n") + '$v = fn () => '.repeat(20000),
+    'a closure of returns with no ;': "<?php\nRoute::get('/a', function () {" + 'return a '.repeat(60000),
+    'withRouting( with no )': half('->withRouting('),
+    'require with no ;': half('require a '),
+    'require( with no )': half('require ('),
+    'foreach ([ with no ]': half('foreach (['),
+    'foreach loops nested': half("foreach (['a'] as $x) { "),
+    'use with no ;': half(';use a{'),
+    'use followed by spaces': '<?php\n;use ' + ' '.repeat(512 * 1024) + 'x',
+    'class with no {': half('class A\n'),
+    'classes never closed': half('class A {\n'),
+    'method parameters never closed': inClass('', '  public function f(\n'),
+    'method bodies never closed': inClass('', '  public function f() {\n'),
+    'abort_if with no ;': inClass('  public function f() {\n', 'abort_if( '),
+    'middleware() returns with no ;': inClass('  public static function middleware() {\n', 'return a '),
+    '$this->middleware( with no )': half('$this->middleware('),
+    'middleware aliases never closed': '<?php\n->withMiddleware(' + '->alias('.repeat(65536),
+    'Kernel lists never closed': half('$middlewareGroups = ['),
+  };
+  for (const [name, src] of Object.entries(cases)) {
+    const t = performance.now();
+    const r = extract(src, 'php', 'routes/web.php');
+    findIssues(src, { path: 'routes/web.php', category: 'code', lang: 'php', methods: r.methods, classes: r.classes });
     const ms = performance.now() - t;
     assert.ok(ms < 2000, `${name} (${(src.length / 1048576).toFixed(1)} MB) took ${Math.round(ms)} ms`);
   }

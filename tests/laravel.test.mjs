@@ -122,6 +122,7 @@ test('Laravel: route files loaded inside a group are mounts that carry the group
     `<?php`,
     `Route::middleware('auth')->prefix('app')->name('app.')->group(function () {`,
     `    require __DIR__.'/app/orders.php';`,
+    `    require base_path('routes/app/chat.php');`,
     `    foreach (['billing', 'team'] as $area) {`,
     `        if (is_file($path = __DIR__.'/app/'.$area.'.php')) { require $path; }`,
     `    }`,
@@ -132,6 +133,7 @@ test('Laravel: route files loaded inside a group are mounts that carry the group
   assert.deepEqual(web.mounts.map((m) => `${m.spec} ${m.prefix} ${m.as || ''} ${(m.mw || []).join(',')}`), [
     '@base/routes/admin.php admin  can:admin',
     './app/orders.php app app. auth',
+    '@base/routes/app/chat.php app app. auth',
     './auth.php   ',
     './app/billing.php app app. auth',
     './app/team.php app app. auth',

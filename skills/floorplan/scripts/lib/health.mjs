@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob, blockComments, blankBlockComments, forwardIndexOf, callArgs } from './common.mjs';
-import { stripPhp, phpClose, phpSplit, phpStr, phpArrayBody, phpNamed, phpPairs } from './extract.mjs';
+import { stripPhp, phpBare, phpBrackets, phpBudget, phpParts, phpSplit, phpStr, phpArrayBody, phpNamed, phpPairs } from './extract.mjs';
 
 export const lineIndex = (src) => {
   const starts = [0];
@@ -700,7 +700,8 @@ function jsRoutes(src, f, out) {
 
 const LARAVEL_MW_CONFIG = /->\s*withMiddleware\s*\(|\$(?:middlewareGroups|middlewareAliases|routeMiddleware)\s*=/;
 // a method that checks the caller itself: a policy or gate, a permission test, an abort with 401/403
-const PHP_INLINE_CHECK = /\$this\s*->\s*authorize\w*\s*\(|\bGate\s*::\s*(?:authorize|allows|denies|check|any|none|inspect|forUser)\s*\(|\babort_(?:if|unless)\s*\([^;]*(?:->\s*(?:can|cannot|cant|user)\s*\(|auth\(\)|Auth\s*::|\b40[13]\b)|\babort\s*\(\s*40[13]\b|->\s*(?:can|cannot|cant)\s*\(|\bAuth\s*::\s*(?:check|guest|authenticate)\s*\(|\bauth\(\)\s*->\s*(?:check|guest|authenticate)\s*\(|\bpolicy\s*\(|\bthrow\s+new\s+\\?(?:[\w\\]*\\)?(?:AuthorizationException|AuthenticationException|AccessDeniedHttpException|UnauthorizedHttpException)\b/;
+// (an abort_if's condition is read up to 300 characters, so a file of `abort_if(` with no `;` isn't read once per call)
+const PHP_INLINE_CHECK = /\$this\s*->\s*authorize\w*\s*\(|\bGate\s*::\s*(?:authorize|allows|denies|check|any|none|inspect|forUser)\s*\(|\babort_(?:if|unless)\s*\([^;]{0,300}?(?:->\s*(?:can|cannot|cant|user)\s*\(|auth\(\)|Auth\s*::|\b40[13]\b)|\babort\s*\(\s*40[13]\b|->\s*(?:can|cannot|cant)\s*\(|\bAuth\s*::\s*(?:check|guest|authenticate)\s*\(|\bauth\(\)\s*->\s*(?:check|guest|authenticate)\s*\(|\bpolicy\s*\(|\bthrow\s+new\s+\\?(?:[\w\\]*\\)?(?:AuthorizationException|AuthenticationException|AccessDeniedHttpException|UnauthorizedHttpException)\b/;
 // a form request's authorize() that looks at the user, rather than `return true;`
 const PHP_REQUEST_CHECK = /->\s*user\s*\(|->\s*(?:can|cannot|cant)\s*\(|\bGate\s*::|\bauth\(\)|\bAuth\s*::|->\s*authorize\w*\s*\(/;
 
@@ -714,76 +715,91 @@ const phpMwName = (t) => {
 const phpMwItems = (t) => { const b = phpArrayBody(t); return (b != null ? phpSplit(b) : t ? [t] : []).map(phpMwName).filter(Boolean); };
 const phpStrList = (t) => { const s = phpStr(t); if (s != null) return [s]; const b = phpArrayBody(t); return b == null ? [] : phpSplit(b).map(phpStr).filter((x) => x != null); };
 
+/**
+ * One PHP file, ready to read: code (stripPhp), bare (strings blanked), close (where brackets close) and spend
+ * (phpBudget). args(open) is the argument list of the call whose ( is at open, and text(from, to) a piece of code,
+ * each empty once the file's allowance for reading nested text again is used up.
+ */
+function phpSource(src) {
+  const code = stripPhp(src), bare = phpBare(code), close = phpBrackets(bare), spend = phpBudget(code.length);
+  const args = (open) => { const a = phpParts(code, bare, close, open + 1, close(open) - 1); return spend(a.reduce((n, x) => n + x.length, 0)) ? a : []; };
+  return { code, bare, close, args, text: (from, to) => (spend(to - from) ? code.slice(from, to) : '') };
+}
+
 /** The middleware aliases and groups an app defines: { aliases: { name: ClassName }, groups: { name: [entries] } }. */
-function laravelMiddlewareConfig(code) {
+function laravelMiddlewareConfig({ bare, close, args, text }) {
   const aliases = {}, groups = {};
   const add = (g, list, front) => { groups[g] = front ? [...list, ...(groups[g] || [])] : [...(groups[g] || []), ...list]; };
   // Laravel 11+: $middleware->alias([...]), ->group('x', [...]), ->appendToGroup('x', [...]), ->web(append: [...])
-  for (const m of code.matchAll(/->\s*(alias|group|appendToGroup|prependToGroup|web|api)\s*\(/g)) {
-    const open = m.index + m[0].length - 1;
-    const args = phpSplit(code.slice(open + 1, phpClose(code, open) - 1));
-    if (m[1] === 'alias') { for (const [k, v] of phpPairs(args[0])) if (k) aliases[k] = phpMwName(v); }
-    else if (m[1] === 'web' || m[1] === 'api') { for (const a of args) { const [name, val] = phpNamed(a); if (name === 'append' || name === 'prepend') add(m[1], phpMwItems(val), name === 'prepend'); } }
-    else { const g = phpStr(args[0]); if (g) add(g, phpMwItems(args[1]), m[1] === 'prependToGroup'); }
+  for (const m of bare.matchAll(/->\s*(alias|group|appendToGroup|prependToGroup|web|api)\s*\(/g)) {
+    const a = args(m.index + m[0].length - 1);
+    if (m[1] === 'alias') { for (const [k, v] of phpPairs(a[0])) if (k) aliases[k] = phpMwName(v); }
+    else if (m[1] === 'web' || m[1] === 'api') { for (const x of a) { const [name, val] = phpNamed(x); if (name === 'append' || name === 'prepend') add(m[1], phpMwItems(val), name === 'prepend'); } }
+    else { const g = phpStr(a[0]); if (g) add(g, phpMwItems(a[1]), m[1] === 'prependToGroup'); }
   }
   // Laravel 10 and older: properties of app/Http/Kernel.php
-  for (const m of code.matchAll(/\$(middlewareGroups|middlewareAliases|routeMiddleware)\s*=\s*(?=\[|array\s*\()/g)) {
+  for (const m of bare.matchAll(/\$(middlewareGroups|middlewareAliases|routeMiddleware)\s*=\s*(?=\[|array\s*\()/g)) {
     const start = m.index + m[0].length;
-    const open = code[start] === '[' ? start : code.indexOf('(', start);
-    const pairs = phpPairs(code.slice(start, phpClose(code, open)));
+    const open = bare[start] === '[' ? start : bare.indexOf('(', start);
+    const pairs = phpPairs(text(start, close(open)));
     for (const [k, v] of pairs) if (k) { if (m[1] === 'middlewareGroups') add(k, phpMwItems(v)); else aliases[k] = phpMwName(v); }
   }
   return { aliases, groups };
 }
 
 /** A controller's own middleware: HasMiddleware's static middleware() (Laravel 11+), or $this->middleware(…) in its constructor. */
-function controllerMiddleware(code) {
+function controllerMiddleware({ bare, close, args, text }) {
   const out = [];
-  const m = /\bfunction\s+middleware\s*\(\s*\)\s*(?::\s*\??[\w\\]+\s*)?\{/.exec(code);
+  const m = /\bfunction\s+middleware\s*\(\s*\)\s*(?::\s*\??[\w\\]+\s*)?\{/.exec(bare);
   if (m) {
     const open = m.index + m[0].length - 1;
-    const ret = /\breturn\s+([\s\S]*?)\s*;\s*$/.exec(code.slice(open + 1, phpClose(code, open) - 1).trim());
-    for (const item of phpSplit(phpArrayBody(ret?.[1] || '') ?? '')) {
+    // the list it returns: from its first return to the ; that ends the method
+    const body = text(open + 1, close(open) - 1).trim();
+    const ret = body.endsWith(';') ? /\breturn\s+/.exec(body) : null;
+    for (const item of phpSplit(phpArrayBody(ret ? body.slice(ret.index + ret[0].length, -1).trim() : '') ?? '')) {
       const nm = /^new\s+\\?(?:[\w\\]*\\)?Middleware\s*\(([\s\S]*)\)$/.exec(item.trim());
       if (!nm) { const name = phpMwName(item); if (name) out.push({ name }); continue; }
-      const args = phpSplit(nm[1]).map(phpNamed);
-      const named = Object.fromEntries(args.filter(([k]) => k));
-      const first = args.find(([k]) => !k)?.[1] ?? named.middleware;
+      const parts = phpSplit(nm[1]).map(phpNamed);
+      const named = Object.fromEntries(parts.filter(([k]) => k));
+      const first = parts.find(([k]) => !k)?.[1] ?? named.middleware;
       for (const name of phpMwItems(first)) out.push({ name, ...(named.only ? { only: phpStrList(named.only) } : {}), ...(named.except ? { except: phpStrList(named.except) } : {}) });
     }
   }
-  for (const mm of code.matchAll(/\$this\s*->\s*middleware\s*\(/g)) {
-    const open = mm.index + mm[0].length - 1, close = phpClose(code, open);
-    const tail = /^\s*->\s*(only|except)\s*\(/.exec(code.slice(close));
-    const limit = tail ? phpStrList(phpSplit(code.slice(close + tail[0].length, phpClose(code, close + tail[0].length - 1) - 1))[0]) : null;
-    for (const name of phpSplit(code.slice(open + 1, close - 1)).flatMap(phpMwItems)) out.push({ name, ...(tail ? { [tail[1]]: limit } : {}) });
+  const tail = /\s*->\s*(only|except)\s*\(/y;
+  for (const mm of bare.matchAll(/\$this\s*->\s*middleware\s*\(/g)) {
+    const open = mm.index + mm[0].length - 1;
+    tail.lastIndex = close(open);
+    const t = tail.exec(bare);
+    const limit = t ? phpStrList(args(tail.lastIndex - 1)[0]) : null;
+    for (const name of args(open).flatMap(phpMwItems)) out.push({ name, ...(t ? { [t[1]]: limit } : {}) });
   }
   return out;
 }
 
 function phpChecks(src, f, out) {
   if (TEST_FILE.test(f.path)) return;
-  const code = stripPhp(src);
-  if (LARAVEL_MW_CONFIG.test(code)) out.push({ k: 'laravel-mw', ...laravelMiddlewareConfig(code) });
-  const mw = controllerMiddleware(code);
+  const php = phpSource(src);
+  const { code, bare, close, text } = php;
+  if (LARAVEL_MW_CONFIG.test(bare)) out.push({ k: 'laravel-mw', ...laravelMiddlewareConfig(php) });
+  const mw = controllerMiddleware(php);
   if (mw.length) out.push({ k: 'php-ctrl-mw', items: mw });
   // each public method: does it check the caller itself, and which classes does it take (a form request may check)
   const starts = [0];
   for (let i = 0; i < code.length; i++) if (code.charCodeAt(i) === 10) starts.push(i + 1);
+  const brace = /\s*(?::[^{;]{1,300})?\{/y;
   for (const m of f.methods || []) {
     if (m.hidden) continue;
-    const from = code.indexOf('(', starts[m.line - 1] ?? 0);
+    const from = bare.indexOf('(', starts[m.line - 1] ?? 0);
     if (from < 0) continue;
-    const after = phpClose(code, from);
-    const brace = /^\s*(?::\s*[^{;]+)?\{/.exec(code.slice(after));
-    const body = brace ? code.slice(after + brace[0].length, phpClose(code, after + brace[0].length - 1) - 1) : '';
+    brace.lastIndex = close(from);
+    const body = brace.exec(bare) ? text(brace.lastIndex, close(brace.lastIndex - 1) - 1) : '';
     const checked = PHP_INLINE_CHECK.test(body);
     if (checked || m.types?.length) out.push({ k: 'php-fn', fn: m.name, ...(checked ? { checked: true } : {}), ...(m.types?.length ? { takes: m.types } : {}) });
   }
   // a form request whose authorize() looks at the user
-  if (/\bextends\s+\\?(?:[\w\\]*\\)?FormRequest\b/.test(code) && f.classes?.length) {
-    const a = /\bfunction\s+authorize\s*\(\s*\)\s*(?::\s*\??\w+\s*)?\{/.exec(code);
-    const body = a ? code.slice(a.index + a[0].length, phpClose(code, a.index + a[0].length - 1) - 1) : '';
+  if (/\bextends\s+\\?(?:[\w\\]*\\)?FormRequest\b/.test(bare) && f.classes?.length) {
+    const a = /\bfunction\s+authorize\s*\(\s*\)\s*(?::\s*\??\w+\s*)?\{/.exec(bare);
+    const body = a ? text(a.index + a[0].length, close(a.index + a[0].length - 1) - 1) : '';
     if (PHP_REQUEST_CHECK.test(body)) out.push({ k: 'php-form-request', cls: f.classes[0] });
   }
 }
@@ -1637,6 +1653,20 @@ export function buildHealth({ graph, scan, arch, root }) {
     for (const [g, list] of Object.entries(x.groups || {})) c.groups[g] = [...(c.groups[g] || []), ...list];
     lvConfig.set(k, c);
   }
+  // a controller file's own middleware and its methods' facts, gathered once per file rather than once per route
+  const factsOf = new Map();
+  const phpFacts = (file) => {
+    if (!factsOf.has(file)) {
+      const fns = new Map();
+      let ctrlMw = null;
+      for (const x of findings(file)) {
+        if (x.k === 'php-ctrl-mw' && !ctrlMw) ctrlMw = x;
+        else if (x.k === 'php-fn' && !fns.has(x.fn.toLowerCase())) fns.set(x.fn.toLowerCase(), x);
+      }
+      factsOf.set(file, { ctrlMw, fns });
+    }
+    return factsOf.get(file);
+  };
   const laravelFinding = (r) => {
     const { aliases, groups } = lvConfig.get(scanByPath.get(r.file)?.repo ?? '') || { aliases: {}, groups: {} };
     const expand = (n, depth = 0) => { const g = groups[n.split(':')[0]]; return g && depth < 6 ? g.flatMap((x) => expand(x, depth + 1)) : [n]; };
@@ -1646,10 +1676,10 @@ export function buildHealth({ graph, scan, arch, root }) {
     const mw = names.find((n) => laravelGuard(n, aliases));
     if (mw) return { ...rec, guard: mw.split(':')[0], via: 'middleware' };
     const fn = r.action?.fn;
-    const own = findings(r.file);
-    const ctrl = own.find((x) => x.k === 'php-ctrl-mw')?.items.filter((i) => (!i.only || i.only.includes(fn)) && !(i.except || []).includes(fn)).flatMap((i) => expand(i.name)).find((n) => laravelGuard(n, aliases));
+    const own = phpFacts(r.file);
+    const ctrl = own.ctrlMw?.items.filter((i) => (!i.only || i.only.includes(fn)) && !(i.except || []).includes(fn)).flatMap((i) => expand(i.name)).find((n) => laravelGuard(n, aliases));
     if (ctrl) return { ...rec, guard: ctrl.split(':')[0], via: 'controller' };
-    const method = fn && own.find((x) => x.k === 'php-fn' && x.fn.toLowerCase() === fn.toLowerCase());
+    const method = fn && own.fns.get(fn.toLowerCase());
     const request = method?.takes?.find((t) => formRequests.has(t.toLowerCase()));
     if (request) return { ...rec, guard: request.split('\\').pop(), via: 'form request' };
     if (method?.checked) return { ...rec, via: 'inline' };
