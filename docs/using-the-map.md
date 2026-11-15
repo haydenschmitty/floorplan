@@ -55,7 +55,7 @@ Drag the panel's left edge to resize it.
 A count of important issues, and a plain-language list of problems the scan found:
 - passwords and keys written into the code, or into a committed `.env` file;
 - secret keys in settings the browser gets, like an OpenAI key in a `VITE_` or `NEXT_PUBLIC_` variable;
-- Supabase tables with row-level security switched off, and database rules that let anyone change a table;
+- Supabase tables with row-level security switched off, and database rules that let anyone change a table (row-level security switched on in a loop over a list of tables counts for those tables; when a migration switches it on for tables it doesn't name, the tables it may cover are reported as "can't tell" instead);
 - Firebase rules that let anyone read or change your data or files, including "test mode" rules and when they run out;
 - Stripe webhooks that act on payments without checking Stripe's signature, so anyone could fake one;
 - servers that let any website call them, flagged as worth fixing when login cookies go along too;
@@ -63,11 +63,17 @@ A count of important issues, and a plain-language list of problems the scan foun
 - files nothing uses;
 - files over about 1,000 lines, which AI struggles to edit safely.
 
+Below the count, **What was checked** says what each check had to look at: how many endpoints, Supabase tables, Firebase rules files, Stripe webhooks and files it read, or that it found none. A check with nothing to look at can't find a problem, so a short list isn't always a clean bill of health. The line stands out when it matters, for example when the code looks like it runs a server (a `createServer` call, `Deno.serve`, a Supabase Edge Function) but no endpoints were found, which usually means they're set up in a way Floorplan doesn't recognise yet.
+
 Each issue has **Show on map**, which highlights the affected files and endpoints with notes, and **Fix with Claude** (or **Fix with Codex**, for a map made in Codex), which copies a ready-made prompt naming the exact files and lines and the safe fix. It's a quick automatic check, not a security audit. On a blueprint this button is **Review** instead (see [Blueprints](#blueprints)).
 
 Health leaves password hashes and encrypted values alone (bcrypt, argon2, dotenvx, sops, Ansible Vault and similar), and goes by the value, so a backup with one value left unencrypted is still flagged. It can only recognise encryption that marks itself, and it can't read a `.env` file that git ignores. It also doesn't judge sign-in on endpoints in a route table (`"GET /api/orders": listOrders`) or on Django endpoints, because the check isn't where it can read it for each route, so no report there doesn't mean those endpoints are protected.
 
-It also leaves alone what's public on purpose, as long as it only reads: feeds and files for crawlers and AI tools (`rss.xml`, `llms.txt` and similar), addresses your project lists in its `llms.txt` or allows in its `robots.txt`, responses marked `Cache-Control: public`, and Next.js `GET` routes that read no database, session or server secret, even through what they import. Endpoints that change data are always checked. Payload CMS's own API routes count as checked, because Payload applies its access rules, so check those rules yourself. A token passed to a browser tracker's script is left alone too, since every visitor already has it.
+It also leaves alone what's public on purpose, as long as it only reads: feeds and files for crawlers and AI tools (`rss.xml`, `llms.txt` and similar), addresses your project lists in its `llms.txt` or allows in its `robots.txt`, responses marked `Cache-Control: public`, and Next.js `GET` routes that read no database, session or server secret, even through what they import. Endpoints that change data are always checked. Payload CMS's own API routes count as checked, because Payload applies its access rules, so check those rules yourself. A token passed to a browser tracker's script is left alone too, since every visitor already has it, and so are publishable keys made to go in web pages (`pk_…` from Stripe, Clerk and others, Supabase's `sb_publishable_…`); their secret partners (`sk_…`, `sb_secret_…`) are still flagged.
+
+For passwords and keys, Health goes by what's written, not just the name: a variable a script or pipeline fills in (`"$DB_PASSWORD"`, `${{ secrets.TOKEN }}`, `$(dbPassword)`, a psql `:'app_password'`), the browser's autofill words (`new-password`) and made-up keys with a run of the alphabet in them are left alone, while a password written in next to them is still flagged. For files nothing uses, it leaves alone Expo Router screens (every file in the `app/` folder of an app that uses `expo-router`) and files whose name another file mentions, such as `users.service` in a NestJS module.
+
+A login check that runs before every request, like Express's `app.use(requireAuth)` or Hono's `app.use('/api/*', auth)` for everything under a path, counts for the endpoints behind it. Only middleware whose name says what it checks counts: `cors()`, `helmet()`, a session being loaded or a word in its options (a header named `X-Refreshed-Token`) doesn't. When such a check is all that protects some endpoints, the Health panel names it and where it is, so you can see what a clean result rests on.
 
 If an issue is wrong, press **Not a problem** and add a reason if you like. It moves to the bottom of the list and out of the count, and stays that way when the map is rebuilt. Editing elsewhere in the file won't bring it back, but it does show again if the same check finds something new in that file or the issue changes severity. **Show again** undoes it. Exported copies keep the issue set apart but leave your reason out.
 
@@ -130,7 +136,33 @@ Everything above describes a map of existing code, which is what most maps are. 
 | a line | Ask about this connection · Show details |
 | the background | Ask about this view · Up one level · Back to overview · Fit to screen · Search |
 
-**Open in editor** opens the file in VS Code (or another editor that handles `vscode://` links) at the right line.
+**Open in editor** opens the file at the right line, in VS Code unless you choose another editor.
+
+### Choosing the editor
+
+**Open in editor**, **Open handler** and the right-click **Open in editor** all use the same setting. Set it in `floorplan/architecture.json` (or ask Claude or Codex to: "open files from the map in Cursor"):
+
+```json
+{ "editor": "cursor" }
+```
+
+or for one run of the map's server, for every map it shows, which wins over `architecture.json`:
+
+```bash
+node floorplan/serve.mjs --editor zed
+```
+
+`open.mjs` passes `--editor` on (and restarts a running server that uses a different one), and `FLOORPLAN_EDITOR=cursor` (in PowerShell, `$env:FLOORPLAN_EDITOR = "cursor"`) sets it for every server you start.
+
+The setting is an editor's name or a link of your own:
+
+| Name | Opens |
+|---|---|
+| `vscode` (the default) | `vscode://file/{path}:{line}` |
+| `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed` | the same link in that editor's scheme, e.g. `cursor://file/{path}:{line}` |
+| `idea`, `phpstorm` | `idea://open?file={path}&line={line}` (and `phpstorm://…`), where the IDE registers its links (macOS, or with JetBrains Toolbox) |
+
+A link of your own uses `{path}` (the file's full path, required), `{line}` and `{column}` (always 1, since the map knows lines only), for example `"zed://file/{path}:{line}:{column}"` or `"pycharm://open?file={path}&line={line}"`. It must use an editor's own scheme: `vscode`, `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed`, `idea`, `phpstorm`, `pycharm`, `webstorm`, `goland`, `rubymine`, `clion`, `rider`, `txmt`, `mvim` or `subl`. Web addresses, `file:`, `javascript:` and `data:` links aren't allowed, so nothing written into `architecture.json` can turn the button into something else; the build names a setting it can't use, and the map's server won't start with one. Open an issue to add an editor's scheme. Exported copies have no editor links.
 
 ## Links to a place on the map
 

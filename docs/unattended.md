@@ -16,7 +16,7 @@ Switch it on with an environment variable:
 export FLOORPLAN_UNATTENDED=1
 ```
 
-or pass `--unattended` to a script, which sets the same thing for it and for the scripts it runs (`refresh.mjs` runs `scan.mjs` and `build.mjs`). In unattended mode:
+(in Windows PowerShell: `$env:FLOORPLAN_UNATTENDED = "1"`), or pass `--unattended` to a script, which sets the same thing for it and for the scripts it runs (`refresh.mjs` runs `scan.mjs` and `build.mjs`). In unattended mode:
 
 - **Nothing is written outside `floorplan/`.** No `CLAUDE.local.md`, no line in `.git/info/exclude`, no moving an old Floorplan section out of `CLAUDE.md`, and an old `show-code/` map is left where it is. Git is run with `--no-optional-locks`, so even `git status` leaves the repo's own files alone.
 - **The map names no agent.** It records `"agent": "none"`, so its Health and blueprint buttons say "Fix with AI" and "paste it into your AI coding agent" instead of naming Claude or Codex. You can also set `FLOORPLAN_AGENT=none` on its own. Naming an agent (`--agent claude`, `FLOORPLAN_AGENT=codex`) still wins. If the map's server is running, it names the CLI it found, as it always has.
@@ -52,7 +52,7 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | Field | What it is |
 |---|---|
 | `repos[]` | `path`, `name`, `branch`, `head`, `files`, and `listed`: false when git couldn't list it |
-| `counts` | `files`, `outsideRepos`, `byCategory` (code, config, docs…), `code` ({ files, loc }), `byLanguage`, `routes`, `httpMatches`, `importEdges`, `unresolvedImports`, `externalPackages`, `notRead` |
+| `counts` | `files`, `outsideRepos`, `byCategory` (code, config, docs…), `notMapped` (the files of each kind the map won't show: those architecture.json's `include` leaves out, or all but code before it's written), `code` ({ files, loc }), `byLanguage`, `routes`, `httpMatches`, `importEdges`, `autoImportLinks` (Nuxt components and composables used without an import), `unresolvedImports`, `externalPackages`, `notRead` |
 | `problems[]` | `{ code, message }`: `git_failed` (with `repo` and git's own `error`) or `no_files` |
 | `warnings[]` | the problems' messages, when they aren't errors |
 | `summary` | the summary a model maps from: the same text the scan prints |
@@ -64,6 +64,7 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 |---|---|
 | `errors[]`, `warnings[]` | everything the build found wrong with architecture.json or the descriptions, in the words it prints |
 | `files` | `total`, `unassigned`, `unassignedPercent` (one decimal), `include` |
+| `notMapped` | `byCategory`: how many files of each kind `include` leaves off the map, biggest first, e.g. `{ "docs": 52, "config": 38, "asset": 140 }`; `ignored`: files of an included kind that `ignore` leaves out. The report says the same on its `NOT MAPPED` line |
 | `unassignedByDirectory[]` | `{ dir, files }`, biggest first |
 | `nodes[]` | the top-level parts: `id`, `kind`, `files`, `loc` |
 | `links` | `total` and `byKind` (import, http, …) |
@@ -71,7 +72,7 @@ Most also carry the human report as text (`report`, `summary` or `text`), which 
 | `plainLanguage` | developer words in node labels and summaries on a map for everyone: `checked` (false when `audience` is `developers`), `count` (parts with any) and `items[]` ({ node, field: `label` or `summary`, term, say }). Each part also gets a `plain language:` line in `warnings[]`. Never an error |
 | `partsToSplit[]` | parts with no children and more than 24 files that sit in several folders of their own: `{ id, files, folders: [{ dir, files }] }`, also in `warnings[]` |
 | `secretsHidden[]` | `{ file, field }` for each piece of written text that looked like it held a secret and went into the map as «hidden», e.g. `{ "file": "descriptions/api.json", "field": "files[\"api/server.js\"].description" }`. Never the value. Each file also gets a `secret-looking text in …` line at the top of `warnings[]`. A warning, never an error; the files themselves are left as they are |
-| `health` | `kind` (`health`, or `design-review` for a blueprint), `high`, `medium`, `low`, and `important[]` ({ severity, kind, title }); `null` when there's none |
+| `health` | `kind` (`health`, or `design-review` for a blueprint), `high`, `medium`, `low`, and `important[]` ({ severity, kind, title }), and `checked[]` ({ check, label, checked, text, loud? }): one per check (`endpoints`, `supabase`, `firebase`, `stripe`, `secrets`), saying what it read or that it found nothing to read; `loud` marks a gap that matters, like code that runs a server with no endpoints found. `null` when there's none |
 | `screens` | how many screens were found |
 | `recentWork` | `cards` and `tasks` highlighted, and whether `recent-work.json` exists |
 | `agent`, `audience`, `blueprint`, `unattended`, `check` | how it was built |
@@ -174,6 +175,8 @@ node $S/scripts/scan.mjs /work/shop --json        # hand "summary" to the archit
 # ... write the model's answer to /work/shop/floorplan/architecture.json ...
 node $S/scripts/build.mjs /work/shop --json
 ```
+
+In Windows PowerShell the first two lines are `$env:FLOORPLAN_UNATTENDED = "1"` and `$S = "C:\path\to\floorplan\skills\floorplan"`; the `node` lines are the same. Write each JSON file as UTF-8; a byte order mark at the start (which `Set-Content` and `Out-File` add in Windows PowerShell 5.1) is fine.
 
 The build answers, in part:
 

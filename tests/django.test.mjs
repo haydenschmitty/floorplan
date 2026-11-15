@@ -1,4 +1,4 @@
-// Django: an app's urls.py included under a prefix by the project's urls.py.
+// Django: an app's urls.py included under a prefix by the project's urls.py, and imports between apps.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -34,4 +34,33 @@ test('urls included under a prefix get it, and the include line is not an endpoi
   ]);
   assert.ok(scan.edges.some((e) => e.from === 'mysite/urls.py' && e.to === 'orders/urls.py'), 'expected the project urls to use the app urls');
   assert.deepEqual(scan.http.map((h) => `${h.from} -> ${h.path}`), ['web/api.js -> /api/orders/<int:pk>']);
+});
+
+test('absolute imports between apps reach the other app, not the importing app\'s own apps.py (#99)', () => {
+  const p = 'backend/web_app/';
+  const root2 = makeProject({
+    [p + 'manage.py']: '',
+    [p + 'apps/__init__.py']: '',
+    [p + 'apps/core/__init__.py']: '',
+    [p + 'apps/core/apps.py']: 'from django.apps import AppConfig\nclass CoreConfig(AppConfig): name = "apps.core"\n',
+    [p + 'apps/core/utils.py']: 'def front_url(path): return path\n',
+    [p + 'apps/orders/__init__.py']: '',
+    [p + 'apps/orders/apps.py']: 'from django.apps import AppConfig\nclass OrdersConfig(AppConfig): name = "apps.orders"\n',
+    [p + 'apps/orders/models.py']: 'class Order: ...\n',
+    [p + 'apps/orders/admin.py']: [
+      'from apps.orders.models import Order',
+      'from apps.core.utils import front_url',
+      // only a prefix of this exists: the longest one, in whichever root has it, not this app's apps.py
+      'import apps.core.missing',
+    ].join('\n') + '\n',
+    // near miss: an app really importing its own apps.py still gets it
+    [p + 'apps/orders/signals.py']: 'from .apps import OrdersConfig\n',
+  });
+  try {
+    run('scan.mjs', root2);
+    const scan = readJson(path.join(root2, 'floorplan', '.cache', 'scan.json'));
+    const from = (f) => [...new Set(scan.edges.filter((e) => e.from === p + f).map((e) => e.to.slice(p.length)))].sort();
+    assert.deepEqual(from('apps/orders/admin.py'), ['apps/core/__init__.py', 'apps/core/utils.py', 'apps/orders/models.py']);
+    assert.deepEqual(from('apps/orders/signals.py'), ['apps/orders/apps.py']);
+  } finally { cleanup(root2); }
 });

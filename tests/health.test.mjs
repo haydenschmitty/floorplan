@@ -97,3 +97,49 @@ test('Express: a check before a named handler counts, and each route is judged o
   // (updateUser) isn't a check, and a check on the next route doesn't protect the one before it
   assert.deepEqual(openEndpoints(graph), ['GET /api/books', 'POST /api/notes', 'PUT /api/users/:id']);
 });
+
+test('Flask: login decorators count, while logging and misplaced decorators do not (#123)', () => {
+  const graph = buildFixture('flask-login');
+  // login_required, login_required_json and logged_in_required count; log_call, logging_required and
+  // logged_request are logging, and a check above the route line does nothing
+  assert.equal(graph.routes.length, 7);
+  assert.deepEqual(openEndpoints(graph), [
+    'POST /actions/log-call',
+    'POST /actions/logged',
+    'POST /actions/logging',
+    'POST /actions/misplaced',
+  ]);
+});
+
+test('FastAPI: dependencies are judged by what they check, not only by their name (#112, #117, #102)', () => {
+  const graph = buildFixture('fastapi-dependency-checks');
+  assert.equal(graph.routes.length, 20, `expected the sample's 20 endpoints, found ${graph.routes.length}`);
+  // checks: validate_api_key and validate_jwt (#112); a guard factory's result, a neutral-named factory's
+  // result, a class whose __call__ raises 403 and a neutral name that raises 401 (#117 A, B); a factory's
+  // result on the whole router (#117 C); a list kept in a constant (#117 D); a Depends() kept in a
+  // variable, listed or as a parameter default (#102).
+  // Still open: a schema validator (Depends(validate_payload), @validate), a page number, a lookup that
+  // answers 404 and a factory that checks nothing, however they are passed.
+  assert.deepEqual(openEndpoints(graph), [
+    'PATCH /tickets/{ticket_id}',
+    'POST /catalog',
+    'POST /drafts',
+    'POST /notes/paged',
+    'POST /notes/paged-default',
+    'POST /orders/{order_id}/copy',
+    'POST /orders/{order_id}/export',
+    'POST /orders/{order_id}/notes',
+    'PUT /tickets/{ticket_id}',
+  ]);
+});
+
+test("Hono routers under arbitrary variable names are scanned, and mounts compose (#98)", () => {
+  const graph = buildFixture("hono-named-routers");
+  const paths = graph.routes.map((r) => `${r.m} ${r.p}`).sort();
+  // routes on frentes/croquis (arbitrary names) appear under their router prefixes
+  for (const suffix of ["frentes/lista", "frentes/vieja", "croquis/mapa", "health"]) {
+    assert.ok(paths.some((p) => p.endsWith(suffix)), `expected a route ending in ${suffix}, got: ${paths}`);
+  }
+  // each module router keeps its own prefix: croquis's mount must not leak onto frentes routes
+  assert.ok(!paths.some((p) => p.endsWith("croquis/lista")), `unexpected cross-router prefix, got: ${paths}`);
+});

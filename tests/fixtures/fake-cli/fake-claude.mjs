@@ -1,5 +1,7 @@
 // Stands in for `claude` in tests: answers --version, and for `-p` logs its arguments and prompt to
-// $FAKE_LOG, then prints the stream-json events a real run would.
+// $FAKE_LOG, then prints the stream-json events a real run would. With $FAKE_MANY_MCP set it acts like a
+// machine with many MCP servers set up: unless it's told to use only the (empty) list of servers it's given,
+// their tool descriptions fill the context and the run fails with "Prompt is too long".
 import fs from 'node:fs';
 
 const args = process.argv.slice(2);
@@ -10,6 +12,13 @@ process.stdin.on('end', () => {
   fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ args, input }) + '\n');
   const out = (ev) => console.log(JSON.stringify(ev));
   out({ type: 'system', subtype: 'init', session_id: 'test-session' });
+  const mcp = args.indexOf('--mcp-config');
+  let servers = null;
+  try { servers = mcp >= 0 ? Object.keys(JSON.parse(args[mcp + 1]).mcpServers) : null; } catch {}
+  if (process.env.FAKE_MANY_MCP && !(args.includes('--strict-mcp-config') && servers?.length === 0)) {
+    out({ type: 'result', subtype: 'success', is_error: true, session_id: 'test-session', result: 'Prompt is too long' });
+    return;
+  }
   // a change to a blueprint: answer with the next reply in $FAKE_CHANGES (a JSON array), one per run
   const schema = args[args.indexOf('--json-schema') + 1] || '';
   if (process.env.FAKE_CHANGES && schema.includes('"architecture"')) {

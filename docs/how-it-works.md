@@ -18,7 +18,8 @@ flowchart TD
 
 `scan.mjs` finds every git repository under the folder you point it at (one repo, a monorepo, or several repos side by side), skipping duplicate worktrees. It lists files with git, so your `.gitignore` is respected, then extracts from each file:
 
-- **imports**, resolved to real files: TypeScript path aliases, Python packages, Go modules, Rust crates, JVM packages;
+- **imports**, resolved to real files: TypeScript path aliases (including ones inherited through `extends`), package.json `"imports"` (`#lib/x`), Python packages, Go modules, Rust crates, JVM packages (and, in Kotlin and Java, the names a file uses from its own package without an import);
+- in a **Nuxt** app, the components and composables a file uses with no import line (Nuxt's auto-imports), matched by name. When the app has been built or started once, the scan reads just the two name lists Nuxt writes, `.nuxt/components.d.ts` and `.nuxt/imports.d.ts`; otherwise it follows Nuxt's folder conventions (`components/`, with folder names as prefixes, `composables/` and `utils/`). Nothing else in `.nuxt/` is read, and it's never part of the map;
 - **exported definitions** and their doc comments;
 - **endpoints** the server defines;
 - **web requests** the code makes;
@@ -31,7 +32,7 @@ Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro 
 The most useful lines on the map connect a screen's web requests to the server code that answers them, often across repos. Floorplan:
 
 - **Finds endpoints** in Express, Fastify (plugin prefixes included), Koa, Hono, Next.js (route files and API routes), Firebase Cloud Functions, Flask, FastAPI, Django, Go (net/http, Gin, Echo, chi, Fiber), Actix, Axum and Spring, and in route tables keyed by method and path (`"GET /api/orders": listOrders`) in JavaScript and Python.
-- **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express routers mounted with `app.use('/api/users', usersRouter)`, including routers mounted inside other routers and mounts with middleware in front.
+- **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express and Hono routers mounted with `app.use('/api/users', usersRouter)` or `app.route('/api', api)`, whatever the router is called, including routers mounted inside other routers (in the same file or another), routers passed on by an index file (`export { default as authRoutes } from './auth.routes.js'`) or made by a function (`app.use('/billing', createBillingRoutes())`), and mounts with middleware in front.
 - **Finds requests** made with `fetch`, axios, ky, `requests` and similar, including:
   - addresses built in a variable first: `const url = …; api.get(url)`;
   - template strings with nested parts;
@@ -111,8 +112,8 @@ The same pipeline runs without Claude Code or Codex: in CI, in a script, or from
 
 The map's server answers each question with the AI on your computer, in your project:
 
-- **Claude Code:** it runs `claude -p` with read-only tools only: reading and searching files, and `floorplan/query.mjs`, which looks things up in the map.
-- **Codex:** it runs `codex exec` in Codex's read-only sandbox, with the same lookups. These runs aren't saved to your Codex history, so a follow-up brings the last few questions and answers along.
+- **Claude Code:** it runs `claude -p` with read-only tools only: reading and searching files, and `floorplan/query.mjs`, which looks things up in the map. It starts without any of your MCP servers (`--strict-mcp-config` with an empty list), since answers never use them and their tool descriptions alone can make a question too long, and it’s told not to read the map’s own generated files.
+- **Codex:** it runs `codex exec` in Codex's read-only sandbox, with the same lookups. These runs aren't saved to your Codex history, so a follow-up brings the last few questions and answers along. Codex has no option that leaves out only its MCP servers, so the ones you set up for Codex are loaded too; if questions fail as too long, turn off the ones you don't need (`enabled = false` in `~/.codex/config.toml`).
 
 It uses whichever made the map, and the other one if that isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
 

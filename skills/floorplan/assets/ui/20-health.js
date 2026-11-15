@@ -1,6 +1,7 @@
 // Health check panel: plain-language warnings from graph.health (lib/health.mjs) — leaked keys,
 // endpoints anyone can call, unused and oversized files — each with "Show on map" and a ready
-// prompt to paste into Claude Code or Codex. Talks to the viewer only through window.Floorplan.
+// prompt to paste into Claude Code or Codex, and what each check had to look at. Talks to the viewer only
+// through window.Floorplan.
 (() => {
   const SC = window.Floorplan;
   // an exported copy without Health leaves the button out: an empty list would read as "all clear"
@@ -87,6 +88,11 @@
     .hc-calm { margin-top: 14px; padding: 11px 13px; border-radius: 14px; background: var(--ok-bg); color: var(--ok-text); font-size: 13px; line-height: 1.55; }
     .hc-sub { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 12px; font-size: 12px; color: var(--text-2); }
     .hc-sub span { display: inline-flex; align-items: center; gap: 6px; }
+    .hc-chk { display: grid; gap: 6px; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+    .hc-chk .k { display: flex; gap: 9px; align-items: flex-start; overflow-wrap: anywhere; }
+    .hc-chk .k .dot { margin-top: 6px; flex: none; }
+    .hc-chk .k b { color: var(--text); font-weight: 500; }
+    .hc-chk .k.loud { padding: 10px 12px; border-radius: 14px; background: rgba(var(--ink), .05); color: var(--text); }
     #btn-health .badge { background: var(--hc-badge, var(--on)); color: var(--hc-badge-text, var(--on-text)); }
     #btn-health.calm svg.i { color: var(--ok); }
     #modal .hc-hint { margin: 0; }
@@ -198,15 +204,27 @@
   const breakdown = () => `<div class="hc-sub">${ORDER.filter(count).map((s) => `<span><i class="dot" style="background:${SEV[s].color}"></i>${count(s)} ${SEV[s].word}</span>`).join('')}</div>`;
   const headColor = () => urgent() ? SEV[count('high') ? 'high' : 'medium'].color : 'var(--ok)';
 
+  // ---------- what was checked ----------
+  // One line per check: what it read, or that it found nothing to read, so a clean list isn't taken for
+  // "all clear" when a check never ran. `loud` lines are gaps that matter (a server, but no endpoints found).
+  const checked = Array.isArray(SC.graph.health && SC.graph.health.checked) ? SC.graph.health.checked.filter((c) => c && typeof c.label === 'string' && typeof c.text === 'string') : [];
+  const gaps = checked.filter((c) => c.loud);
+  const checkedHtml = () => !checked.length ? '' : `<div class="sec"><h3>What was checked</h3><div class="hc-chk">${checked.map((c) =>
+    `<div class="k${c.loud ? ' loud' : ''}"><span class="dot" style="background:${c.loud ? 'var(--sev-medium)' : c.checked ? 'var(--ok)' : 'rgba(var(--ink),.22)'}"></span><span><b>${h(c.label)}:</b> ${h(c.text)}</span></div>`).join('')}</div></div>`;
+  // app-wide checks that alone clear some endpoints: named, so a clean result shows what it rests on
+  const appWide = (!PLAN && SC.graph.health && SC.graph.health.appWide) || [];
+  const appWideHtml = () => appWide.length ? `<p class="pd">${appWide.map((g) => `${SC.plural(g.endpoints, 'endpoint')} ${g.endpoints === 1 ? 'counts' : 'count'} as protected only because of <b>${h(g.name)}</b>, a check in ${h(g.file)} (line ${h(String(g.line))}) that runs before every request.`).join(' ')} If it lets some requests through, those endpoints are open to anyone.</p>` : '';
+
   function listHtml() {
     const live = active(), off = issues.filter(dismissalOf);
     const top = `<div class="sec">
         <div class="ph"><span class="ico" style="--c:${headColor()}">${SC.icon('health')}</span><span class="kindlabel">${PLAN ? 'Design review' : 'Health check'}</span></div>
         <h2 class="pt">${h(headline())}</h2>
         <p class="pd">${PLAN ? 'We checked the plan for parts anyone on the internet could use, decisions the PRD leaves open, and pieces nothing connects to. Settling these now is cheaper than after it’s built.' : 'We looked for keys left in the code or sent to the browser, data and parts of your app anyone on the internet can reach (Supabase tables, Firebase rules, Stripe webhooks, endpoints), leftover files and files too big to edit safely. It’s a quick check, not a security audit.'}</p>
-        ${live.length ? breakdown() : `<div class="hc-calm">${off.length ? `Nothing left to look at: you marked ${SC.plural(off.length, 'item')} as not a problem.` : `Nothing stood out.`} This is a quick automatic check, not a full ${PLAN ? 'design' : 'security'} review.</div>`}
+        ${appWideHtml()}
+        ${live.length ? breakdown() : `<div class="hc-calm">${off.length ? `Nothing left to look at: you marked ${SC.plural(off.length, 'item')} as not a problem.` : `Nothing stood out${gaps.length ? `, but ${gaps.length === 1 ? 'one check' : `${gaps.length} checks`} had nothing to look at (below)` : ''}.`} This is a quick automatic check, not a full ${PLAN ? 'design' : 'security'} review.</div>`}
         <div class="actions"><button class="btn soft" data-hc-back>${SC.iconI('left')}Back</button></div>
-      </div>`;
+      </div>` + checkedHtml();
     const groups = ORDER.map((sev) => {
       const list = issues.map((i, idx) => [i, idx]).filter(([i]) => i.severity === sev && !dismissalOf(i));
       return list.length ? `<div class="sec"><h3>${h(SEV[sev].group)} <span class="c">${list.length}</span></h3>${list.map(([i, idx]) => issueHtml(i, idx)).join('')}</div>` : '';
@@ -260,7 +278,7 @@
   SC.addPanelSection('overview', () => ({
     html: `<div class="sec"><h3>${PLAN ? 'Design review' : 'Health'}</h3><div class="list"><a class="row" data-hc-open>
         <span class="dot" style="background:${headColor()}"></span>
-        <span class="rt"><div class="rn">${h(headline())}</div><div class="rd">${active().length ? ORDER.filter(count).map((s) => `${count(s)} ${SEV[s].word}`).join(' · ') : PLAN ? 'Quick automatic check of the plan' : 'Quick automatic check of secrets, open endpoints and leftover files'}</div></span>
+        <span class="rt"><div class="rn">${h(headline())}</div><div class="rd">${active().length ? ORDER.filter(count).map((s) => `${count(s)} ${SEV[s].word}`).join(' · ') : PLAN ? 'Quick automatic check of the plan' : gaps.length ? `${h(gaps.map((c) => c.label).join(' and '))}: nothing found to check` : 'Quick automatic check of secrets, open endpoints and leftover files'}</div></span>
         <span class="rc">${SC.iconI('right')}</span></a></div></div>`,
     bind: (el) => el.querySelector('[data-hc-open]')?.addEventListener('click', (ev) => { ev.preventDefault(); openList(); }),
   }));

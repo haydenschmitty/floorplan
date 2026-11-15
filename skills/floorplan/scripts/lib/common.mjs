@@ -421,6 +421,38 @@ export function importStatements(code, head, { spaced = true } = {}) {
   return out;
 }
 
+/**
+ * A JSON file Floorplan, an agent or a person wrote (architecture.json, descriptions, recent-work.json, plan.json…),
+ * parsed strictly. A byte order mark at the start is skipped: Windows PowerShell's Set-Content and Out-File, and
+ * some editors, write one, and JSON.parse rejects it. Throws like JSON.parse for anything else that isn't JSON.
+ */
+export function readJsonFile(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+}
+
+/**
+ * The top-level arguments of a JavaScript call whose "(" ends just before `start`, as strings: commas and
+ * brackets inside strings, nested calls, objects and arrays don't split them. null when the call isn't
+ * closed within `limit` characters (or a bracket doesn't match), so a stray "(" costs at most that much.
+ */
+export function callArgs(src, start, limit = 4000) {
+  const args = [];
+  let depth = 0, quote = '', from = start;
+  for (let i = start; i < Math.min(src.length, start + limit); i++) {
+    const c = src[i];
+    if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; continue; }
+    if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      if (depth) { depth--; continue; }
+      if (c !== ')') return null;
+      args.push(src.slice(from, i));
+      return args.filter((a) => a.trim());
+    } else if (c === ',' && !depth) { args.push(src.slice(from, i)); from = i + 1; }
+  }
+  return null;
+}
+
 /** Config files bigger than this aren't read: no real tsconfig.json or package.json comes close. */
 export const MAX_CONFIG_BYTES = 1024 * 1024;
 /** Config files readJsonLoose left unread because of their size, as { path, bytes } (the scan reports them). */
@@ -443,7 +475,8 @@ export function parseArgs(argv, defaults = {}) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
-      const [k, v] = a.slice(2).split('=');
+      // only the first = splits, so a value can hold one (--editor=idea://open?file={path}&line={line})
+      const eq = a.indexOf('='), k = eq < 0 ? a.slice(2) : a.slice(2, eq), v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) out[k] = v;
       else if (!SWITCHES.has(k) && argv[i + 1] && !argv[i + 1].startsWith('--')) out[k] = argv[++i];
       else out[k] = true;
@@ -478,3 +511,22 @@ export async function printJson(obj, code) {
 }
 
 export const fmtNum = (n) => n >= 10000 ? (n / 1000).toFixed(0) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+
+/**
+ * The files a map leaves out because of their kind (docs, config, asset…): only the kinds in architecture.json's
+ * "include" are mapped, code alone by default, so a board that looks small isn't mistaken for a scan that missed
+ * things. Returns { byCategory } (biggest first) and the report line saying so, or a null line when nothing is left out.
+ * `ignored`: files of an included kind that architecture.json's "ignore" leaves out, when known.
+ */
+export function notMapped(files, include, ignored) {
+  const counts = {};
+  for (const f of files) if (!include.includes(f.category)) counts[f.category] = (counts[f.category] || 0) + 1;
+  const byCategory = Object.fromEntries(Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
+  const parts = Object.entries(byCategory).map(([k, v]) => `${v} ${k}`);
+  if (ignored) parts.push(`${ignored} left out by "ignore"`);
+  const example = ['docs', 'config'].find((k) => byCategory[k]) || Object.keys(byCategory)[0];
+  const hint = example
+    ? ` (the map shows ${include.join(' + ') || 'no'} files; to add a kind, list it in "include" in architecture.json, e.g. "include": ${JSON.stringify([...include, example]).replace(/,/g, ', ')})`
+    : '';
+  return { byCategory, ...(ignored === undefined ? {} : { ignored }), line: parts.length ? `NOT MAPPED  ${parts.join(' · ')}${hint}` : null };
+}

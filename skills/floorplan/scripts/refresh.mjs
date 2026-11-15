@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, globProblem, parseArgs, mapDir, unattendedMode, printJson } from './lib/common.mjs';
+import { compileGlob, globProblem, parseArgs, mapDir, unattendedMode, printJson, readJsonFile } from './lib/common.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
@@ -30,8 +30,8 @@ if (!fs.existsSync(graphFile) || !fs.existsSync(archFile)) {
   console.log(msg);
   process.exit(unattended ? 1 : 0);
 }
-const old = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
-const arch = JSON.parse(fs.readFileSync(archFile, 'utf8'));
+const old = readJsonFile(graphFile);
+const arch = readJsonFile(archFile);
 // build.mjs with --json, read back: the result as data, and its report exactly as build prints it
 const node = process.execPath;
 function runBuild(...extra) {
@@ -75,7 +75,7 @@ try {
   for (const m of errors) console.log(`✗ ${m}`);
   process.exit(1);
 }
-const scan = JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'scan.json'), 'utf8'));
+const scan = readJsonFile(path.join(outDir, '.cache', 'scan.json'));
 
 const include = Array.isArray(arch.include) ? arch.include : ['code'];
 // a pattern that isn't valid is left out here; build.mjs (run below) reports it by name
@@ -145,7 +145,7 @@ if (fs.existsSync(descDir)) {
   for (const name of fs.readdirSync(descDir).filter((n) => n.endsWith('.json'))) {
     const fp = path.join(descDir, name);
     let d;
-    try { d = JSON.parse(fs.readFileSync(fp, 'utf8')); } catch { continue; }
+    try { d = readJsonFile(fp); } catch { continue; }
     // a file that isn't an object, or whose files or routes aren't, is left as it is: the build below names it
     const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
     if (!isObj(d) || ['files', 'routes'].some((k) => d[k] !== undefined && !isObj(d[k]))) continue;

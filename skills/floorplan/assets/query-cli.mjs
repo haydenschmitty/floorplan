@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const G = JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8'));
+const G = JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8').replace(/^\uFEFF/, ''));
 const q = createGraphQuery(G);
 const argv = process.argv.slice(2);
 const flag = (name) => { const i = argv.indexOf('--' + name); if (i < 0) return undefined; const v = argv[i + 1]; argv.splice(i, 2); return v; };

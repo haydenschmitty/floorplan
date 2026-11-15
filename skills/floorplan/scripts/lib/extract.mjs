@@ -1,6 +1,6 @@
 // Per-language, regex-based extraction of imports, exported symbols, HTTP routes and HTTP calls.
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
-import { forwardIndexOf, importStatements } from './common.mjs';
+import { forwardIndexOf, importStatements, callArgs } from './common.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -256,6 +256,22 @@ function requireBinding(code, i, floor) {
   return w < b && /[A-Za-z_$]/.test(code[w]) && keywordBefore(w) ? code.slice(w, b) : null;
 }
 
+// What makes a router or app: express(), express.Router(), Router(), new Hono(), new Koa(), new Router() (koa-router), fastify()
+const ROUTER_MAKER = /^(?:express|Router|Hono|OpenAPIHono|Koa|KoaRouter|fastify|Fastify|polka|createRouter)$/;
+// Names that read as a router when this file didn't make it (one passed in as a parameter)
+const ROUTER_NAME = /^(?:app|server|fastify|hono|routes?|router|[a-z][\w$]*(?:Router|Routes))$/;
+/** One argument of app.use(…): { spec } for require('./x'), { name } for a name, { name, call } for a call, {} otherwise. */
+function mountArg(arg) {
+  const t = arg.trim();
+  const req = /^require\(\s*["']([^"'\n]+)["']\s*\)$/.exec(t);
+  if (req) return { spec: req[1] };
+  const m = /^(?:await\s+)?([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(\(|<)?/.exec(t);
+  if (!m || /^(?:async|function|new|class|await|typeof|void)$/.test(m[1])) return {};
+  const name = m[1].replace(/\s+/g, '');
+  if (m[2]) return { name, call: true };
+  return m[0].length === t.length ? { name } : {};
+}
+
 function extractJs(src, filePath) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
@@ -311,16 +327,40 @@ function extractJs(src, filePath) {
   // Express / Koa / Hono style routes and mounts
   const routes = [];
   const mounts = [];
+  // Routers under any variable name (#98, #71): `const frentes = new Hono<Env>()`, `export const profileRoutes =
+  // Router()`, `const app: Express = express()`, `new Koa()`. A module's own router can be called anything, so
+  // the names below only cover routers this file didn't make (one passed in as a parameter). A variable made
+  // by any other call (`const billingRoutes = createBillingRoutes()`) remembers that call, so a mount of it can
+  // follow the factory to the file it comes from.
+  const routerVars = new Set(), madeBy = new Map();
+  for (const m of all(/(?<![\w$])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]{1,200}?)?=\s*(?:await\s+)?(new\s+)?([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*){0,4})\s*(?:<[^;()]{0,200}?>\s*)?\(/g, code)) {
+    const callee = m[3].replace(/\s+/g, '');
+    if (ROUTER_MAKER.test(callee.split('.').pop())) routerVars.add(m[1]);
+    else if (!m[2] && !madeBy.has(m[1])) madeBy.set(m[1], callee);
+  }
   for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|all|options|head)\(\s*["'`](\/[^"'`]*)["'`]/g, code)) {
-    if (!/^(app|server|fastify|hono|routes?|[a-z]*Router|router)$/.test(m[1])) continue;
+    if (!ROUTER_NAME.test(m[1]) && !routerVars.has(m[1])) continue;
     routes.push({ method: m[2].toUpperCase(), path: m[3], var: m[1], line: at(m.index) });
   }
-  for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.(use|route)\(\s*["'`](\/[^"'`]*)["'`]\s*,([^\n;]*)/g, code)) {
-    const req = /require\(\s*["']([^"']+)["']\s*\)/.exec(m[4]);
-    const mw = (m[4].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][w$.]*$/.test(s))).map((s) => s.split('.').pop());
-    if (req) { mounts.push({ prefix: m[3], spec: req[1], line: at(m.index), ...(mw.length ? { mw } : {}) }); continue; }
-    const args = m[4].replace(/\)\s*$/, '').split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_$][\w$.]*$/.test(s));
-    if (args.length) mounts.push({ prefix: m[3], var: args[args.length - 1], line: at(m.index), ...(args.length > 1 ? { mw: args.slice(0, -1).map((s) => s.split('.').pop()) } : {}) });
+  // Mounts and middleware: app.use('/api', requireAuth, orders), app.route('/api', api), app.use('/billing',
+  // createBillingRoutes()), app.use('/api/*', auth), app.use(requireAuth), app.use(router). Each records the
+  // receiver (`on`), so routers nested in one file compose; resolveRoutes tells a router from middleware.
+  for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.(use|route)\(\s*(?:["'`](\/[^"'`]*|\*)["'`]\s*,)?/g, code)) {
+    // without a path, only on what reads as a server or router (not i18n.use(plugin) in a website)
+    if (m[3] == null && (m[2] !== 'use' || !(ROUTER_NAME.test(m[1]) || routerVars.has(m[1])))) continue;
+    if (m[3] === '*' && m[2] !== 'use') continue;
+    const args = callArgs(code, m.index + m[0].length);
+    if (!args?.length || (m[3] == null && /^\s*["'`]/.test(args[0]))) continue;
+    const parts = args.map(mountArg);
+    const last = parts[parts.length - 1];
+    const mw = parts.slice(0, -1).filter((p) => p.name).map((p) => p.name.split('.').pop());
+    // Hono's '/api/*' (and '*') is everything under /api
+    const base = { prefix: m[2] === 'use' ? (m[3] || '').replace(/\/?\*$/, '') : m[3], on: m[1], line: at(m.index), ...(mw.length ? { mw } : {}) };
+    if (last.spec) mounts.push({ ...base, spec: last.spec });
+    else if (last.name) {
+      const via = !last.call && madeBy.get(last.name);
+      mounts.push({ ...base, var: last.name, ...(last.call ? { call: true } : via ? { via } : {}) });
+    } else if (mw.length) mounts.push(base); // an inline handler last: only the middleware before it
   }
   let importedLocals = null; // the names this file imports, built when first needed
   // Fastify plugins: app.register(ticketRoutes, { prefix: '/api/tickets' }), or register(import('./x.js'), …).
@@ -385,13 +425,17 @@ function extractJs(src, filePath) {
   const triggers = /firebase-functions/.test(code) ? firebaseFunctions(code, at, routes, mounts) : [];
 
   // a mount's prefix (including Fastify's `prefix: '/api'` option, often on a line of its own) isn't a request
-  const serverLine = /\b\w+\.(use|route)\(\s*["'`]\/|\b(?:app|server|fastify|hono|routes?|router|[a-z]+Router)\.(?:get|post|put|patch|delete|all|options|head)\(\s*["'`]\/|\bprefix\s*:\s*["'`]\//;
-  const { calls, hosts } = extractCalls(code, at, { skip: serverLine });
+  const serverLine = /\b\w+\.(use|route)\(\s*["'`]\/|\b(?:app|server|fastify|hono|routes?|router|[a-z][\w$]*(?:Router|Routes))\.(?:get|post|put|patch|delete|all|options|head)\(\s*["'`]\/|\bprefix\s*:\s*["'`]\//;
+  // nor is a route on a router this file made, whatever it's called (frentes.get('/lista', …))
+  const routeOnVar = routerVars.size && routes.some((r) => r.var && !ROUTER_NAME.test(r.var))
+    ? new RegExp(`(?<![\\w$])(?:${[...routerVars].slice(0, 200).map((v) => v.replace(/\$/g, '\\$')).join('|')})\\.(?:get|post|put|patch|delete|all|options|head)\\(\\s*["'\`]\\/`)
+    : null;
+  const { calls, hosts } = extractCalls(code, at, { skip: routeOnVar ? { test: (line) => serverLine.test(line) || routeOnVar.test(line) } : serverLine });
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
   calls.push(...callables.calls);
-  return { imports, symbols, routes, mounts, calls, hosts, ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
+  return { imports, symbols, routes, mounts, calls, hosts, ...(routerVars.size ? { routerVars: [...routerVars] } : {}), ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
 }
 
 // ---------- Firebase Cloud Functions ----------
@@ -651,13 +695,78 @@ function extractRust(src) {
 
 // ---------- JVM ----------
 
+// A declaration at the start of a line: the file's top level, where other files can see it. Kotlin files
+// often hold several classes, functions and values, and Java files package-private classes beside the
+// public one, none of them named after the file.
+const JVM_TOP = /^(?:@[\w.]+(?:\([^)\n]{0,300}\))?[ \t]+){0,10}((?:(?:public|internal|protected|private|abstract|final|open|sealed|data|enum|annotation|value|inline|inner|const|lateinit|suspend|tailrec|operator|infix|external|expect|actual|static|strictfp|non-sealed|case|implicit)[ \t]+){0,10})(fun[ \t]+interface|@interface|class|interface|object|trait|record|enum|typealias|fun|val|var)[ \t]+([^\n]{1,400})/gm;
+const ANGLES = /<[^<>\n]{0,200}>/g;
+
+/** The name a top-level declaration gives other files: `Foo` in `class Foo<T>`, `goes` in `fun <T> List<T>.goes(`. */
+function jvmTopName(kind, rest) {
+  let head = rest;
+  if (kind === 'fun') head = rest.split('(')[0];
+  else if (kind === 'val' || kind === 'var') head = rest.split(/[:=]|[ \t]by[ \t]/)[0];
+  else return /^`?(\w+)/.exec(rest)?.[1] || null;
+  for (let i = 0; i < 4 && head.includes('<'); i++) head = head.replace(ANGLES, '');
+  const name = head.trim().split(/[ \t]/)[0].split('.').pop().replace(/`/g, '');
+  return /^[A-Za-z_]\w*$/.test(name) ? name : null;
+}
+
+// Blank string and character literals (Kotlin raw strings included), so names quoted in them aren't uses.
+// One pass: an unclosed quote ends at its line's end, an unclosed """ at the file's.
+const stripJvmStrings = (code) => {
+  let out = '';
+  let from = 0;
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c !== '"' && c !== "'") continue;
+    let j;
+    if (c === '"' && code.startsWith('"""', i)) { j = code.indexOf('"""', i + 3); j = j < 0 ? code.length : j + 3; }
+    else {
+      j = i + 1;
+      while (j < code.length && code[j] !== c && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1;
+      j = Math.min(j + 1, code.length);
+    }
+    out += code.slice(from, i) + blank(code.slice(i, j));
+    from = i = j;
+    i--;
+  }
+  return out + code.slice(from);
+};
+
+/** Every name the file's code mentions (not its package and import lines), as one space-separated string, minus the names it declares itself. */
+function jvmMentions(code) {
+  const text = stripJvmStrings(code).replace(/^[ \t]*(?:package|import)[ \t][^\n]*/gm, '');
+  const own = new Set();
+  for (const m of text.matchAll(/\b(?:val|var|fun|class|interface|object|enum|record|typealias)[ \t]+`?(\w+)/g)) own.add(m[1]);
+  const seen = new Set();
+  for (const m of text.matchAll(/[A-Za-z_]\w{0,99}/g)) {
+    if (seen.size >= 20000) break;
+    if (!own.has(m[0])) seen.add(m[0]);
+  }
+  return [...seen].join(' ');
+}
+
 function extractJvm(src) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
-  const pkg = /^[ \t]*package\s+([\w.]+)/m.exec(code)?.[1] || null;
+  const pkgMatch = /^[ \t]*package\s+([\w.]+)/m.exec(code);
+  const pkg = pkgMatch?.[1] || null;
   const imports = all(/^[ \t]*import\s+(?:static\s+)?([\w.*]+)/gm, code).map((m) => ({ spec: m[1], names: [], line: at(m.index) }));
+  // Kotlin and Java see the rest of their own package without an import, as if it were `import <pkg>.*`
+  if (pkg) imports.push({ spec: `${pkg}.*`, names: [], line: at(pkgMatch.index), implicit: true });
   const symbols = [];
   for (const m of all(/^[ \t]*(?:public\s+|internal\s+)?(?:abstract\s+|final\s+|data\s+|sealed\s+|open\s+)*(class|interface|enum|record|object)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
+  // Top-level names other files can use (private ones are the file's own), and the names this file uses
+  const decls = [];
+  if (pkg) {
+    for (const m of all(JVM_TOP, code)) {
+      if (/\bprivate\b/.test(m[1])) continue;
+      const kind = m[2].startsWith('fun') && m[2] !== 'fun' ? 'interface' : m[2].replace('@', '');
+      const name = jvmTopName(kind, m[3]);
+      if (name && !decls.includes(name)) decls.push(name);
+    }
+  }
   const routes = [];
   const classPrefix = /@RequestMapping\(\s*(?:value\s*=\s*|path\s*=\s*)?"([^"]*)"[^)]{0,500}\)\s*(?:@\w+(?:\([^)]{0,500}\))?\s*){0,20}(?:public\s+)?class/.exec(code)?.[1] || '';
   for (const m of all(/@(Get|Post|Put|Patch|Delete|Request)Mapping\(\s*(?:value\s*=\s*|path\s*=\s*)?"([^"]*)"/g, code)) {
@@ -665,7 +774,7 @@ function extractJvm(src) {
     routes.push({ method: m[1] === 'Request' ? 'ANY' : m[1].toUpperCase(), path: classPrefix + m[2], var: null, line: at(m.index) });
   }
   const { calls, hosts } = extractCalls(code, at, { skip: /@\w+Mapping/ });
-  return { imports, symbols, routes, mounts: [], calls, hosts, pkg };
+  return { imports, symbols, routes, mounts: [], calls, hosts, pkg, ...(pkg ? { decls, mentions: jvmMentions(code) } : {}) };
 }
 
 // ---------- small ones ----------

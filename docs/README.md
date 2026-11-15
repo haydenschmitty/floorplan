@@ -15,4 +15,6 @@
 
 New here? Start with [Getting started](getting-started.md).
 
+The commands in these guides are written for a POSIX shell (macOS and Linux terminals, Git Bash or WSL on Windows). Most are plain `node …` or `claude …` commands that work the same in Windows PowerShell, with paths in quotes. Where they differ: set a variable for the session with `$env:FLOORPLAN_UNATTENDED = "1"` instead of `export FLOORPLAN_UNATTENDED=1`, use it as `$S` after `$S = "C:\path\to\floorplan\skills\floorplan"` instead of `S=…`, and run two commands one after the other with `;` (or `a; if ($?) { b }` to stop when the first fails) instead of `&&`.
+
 Floorplan is mainly for mapping code you already have, and every guide is written for that. It can also draw a **blueprint**, a map planned from a PRD or spec before the code exists: see [Plan something you haven't built yet](getting-started.md#plan-something-you-havent-built-yet), [Blueprints on the map](using-the-map.md#blueprints) and [how blueprints work](how-it-works.md#blueprints).
