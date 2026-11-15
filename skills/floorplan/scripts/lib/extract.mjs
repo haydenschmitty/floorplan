@@ -1,6 +1,7 @@
 // Per-language, regex-based extraction of imports, exported symbols, HTTP routes and HTTP calls.
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
 import { forwardIndexOf, importStatements, callArgs } from './common.mjs';
+import { dataRoutes } from './route-tables.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -258,6 +259,8 @@ function requireBinding(code, i, floor) {
 
 // What makes a router or app: express(), express.Router(), Router(), new Hono(), new Koa(), new Router() (koa-router), fastify()
 const ROUTER_MAKER = /^(?:express|Router|Hono|OpenAPIHono|Koa|KoaRouter|fastify|Fastify|polka|createRouter)$/;
+// Code that runs a server itself: Bun.serve, Deno.serve, createServer, listen(port), `export default { fetch }`
+const SERVES = /\b(?:Bun|Deno)\.serve\s*(?:<[^;()]{0,200}?>\s*)?\(|\bcreateServer\s*\(|\.listen\s*\(\s*(?:\d|process\.env|PORT\b|port\b)|^[ \t]*export\s+default\s*\{[^}]{0,300}?\bfetch\b/m;
 // Names that read as a router when this file didn't make it (one passed in as a parameter)
 const ROUTER_NAME = /^(?:app|server|fastify|hono|routes?|router|[a-z][\w$]*(?:Router|Routes))$/;
 /** One argument of app.use(…): { spec } for require('./x'), { name } for a name, { name, call } for a call, {} otherwise. */
@@ -374,15 +377,64 @@ function extractJs(src, filePath) {
     else if ((importedLocals ??= new Set(imports.flatMap((i) => (i.locals ? Object.keys(i.locals) : [])))).has(m[2])) mounts.push({ prefix, var: m[2], line: at(m.index) });
   }
 
+  // Fastify route({ method, url, handler, schema, ... }): only literal method(s) and URL.
+  // Flatten nested option objects so a schema's own keys cannot be mistaken for route options.
+  // The receiver is any router this file made (`const api = Fastify()`) or one named like a router.
+  const objectRoutes = []; // [first line, last line, url, offset of its {]: the url inside isn't a request
+  for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.route\(\s*\{/g, code)) {
+    if (!ROUTER_NAME.test(m[1]) && !routerVars.has(m[1])) continue;
+    const start = m.index + m[0].length;
+    let depth = 0, quote = '', escaped = false, close = -1, top = '';
+    for (let i = start; i < Math.min(code.length, start + 4000); i++) {
+      const c = code[i];
+      if (quote) {
+        if (depth === 0) top += c;
+        if (escaped) escaped = false;
+        else if (c === '\\') escaped = true;
+        else if (c === quote) quote = '';
+        continue;
+      }
+      if (c === '"' || c === "'" || c === '\x60') { quote = c; if (depth === 0) top += c; continue; }
+      if (c === '{') { depth++; top += ' '; continue; }
+      if (c === '}') {
+        if (depth === 0) { close = i; break; }
+        depth--; top += ' '; continue;
+      }
+      top += depth === 0 ? c : ' ';
+    }
+    if (close < 0 || !/^\s*\)/.test(code.slice(close + 1))) continue;
+    const url = /(?:^|,)\s*(?:url|path)\s*:\s*(["'\x60])(\/[^"'\x60\n$]*)\1/.exec(top)?.[2];
+    if (url == null) continue;
+    const single = /(?:^|,)\s*method\s*:\s*(["'\x60])([A-Za-z-]+)\1/.exec(top)?.[2];
+    const list = /(?:^|,)\s*method\s*:\s*\[([^\]]*)\]/.exec(top)?.[1];
+    const methods = single ? [single] : list == null ? [] : [...list.matchAll(/(["'\x60])([A-Za-z-]+)\1/g)].map((x) => x[2]);
+    if (list != null && list.replace(/(["'\x60])[A-Za-z-]+\1/g, '').replace(/[\s,]/g, '') !== '') continue;
+    // Only top-level lifecycle options count; nested schema keys are blanked above.
+    const guardOptions = [...top.matchAll(/(?:^|,)\s*(?:preHandler|onRequest|preValidation)\s*:\s*(\[[^\]]*\]|[^,\n}]+)/g)]
+      .map((match) => match[1]);
+    for (const method of methods) routes.push({
+      method: method.toUpperCase(), path: url, var: m[1], line: at(m.index),
+      ...(guardOptions.length ? { guardOptions } : {}),
+    });
+    if (methods.length) objectRoutes.push([at(m.index), at(close), url, start - 1]);
+  }
+
   // Next.js app/pages API routes, derived from the file path
-  const next = /(?:^|\/)(?:src\/)?app\/(.*?)\/?route\.(?:t|j)sx?$/.exec(filePath) || /(?:^|\/)(?:src\/)?pages\/(api\/.*?)(?:\/index)?\.(?:t|j)sx?$/.exec(filePath);
+  // (the file is exactly route.ts: Angular's `orders.route.ts` and `app.routes.ts` are screen routing, not endpoints)
+  const next = /(?:^|\/)(?:src\/)?app\/(?:(.*?)\/)?route\.(?:t|j)sx?$/.exec(filePath) || /(?:^|\/)(?:src\/)?pages\/(api\/.*?)(?:\/index)?\.(?:t|j)sx?$/.exec(filePath);
   if (next) {
-    const p = '/' + next[1].split('/').filter((s) => s && !/^\(.*\)$/.test(s) && !s.startsWith('@')).join('/');
+    const p = '/' + (next[1] || '').split('/').filter((s) => s && !/^\(.*\)$/.test(s) && !s.startsWith('@')).join('/');
     const methods = all(/export\s+(?:async\s+)?(?:function|const)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g, code).map((m) => m[1]);
     for (const method of methods.length ? methods : ['ANY']) routes.push({ method, path: p, var: null, line: 1, framework: 'next' });
   }
+  // Endpoints listed as data: `[{ method: 'GET', path: /^\/api\/items$/, handle: listItems }]` and Bun.serve({ routes })
+  // (route-tables.mjs). A route object Fastify's reading above already took isn't counted again.
+  const dataAt = routes.length;
+  routes.push(...dataRoutes(code, at, { handlerOf: tableHandler, serves: dataAt > 0 || routerVars.size > 0 || SERVES.test(code), skip: objectRoutes.map((o) => o[3]) }));
+  for (const r of routes.slice(dataAt)) objectRoutes.push([r.line, r.line, r.path]);
 
   routes.push(...keyedRouteTable(code, at));
+  if (/@nestjs\/common/.test(code) && /@Controller\s*\(/.test(code)) routes.push(...nestRoutes(code, at));
 
   const triggers = /firebase-functions/.test(code) ? firebaseFunctions(code, at, routes, mounts) : [];
 
@@ -393,6 +445,11 @@ function extractJs(src, filePath) {
     ? new RegExp(`(?<![\\w$])(?:${[...routerVars].slice(0, 200).map((v) => v.replace(/\$/g, '\\$')).join('|')})\\.(?:get|post|put|patch|delete|all|options|head)\\(\\s*["'\`]\\/`)
     : null;
   const { calls, hosts } = extractCalls(code, at, { skip: routeOnVar ? { test: (line) => serverLine.test(line) || routeOnVar.test(line) } : serverLine });
+  // a route object's own `url: '/api/x'` reads like a request (because of `url`), and so can a route listed as
+  // data (`"/api/carts": {` in Bun.serve, `fetch: …` beside its path), but each is the route
+  if (objectRoutes.length) for (let i = calls.length - 1; i >= 0; i--) {
+    if (objectRoutes.some(([a, b, url]) => calls[i].line >= a && calls[i].line <= b && calls[i].path === url)) calls.splice(i, 1);
+  }
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
@@ -606,6 +663,34 @@ function extractPy(src) {
   const routeLine = /^[ \t]*@\w+\.(route|get|post|put|patch|delete)\(/;
   const { calls, hosts } = extractCalls(code, at, { skip: routeLine });
   return { imports, symbols, routes, mounts, calls, hosts, routers };
+}
+
+// ---------- NestJS ----------
+
+/**
+ * NestJS controllers: `@Controller('api/crm')` (or `@Controller({ path: 'api/crm' })`) gives a prefix,
+ * `@Get('wallet/:id')`, `@Post()`… on its methods give the endpoints. Nest paths have no leading slash
+ * and join with one. Each method belongs to the nearest @Controller above it. A global prefix set at
+ * run time (`app.setGlobalPrefix`) isn't seen. Only files importing '@nestjs/common' are read, so other
+ * decorator libraries with a @Get aren't mistaken for routes.
+ */
+function nestRoutes(code, at) {
+  const ctrls = all(/@Controller\s*\(\s*(?:["'`]([^"'`$]*)["'`]|\{[^{}]{0,300}?\bpath\s*:\s*["'`]([^"'`$]*)["'`][^{}]{0,300}\})?\s*\)/g, code)
+    .map((m) => ({ index: m.index, prefix: m[1] ?? m[2] ?? '' }));
+  if (!ctrls.length) return [];
+  const clean = (s) => s.replace(/^\/+|\/+$/g, '');
+  const out = [];
+  for (const m of all(/@(Get|Post|Put|Patch|Delete|All|Options|Head)\s*\(\s*(?:["'`]([^"'`$]*)["'`]\s*)?\)/g, code)) {
+    let ctrl = null;
+    for (const c of ctrls) if (c.index < m.index) ctrl = c;
+    if (!ctrl) continue;
+    const p = '/' + [clean(ctrl.prefix), clean(m[2] || '')].filter(Boolean).join('/');
+    // the handler: the first `name(` that starts a line after this decorator (other decorators start with @)
+    const after = code.slice(m.index + m[0].length, m.index + m[0].length + 2000);
+    const handler = /^[ \t]*(?:(?:public|private|protected|static|async|readonly)\s+)*([A-Za-z_$][\w$]*)\s*\(/m.exec(after)?.[1] || null;
+    out.push({ method: m[1] === 'All' ? 'ANY' : m[1].toUpperCase(), path: p, var: null, line: at(m.index), framework: 'nest', ...(handler ? { handler } : {}) });
+  }
+  return out;
 }
 
 // ---------- Go ----------
@@ -871,6 +956,9 @@ function addDocs(src, lang, r) {
   const syms = (r.symbols || []).filter((s) => !fbNames.has(s.name)).sort((a, b) => a.line - b.line);
   for (const rt of r.routes || []) {
     if (rt.framework === 'next') { rt.handler = rt.method; continue; }
+    // a Nest handler is a class method, not a symbol: keep the name found after the decorators
+    // (the first symbol below could be the next controller class, or a DTO, in the same file)
+    if (rt.framework === 'nest') { const d = commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     if (rt.framework === 'table') { const d = r.symbols?.find((s) => s.name === rt.handler)?.doc; if (d) rt.doc = d; continue; }
     if (rt.framework === 'firebase') { const d = r.symbols.find((s) => s.name === rt.handler)?.doc || commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     const h = syms.find((s) => s.line >= rt.line && s.line - rt.line <= 12);

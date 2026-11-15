@@ -330,7 +330,7 @@ const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permiss
 // but not `login_required` or `logged_in_required`; validating a payload's shape (`validate`, `validate_body`,
 // `validate_user_input`) but not a credential (`validate_jwt`, `validate_api_key`, `validateToken`).
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log(?!in(?:_|$)|ged_?in(?:_|$))\w*|swag_from|validate(?!_(?:\w+_)?(?:login|auth|authenticated|authorized?|jwt|tokens?|permissions?|perms?|roles?|staff|admin|superuser|owner|scopes?|session|api_?key|signature|signed|hmac|device|member|user|credentials?|bearer)$)\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
-const isGuardName = (name) => !!name && !NOT_GUARD.test(snake(name)) && GUARD_NAME.test(snake(name));
+const isGuardName = (name) => !!name && !NOT_GUARD.test(snake(name)) && (GUARD_NAME.test(snake(name)) || /^(authenticate|authorize)$/.test(snake(name)));
 // JavaScript checks GUARD_NAME doesn't spell out: passport.authenticate('jwt'), expressjwt({ … }), isLoggedIn
 const JS_GUARD_NAME = /(^|_)authenticate(_|$)|^express_?jwt$|(^|_)logged_in(_|$)/;
 const isJsGuardName = (name) => isGuardName(name) || (!!name && !NOT_GUARD.test(snake(name)) && JS_GUARD_NAME.test(snake(name)));
@@ -372,6 +372,12 @@ function useArgName(arg) {
   if (NOT_GUARD_MIDDLEWARE.test(snake(last)) || NOT_A_CHECK.test(snake(last))) return null;
   return [...segs].reverse().find(isUseGuard) || null;
 }
+// NestJS guards that check the caller (AuthGuard, JwtAuthGuard, RolesGuard), not rate limits or quotas
+const isNestAuthGuard = (name) => isGuardName(name) && !/rate_?limit|throttl|quota|limiter/i.test(snake(name));
+// an app-wide one also needs a name that says what it checks, past the word "guard" (see isUseGuard)
+const isNestGlobalGuard = (name) => isNestAuthGuard(name) && isUseGuard(name);
+// decorators that open a route past a global NestJS guard
+const NEST_PUBLIC = /@(?:Public|IsPublic|SkipAuth|NoAuth|AllowAnonymous|Anonymous)\s*\(/;
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
 const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_session|sessionmaker)$|(^|_)(db|database|sql\w*|engine|conn|connection|cursor|uow|unit_of_work)(_|$)|session_?(local|maker|factory)/i;
@@ -471,6 +477,42 @@ function pyDepRefs(text, sig = '') {
   return [...refs];
 }
 
+/**
+ * The inside of the Python bracket that opens at src[start] (`APIRouter(…)`, `[…]`), however deeply calls nest in
+ * it (`Depends(require_workspace("tours"))`), with comments and the insides of strings blanked, so a bracket or a
+ * `Depends(require_login)` written in either is neither a delimiter nor a dependency. An expression that doesn't
+ * close is '': it's no evidence of a check, and must not swallow the routers and handlers after it.
+ */
+function pyEnclosed(src, start) {
+  const pairs = { '(': ')', '[': ']', '{': '}' }, stack = [pairs[src[start]]];
+  if (!stack[0]) return '';
+  let quote = '', comment = false, out = '';
+  for (let i = start + 1; i < src.length && i - start < 20000; i++) {
+    const c = src[i];
+    if (comment) { if (c === '\n') { comment = false; out += c; } else out += ' '; continue; }
+    if (quote) {
+      if (c === '\\') { out += '  '; i++; continue; }
+      if (src.startsWith(quote, i)) { out += quote; i += quote.length - 1; quote = ''; continue; }
+      out += c === '\n' ? c : ' ';
+      continue;
+    }
+    if (c === '#') { comment = true; out += ' '; continue; }
+    if (c === '"' || c === "'") {
+      quote = src.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      out += quote;
+      i += quote.length - 1;
+      continue;
+    }
+    if (pairs[c]) stack.push(pairs[c]);
+    else if (c === ')' || c === ']' || c === '}') {
+      if (c !== stack.pop()) return '';
+      if (!stack.length) return out;
+    }
+    out += c;
+  }
+  return '';
+}
+
 function pyRoutes(src, f, out) {
   const lines = src.split('\n');
   const lineAt = (() => { const at = lineIndex(src); return (i) => at(i) - 1; })(); // 0-based line of an offset
@@ -493,9 +535,10 @@ function pyRoutes(src, f, out) {
   // APIRouter(dependencies=[...]): a check named as one counts here; anything else (a factory's result,
   // a Depends() kept in a variable, a list kept in a constant) is left for build to judge (routerRefs)
   const routerRefs = new Map();
-  for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\(((?:[^()]|\([^()]{0,500}\)){0,3000})\)/gm)) {
-    if (!/\bdependencies\s*=/.test(m[2])) continue;
-    const refs = pyDepRefs(m[2]);
+  for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\s*\(/gm)) {
+    const args = pyEnclosed(src, m.index + m[0].length - 1);
+    if (!/\bdependencies\s*=/.test(args)) continue;
+    const refs = pyDepRefs(args);
     const named = refs.find((r) => r.startsWith('fn:') && isGuardDep(r.slice(3)));
     if (named) guardedVars.set(m[1], named.slice(3));
     else if (refs.length) routerRefs.set(m[1], refs);
@@ -616,9 +659,25 @@ function pyRoutes(src, f, out) {
 }
 
 function jsRoutes(src, f, out) {
-  const routes = f.routes || [];
-  if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path)) return;
+  // route tables (keyed, listed, Bun.serve's) are checked by the dispatcher or inside the handler, where this can't
+  // see; leaving them out also keeps them from cutting short the code read for the routes around them
+  const routes = (f.routes || []).filter((r) => r.framework !== 'table');
+  if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path) && !/\bAPP_GUARD\b|\.useGlobalGuards\s*\(/.test(src)) return;
   const lines = src.split('\n');
+  // NestJS: `{ provide: APP_GUARD, useClass: AuthGuard }` in a module, or `app.useGlobalGuards(new JwtAuthGuard())`
+  // in main.ts, guards every Nest route of the app, except the ones a @Public()-style decorator opens. It turns
+  // off the open-endpoint check for all of them, so its name must say what it checks, as for app.use() (#72):
+  // a rate-limit or quota guard, or one named only "guard" (MaintenanceGuard), isn't a sign-in check.
+  const commented = (i) => { const before = src.slice(Math.max(0, i - 300), i); return /(^|[^:])\/\//.test(before.slice(before.lastIndexOf('\n') + 1)); };
+  for (const m of src.matchAll(/\bprovide\s*:\s*APP_GUARD\s*,\s*useClass\s*:\s*([A-Za-z_$][\w$]*)/g)) {
+    if (!commented(m.index) && isNestGlobalGuard(m[1])) out.push({ k: 'global-guard', framework: 'nest', name: m[1], line: lineIndex(src)(m.index) });
+  }
+  for (const m of src.matchAll(/(?<![\w$])[A-Za-z_$][\w$]*\.useGlobalGuards\s*\(/g)) {
+    if (commented(m.index)) continue;
+    const names = (callArgs(src, m.index + m[0].length) || []).map((a) => /^(?:new\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/.exec(a.replace(JS_STRING, '""').trim())?.[1]?.split('.').pop());
+    const name = names.find(isNestGlobalGuard);
+    if (name) out.push({ k: 'global-guard', framework: 'nest', name, line: lineIndex(src)(m.index) });
+  }
   // Next.js middleware.ts protecting the app
   if (/(^|\/)(src\/)?middleware\.(t|j)s$/.test(f.path) && NEXT_MIDDLEWARE_GUARD.test(src)) {
     const matcher = /matcher\s*:\s*([^\n]+)/.exec(src)?.[1] || '';
@@ -641,8 +700,35 @@ function jsRoutes(src, f, out) {
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
 
   routes.forEach((r, idx) => {
-    if (r.framework === 'table') return; // sign-in is checked by the dispatcher or inside the handler
     const rec = { k: 'route', line: r.line, method: r.method };
+    if (r.framework === 'nest') {
+      // the decorators stacked on this method (above and below the route one, up to the handler), and the
+      // ones on its class (around the nearest @Controller above)
+      const i0 = r.line - 1;
+      let top = i0; while (top > 0 && /^\s*@/.test(lines[top - 1])) top--;
+      let hIdx = i0 + 1;
+      const hRe = r.handler ? new RegExp(`^\\s*(?:(?:public|private|protected|static|async|readonly)\\s+)*${r.handler.replace(/\$/g, '\\$')}\\s*\\(`) : null;
+      while (hIdx < lines.length && hIdx < i0 + 30 && !(hRe && hRe.test(lines[hIdx]))) hIdx++;
+      const methodDecos = lines.slice(top, hIdx).join('\n');
+      let c = i0; while (c >= 0 && !/@Controller\s*\(/.test(lines[c])) c--;
+      let cTop = c, cEnd = c;
+      if (c >= 0) { while (cTop > 0 && /^\s*@/.test(lines[cTop - 1])) cTop--; while (cEnd < lines.length - 1 && !/\bclass\s/.test(lines[cEnd])) cEnd++; }
+      const classDecos = c >= 0 ? lines.slice(cTop, cEnd + 1).join('\n') : '';
+      const decos = methodDecos + '\n' + classDecos;
+      const guards = [...decos.matchAll(/@UseGuards\s*\(([^)]{0,500})\)/g)].flatMap((m) => m[1].match(/[A-Za-z_$][\w$]*/g) || []);
+      const guard = guards.find(isNestAuthGuard);
+      rec.nest = true; // only Nest routes are behind a Nest app-wide guard
+      if (NEST_PUBLIC.test(decos)) rec.nestPublic = true;
+      const next = routes.slice(idx + 1).find((x) => x.line > r.line)?.line || r.line + 80;
+      const body = lines.slice(hIdx, Math.min(next - 1, hIdx + 80)).join('\n');
+      if (guard) Object.assign(rec, { guard, via: 'decorator' });
+      else if (rec.nestPublic && INLINE_CHECK.test(body)) rec.via = 'inline';
+      if (SIGNATURE_CHECK.test(body)) rec.signed = true;
+      if (PUBLIC_RESPONSE.test(body)) rec.publicResponse = true;
+      if (r.handler) rec.fn = r.handler;
+      out.push(rec);
+      return;
+    }
     if (r.framework === 'firebase') {
       // a callable checks request.auth (v1: context.auth) or turns on App Check; an onRequest function
       // checks a token or signature itself, like any other handler
@@ -677,9 +763,15 @@ function jsRoutes(src, f, out) {
       const fn = /(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(own);
       args = fn ? own.slice(0, fn.index) : own.slice(0, Math.max(0, own.lastIndexOf(',')));
     }
-    // (names, not words inside strings: cache('user-token') isn't a check)
-    const mw = (args.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isJsGuardName);
-    const next = routes[idx + 1]?.line || r.line + 60;
+    // Fastify per-route hooks take precedence over adjacent route middleware.
+    const objectMw = (r.guardOptions || [])
+      .flatMap((option) => option.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || [])
+      .map((name) => name.split('.').pop())
+      .find(isJsGuardName);
+    const mw = objectMw || (args.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || [])
+      .map((name) => name.split('.').pop()).find(isJsGuardName);
+    // the next route below this one (routes are listed by kind, not in file order)
+    const next = Math.min(...routes.map((x) => x.line).filter((l) => l > r.line), r.line + 60);
     const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
     const prior = uses.find((u) => u.v === r.var && u.line < r.line);
     if (mw) Object.assign(rec, { guard: mw, via: 'middleware' });
@@ -1569,8 +1661,9 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (!perRepo.has(repo)) perRepo.set(repo, { guarded: 0, total: 0, open: [], misplaced: [], guardCounts: new Map(), fileGuards: new Map(), guardedIn: new Map() });
     const pr = perRepo.get(repo);
     pr.total++;
-    // a Flask before_request or FastAPI middleware guards that Python app, not a JavaScript server beside it
-    const global = (globalGuards.get(repo) || []).find((g) => ((g.framework === 'flask' || g.framework === 'fastapi') && /\.py$/.test(r.f)) || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m));
+    // a Flask before_request or FastAPI middleware guards that Python app, not a JavaScript server beside it,
+    // and a Nest APP_GUARD or useGlobalGuards() guards Nest's controllers, not an Express or Next.js server beside it
+    const global = (globalGuards.get(repo) || []).find((g) => ((g.framework === 'flask' || g.framework === 'fastapi') && /\.py$/.test(r.f)) || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m) || (g.framework === 'nest' && fnd.nest && !fnd.nestPublic));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);

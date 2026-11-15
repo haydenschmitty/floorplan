@@ -27,6 +27,17 @@ test('Next.js app router: each exported method is an endpoint at the folder path
   );
 });
 
+test('Next.js route files are named exactly route.ts: Angular routing files are not endpoints', () => {
+  const src = `export async function GET(req) {}\nexport const ORDERS_ROUTES = [];\n`;
+  // a route handler at the root of app/ still counts
+  assert.deepEqual(routes(src, 'typescript', 'web/app/route.ts'), ['GET /']);
+  assert.deepEqual(routes(src, 'typescript', 'src/app/route.js'), ['GET /']);
+  // Angular keeps its screen routing in files like orders.route.ts and app.routes.ts under src/app/
+  assert.deepEqual(routes(src, 'typescript', 'src/app/features/orders/orders.route.ts'), []);
+  assert.deepEqual(routes(src, 'typescript', 'src/app/app.routes.ts'), []);
+  assert.deepEqual(routes(src, 'typescript', 'src/app/reports/myroute.ts'), []);
+});
+
 test('Flask: blueprint prefix, methods list and handler docstring', () => {
   const r = extract([
     `"""Order endpoints."""`,
