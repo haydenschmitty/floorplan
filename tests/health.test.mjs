@@ -88,3 +88,14 @@ test('Express: a check before a named handler counts, and each route is judged o
   // (updateUser) isn't a check, and a check on the next route doesn't protect the one before it
   assert.deepEqual(openEndpoints(graph), ['GET /api/books', 'POST /api/notes', 'PUT /api/users/:id']);
 });
+
+test('Flask: login decorators count, while logging and misplaced decorators do not (#123)', () => {
+  const graph = buildFixture('flask-login');
+  assert.equal(graph.routes.length, 6);
+  assert.deepEqual(openEndpoints(graph), [
+    'POST /actions/log-call',
+    'POST /actions/logged',
+    'POST /actions/logging',
+    'POST /actions/misplaced',
+  ]);
+});
