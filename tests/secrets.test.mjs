@@ -39,6 +39,35 @@ test('placeholders, values read from the environment and public settings are not
   assert.deepEqual(secrets('s3_secret_key = "env(S3_SECRET_KEY)"\n', 'supabase/config.toml', 'toml'), []);
 });
 
+test('a variable handed to a command is not a password, a value written in is', () => {
+  const sh = (line) => secrets(line, 'deploy/init.sh', 'shell');
+  assert.deepEqual(sh('users=$(MYSQL_PWD="$DB_PASSWORD" mariadb -h "$DB_HOST" -N -e "SELECT 1")\n'), []);
+  assert.deepEqual(secrets('$dsn = "$password";\n', 'app/db.php', 'php'), []);
+  assert.deepEqual(secrets('set "DB_PASSWORD=%DB_PASSWORD%"\n', 'deploy/start.cmd', 'batch'), []);
+  assert.equal(sh(`users=$(MYSQL_PWD="${FAKE_PASSWORD}" mariadb -N -e "SELECT 1")\n`).length, 1);
+});
+
+test("a path to one of the project's files under a password-ish key is not a password", () => {
+  const php = (line) => secrets(line, 'web/page-paths.php', 'php');
+  assert.deepEqual(php("    'confirm_password' => 'resources/js/pages/auth/confirm-password.tsx',\n"), []);
+  assert.deepEqual(php("    'reset_password' => 'views/auth/reset-password.blade.php',\n"), []);
+  // a value with slashes that isn't a file path is still checked
+  assert.equal(php("    'password' => 'k9/Lm2.Qp8x',\n").length, 1);
+});
+
+test('a ULID record id under a plain "token" name is not a secret; an access token is', () => {
+  // a ULID made now: ten characters of time, then sixteen random ones
+  const C = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  let t = Date.now(), time = '';
+  for (let i = 0; i < 10; i++) { time = C[t % 32] + time; t = Math.floor(t / 32); }
+  const ulid = time + 'Q8RZ4M2KDX7HV3NB';
+  const php = (line) => secrets(line, 'app/Http/Resources/RouteResource.php', 'php');
+  assert.deepEqual(php(`        routeToken: '${ulid}',\n`), []);
+  assert.equal(php(`        accessToken: '${ulid}',\n`).length, 1, 'an access token is never excused');
+  // the same shape whose first characters are no date a ULID could have
+  assert.equal(php(`        routeToken: '7ZZZZZZZZZ${ulid.slice(10)}',\n`).length, 1);
+});
+
 test('tokens that are public by design are not flagged (#23)', () => {
   const hex = [...Array(32)].map((_, i) => '01234567890abcdef'[(i * 7 + 3) % 16]).join('');
   // Cloudflare Web Analytics' beacon token has to be in the page for analytics to work

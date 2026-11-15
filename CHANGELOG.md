@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fewer false "secret key" alarms in Health:** a variable handed along (`MYSQL_PWD="$DB_PASSWORD"` in a shell script, `"$password"` in PHP, `%DB_PASSWORD%` on Windows), a path to one of the project's own files under a password-ish key (`'confirm_password' => 'resources/js/pages/auth/confirm-password.tsx'`), and a ULID record id under a plain `…Token` name are no longer reported as secrets written into the code. Access, auth and secret tokens are still checked whatever their value looks like. Fixed by @Basel-Alsemsam.
+
 ## 0.8.0 (2026-11-12)
 
 - **An embedded map can hand "Ask about this" to the page around it:** an exported copy shown inside another page has no Ask bar, so its right-click menu had no Ask items. The page can now opt in by adding `ask=host` to the map's address. **Ask about this** then appears on cards, lines and the background, and sends that page a `floorplan:ask` message with the chosen items' ids and names, so its own Ask can take the question. Nothing changes for maps opened without it. See [Embedding the map](docs/using-the-map.md#handing-ask-about-this-to-the-page-around-the-map).
