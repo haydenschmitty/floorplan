@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Flask login checks are recognised:** routes protected by `@login_required` or `@login_required_json` are no longer reported as open. Logging decorators still do not count as login checks, and a login decorator placed above the route remains a warning.
+- **FastAPI apps protected by one HTTP middleware** (#86): an `@app.middleware("http")` function that turns callers away (a 401 or 403 response, or `HTTPException`) now counts as the app's login check, so its endpoints are no longer reported as open to anyone. It works the same way Flask's `@app.before_request` already does. A middleware that only adds headers, measures time or reads a 401 from the response still protects nothing, whatever its name. Fixed by @ahmedjanwar.
 
 ## 0.8.0 (2026-11-12)
 
