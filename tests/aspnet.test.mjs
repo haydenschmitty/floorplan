@@ -364,3 +364,24 @@ test('Health, ASP.NET Core: .RequireAuthorization() after a multi-line lambda, a
   const gate = 'public static class AccountEndpoints\n{\n    public static async Task<IResult> AccountAsync(HttpContext context, CancellationToken ct)\n    {\n        if (await TenantAccessGate.CheckAsync(context, ct) is { } block) return block;\n        return Results.Ok();\n    }\n}\n';
   assert.deepEqual(health(gate, 'Bff/AccountEndpoints.cs', 'caller-check').map((c) => c.name), ['AccountEndpoints.AccountAsync']);
 });
+
+// ---------- what stays C#-only: matching ignoring case, and test-project folders ----------
+
+test('C# only: other frameworks still match case exactly, and a non-C# folder named like a test project stays on the map', () => {
+  const scan = scanOf({
+    'backend/Shop.Api/Shop.Api.csproj': '<Project Sdk="Microsoft.NET.Sdk.Web" />\n',
+    'backend/Shop.Api/Controllers/OrdersController.cs': CONTROLLER,
+    'node/server.js': "const express = require('express');\nconst app = express();\napp.get('/api/Invoices', (req, res) => res.json([]));\napp.listen(3000);\n",
+    'node/Checkout.ABTests/routes.js': "const router = require('express').Router();\nrouter.post('/api/checkout/variant', (req, res) => res.json({}));\nmodule.exports = router;\n",
+    'node/Shop.Api.Tests/Stub.cs': 'namespace Shop.Api.Tests;\n\npublic class Stub\n{\n    void Configure(WebApplication app) => app.MapGet("/api/stub", () => "stub");\n}\n',
+    'frontend/src/api.ts': [
+      "export const orders = () => fetch('/api/orders');",
+      "export const invoices = () => fetch('/api/invoices');",
+    ].join('\n'),
+  }, { repos: ['backend', 'node', 'frontend'] });
+  const http = scan.http.map((h) => `${h.call} -> ${h.path}`).sort();
+  assert.deepEqual(http, ['/api/orders -> /api/Orders'], 'only the ASP.NET Core route ignores case; Express /api/Invoices is not /api/invoices');
+  const paths = scan.routes.map((r) => `${r.method} ${r.path}`);
+  assert.ok(paths.includes('POST /api/checkout/variant'), 'a JavaScript folder named Checkout.ABTests is not a .NET test project');
+  assert.ok(!paths.includes('GET /api/stub'), 'C# files in Shop.Api.Tests are');
+});

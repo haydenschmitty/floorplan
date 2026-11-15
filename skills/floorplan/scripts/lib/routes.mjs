@@ -5,8 +5,12 @@ import { csRoutePath, csAccess, csAttrNames } from './extract.mjs';
 export const routeSegments = (p) => p.split('/').filter(Boolean).map((s) =>
   /^(<[^>]*>|\{[^}]*\}|:\w+|\[\.{0,3}[^\]]*\]|\*{1,2}|\$\{[^}]*\})$/.test(s) || /\$\{|\{[^}]*\}/.test(s) ? '*' : s);
 
-// .NET test projects are folders named like Orders.Api.Tests or Orders.IntegrationTests
-const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|(^|\/)[\w-]+(\.[\w-]+)*\.\w*Tests?\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/;
+const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/;
+// .NET test projects are folders named like Orders.Api.Tests or Orders.IntegrationTests. Only C# files in
+// them count as tests: a JavaScript or Python folder can be named that way for other reasons
+// (Checkout.ABTests/), and its endpoints must stay on the map and in Health.
+const DOTNET_TEST_FILE = /(^|\/)[\w-]+(?:\.[\w-]+)*\.\w*Tests?\/(?:[^/]+\/)*[^/]+\.cs$/;
+const isTestFile = (p) => TEST_FILE.test(p) || DOTNET_TEST_FILE.test(p);
 
 const joinPath =(...parts) => '/' + parts.map((p) => (p || '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
 
@@ -105,7 +109,7 @@ export function resolveRoutes(files) {
   // middleware for every route under a path, registered on a router or app: app.use('/api/*', auth),
   // app.use(requireAuth), or the middleware before a handler: [{ file, on, prefix, line, mw }]
   const scoped = [];
-  for (const f of files) for (const mount of TEST_FILE.test(f.path) ? [] : f.mounts || []) {
+  for (const f of files) for (const mount of isTestFile(f.path) ? [] : f.mounts || []) {
     const t = mountTarget(f, mount, byPath);
     // JS: what app.use() is handed is a router only if it serves or mounts something
     if (mount.on && (!t || (t.file !== f.path && !servesOrMounts(t.file)))) {
@@ -198,7 +202,7 @@ export function resolveRoutes(files) {
   const mappers = mapperCallIndex(files);
   for (const f of files) {
     // Test files define throwaway apps and stub servers; their routes aren't part of the system.
-    if (!f.routes?.length || TEST_FILE.test(f.path)) continue;
+    if (!f.routes?.length || isTestFile(f.path)) continue;
     for (const r of f.routes) {
       if (r.framework === 'firebase') {
         if (r.method === 'ANY' && wrapsApp(f.path, r.path)) continue;
@@ -225,7 +229,7 @@ export function resolveRoutes(files) {
 function mapperCallIndex(files) {
   const index = new Map();
   for (const f of files) for (const c of f.mapperCalls || []) {
-    if (TEST_FILE.test(f.path)) continue;
+    if (isTestFile(f.path)) continue;
     const k = `${f.repo ?? ''}|${c.name}`;
     index.set(k, [...(index.get(k) || []), c]);
   }
@@ -258,7 +262,7 @@ function inheritedRoutes(files) {
   if (!bases.size) return [];
   const out = [];
   for (const f of files) {
-    if (TEST_FILE.test(f.path)) continue;
+    if (isTestFile(f.path)) continue;
     for (const t of f.csTypes || []) {
       if (t.abstract) continue;
       for (const b of t.bases) {
@@ -290,14 +294,14 @@ function inheritedAction(f, t, a, baseAttrs) {
 function conventionalRoutes(files) {
   const patterns = new Map(); // repo -> [pattern]
   for (const f of files) for (const p of f.controllerConventions || []) {
-    if (TEST_FILE.test(f.path)) continue;
+    if (isTestFile(f.path)) continue;
     const k = f.repo ?? '';
     patterns.set(k, [...(patterns.get(k) || []), p]);
   }
   const out = [];
   for (const f of files) {
     const ps = patterns.get(f.repo ?? '');
-    if (!ps || !f.conventionalActions?.length || TEST_FILE.test(f.path)) continue;
+    if (!ps || !f.conventionalActions?.length || isTestFile(f.path)) continue;
     for (const a of f.conventionalActions) {
       const pattern = ps.find((p) => /\{area\b/.test(p) === !!a.area);
       if (!pattern) continue;
