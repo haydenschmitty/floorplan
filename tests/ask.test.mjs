@@ -117,6 +117,7 @@ test('the Claude Code CLI comes first for a map Claude built, with read-only too
   const [first, second] = s.calls();
   assert.ok(first.args.includes('-p'));
   assert.deepEqual(first.args.slice(first.args.indexOf('--allowedTools') + 1), ['Bash(node floorplan/query.mjs:*)', 'Read', 'Grep', 'Glob']);
+  assert.ok(first.args.slice(first.args.indexOf('--disallowedTools') + 1).includes('Read(floorplan/index.html)'), 'the generated map page is off limits');
   assert.equal(first.input, 'How do refunds work?');
   assert.equal(second.args[second.args.indexOf('--resume') + 1], 'test-session');
 });

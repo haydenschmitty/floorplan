@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Asking a question on the map no longer fails with “Prompt is too long”:** the Ask bar lets Claude Code read and search the project, and it could open the map’s own generated `floorplan/index.html` (about 2 MB on one line). One short question could then grow past the context limit and stop with “Prompt is too long”, after using a lot of the person’s allowance. Claude Code is now told not to read that file or the map’s other generated files.
+
 ## 0.8.0 (2026-11-12)
 
 - **An embedded map can hand "Ask about this" to the page around it:** an exported copy shown inside another page has no Ask bar, so its right-click menu had no Ask items. The page can now opt in by adding `ask=host` to the map's address. **Ask about this** then appears on cards, lines and the background, and sends that page a `floorplan:ask` message with the chosen items' ids and names, so its own Ask can take the question. Nothing changes for maps opened without it. See [Embedding the map](docs/using-the-map.md#handing-ask-about-this-to-the-page-around-the-map).

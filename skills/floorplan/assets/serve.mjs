@@ -325,6 +325,9 @@ const failCode = (msg) => /not logged in|logged out|\/login|log ?in again|sign i
 function claudeRun(body, mode) {
   const args = [...cli.args, '-p', '--output-format', 'stream-json', '--verbose',
     '--json-schema', JSON.stringify(mode.schema), '--append-system-prompt', mode.instructions,
+    // Keep the agent out of the map's own generated files. floorplan/index.html inlines the layout engine and
+    // fonts (about 2 MB on one line), and reading it can push a single question past the context limit.
+    '--disallowedTools', 'Read(floorplan/index.html)', 'Read(floorplan/serve.mjs)', 'Read(floorplan/page-safety.mjs)', 'Read(floorplan/.cache/**)',
     '--tools', 'Read,Grep,Glob,Bash', '--allowedTools', 'Bash(node floorplan/query.mjs:*)', 'Read', 'Grep', 'Glob'];
   if (body.session) args.push('--resume', String(body.session));
   if (model) args.push('--model', model);
