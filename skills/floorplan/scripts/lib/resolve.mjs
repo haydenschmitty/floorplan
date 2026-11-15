@@ -11,12 +11,57 @@ const RUST_STD = new Set(['std', 'core', 'alloc', 'crate', 'self', 'super']);
 
 const JS_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.vue', '.svelte', '.d.ts', '.json'];
 
+/** What `*` stands for when `spec` matches `pattern` ('' for an exact match), or null if it doesn't match. */
+function matchStarPattern(pattern, spec) {
+  const star = pattern.indexOf('*');
+  if (star === -1) return spec === pattern ? '' : null;
+  const prefix = pattern.slice(0, star);
+  const suffix = pattern.slice(star + 1);
+  if (spec.length < prefix.length + suffix.length || !spec.startsWith(prefix) || !spec.endsWith(suffix)) return null;
+  return spec.slice(star, spec.length - suffix.length);
+}
+
+/**
+ * The package.json "imports" entry Node would use for `spec`: an exact key first, otherwise the
+ * matching `*` key with the longest text before the `*` (then the longest key).
+ */
+function bestSubpathImport(entries, spec) {
+  const exact = entries.find(([key]) => key === spec);
+  if (exact) return { target: exact[1], matched: '' };
+  let best = null;
+  for (const [key, target] of entries) {
+    if (!key.includes('*')) continue;
+    const matched = matchStarPattern(key, spec);
+    if (!matched) continue; // Node needs `*` to stand for at least one character here, unlike tsconfig paths
+    const prefixLength = key.indexOf('*');
+    if (!best || prefixLength > best.prefixLength || (prefixLength === best.prefixLength && key.length > best.key.length)) {
+      best = { key, target, matched, prefixLength };
+    }
+  }
+  return best;
+}
+
+/**
+ * Every path an "imports" target can point to, in order. Which conditions apply isn't known
+ * statically, so all are tried; "types" goes last because Node never picks it, but it is often
+ * the only target that points at source rather than a build folder.
+ */
+function subpathTargets(target, depth = 0) {
+  if (typeof target === 'string') return [target];
+  // A package.json in code you didn't write can nest arrays and conditions without end; real ones go a few levels.
+  if (depth > 16) return [];
+  if (Array.isArray(target)) return target.flatMap((t) => subpathTargets(t, depth + 1));
+  if (!target || typeof target !== 'object') return [];
+  const conditions = Object.entries(target);
+  return [...conditions.filter(([c]) => c !== 'types'), ...conditions.filter(([c]) => c === 'types')].flatMap(([, t]) => subpathTargets(t, depth + 1));
+}
+
 export function createResolver(root, files) {
   const fileSet = new Set(files.map((f) => f.path));
   const byPath = new Map(files.map((f) => [f.path, f]));
   const dirsWith = (name) => files.filter((f) => P.basename(f.path) === name).map((f) => P.dirname(f.path));
 
-  // ---- JS: tsconfig/jsconfig paths + workspace packages ----
+  // ---- JS: tsconfig/jsconfig paths, package.json imports, workspace packages ----
   const tsconfigCache = new Map();
   const loadTsconfig = (file) => {
     if (tsconfigCache.has(file)) return tsconfigCache.get(file);
@@ -27,15 +72,24 @@ export function createResolver(root, files) {
     const json = readJsonLoose(path.join(root, file));
     if (json) {
       const dir = P.dirname(file);
-      let opts = json.compilerOptions || {};
-      let optsDir = dir;
-      if ((!opts.paths && !opts.baseUrl) && typeof json.extends === 'string' && json.extends.startsWith('.')) {
-        const extFile = P.normalize(P.join(dir, json.extends.endsWith('.json') ? json.extends : json.extends + '.json'));
+      const opts = json.compilerOptions || {};
+      let paths;
+      let pathsDir = dir;
+      let baseUrl;
+      // Later bases override earlier ones, then the child overrides both. Paths and baseUrl
+      // can come from different configs, so keep their declaring directories separately.
+      const bases = Array.isArray(json.extends) ? json.extends : [json.extends];
+      for (const ext of bases) {
+        if (typeof ext !== 'string' || !ext.startsWith('.')) continue;
+        const extFile = P.normalize(P.join(dir, ext.endsWith('.json') ? ext : ext + '.json'));
         const base = fileSet.has(extFile) ? loadTsconfig(extFile) : null;
-        if (base) { opts = base.raw; optsDir = base.optsDir; }
+        if (base?.hasPaths) { paths = base.paths; pathsDir = base.pathsDir; }
+        if (base?.hasBaseUrl) baseUrl = base.baseDir;
       }
-      const baseDir = opts.baseUrl ? P.normalize(P.join(optsDir, opts.baseUrl)) : optsDir;
-      cfg = { raw: opts, optsDir, baseDir, hasBaseUrl: !!opts.baseUrl, paths: Object.entries(opts.paths || {}) };
+      if (opts.paths) { paths = Object.entries(opts.paths); pathsDir = dir; }
+      if (typeof opts.baseUrl === 'string') baseUrl = P.normalize(P.join(dir, opts.baseUrl));
+      cfg = { paths: paths || [], pathsDir, hasPaths: paths !== undefined,
+        baseDir: baseUrl ?? pathsDir, hasBaseUrl: baseUrl !== undefined };
     }
     tsconfigCache.set(file, cfg);
     return cfg;
@@ -52,11 +106,9 @@ export function createResolver(root, files) {
     nearestCache.set(dir, found);
     return found;
   };
+  const packageJsons = new Map(dirsWith('package.json').map((dir) => [dir, readJsonLoose(path.join(root, dir, 'package.json'))]));
   const workspacePkgs = new Map();
-  for (const dir of dirsWith('package.json')) {
-    const pj = readJsonLoose(path.join(root, dir, 'package.json'));
-    if (pj?.name) workspacePkgs.set(pj.name, { dir, pj });
-  }
+  for (const [dir, pj] of packageJsons) if (pj?.name) workspacePkgs.set(pj.name, { dir, pj });
 
   const tryJsFile = (p) => {
     p = P.normalize(p);
@@ -68,19 +120,46 @@ export function createResolver(root, files) {
     return null;
   };
 
+  // Node subpath imports ("#lib/x") resolve through the "imports" field of the nearest package.json.
+  const subpathScopeCache = new Map();
+  const nearestPackageScope = (dir) => {
+    if (subpathScopeCache.has(dir)) return subpathScopeCache.get(dir);
+    let scope = null;
+    if (packageJsons.has(dir)) {
+      const imports = packageJsons.get(dir)?.imports;
+      scope = { dir, imports: imports && typeof imports === 'object' && !Array.isArray(imports) ? Object.entries(imports) : [] };
+    }
+    else if (dir !== '.' && dir !== '') scope = nearestPackageScope(P.dirname(dir));
+    subpathScopeCache.set(dir, scope);
+    return scope;
+  };
+  const resolveSubpathImport = (from, spec) => {
+    const scope = nearestPackageScope(P.dirname(from));
+    const entry = scope && bestSubpathImport(scope.imports, spec);
+    if (!entry) return null;
+    for (const t of subpathTargets(entry.target)) {
+      const hit = tryJsFile(P.join(scope.dir, t.split('*').join(entry.matched)));
+      if (hit) return hit;
+    }
+    return null;
+  };
+
   const resolveJs = (from, spec) => {
     if (spec.startsWith('.')) {
       const hit = tryJsFile(P.join(P.dirname(from), spec));
       return hit ? { file: hit } : { unresolved: true };
     }
+    if (spec.startsWith('#')) {
+      const hit = resolveSubpathImport(from, spec);
+      if (hit) return { file: hit };
+    }
     const cfg = nearestTsconfig(P.dirname(from));
     if (cfg) {
       for (const [pattern, targets] of cfg.paths) {
-        const star = pattern.indexOf('*');
-        const matched = star === -1 ? (spec === pattern ? '' : null)
-          : (spec.startsWith(pattern.slice(0, star)) && spec.endsWith(pattern.slice(star + 1)) ? spec.slice(star, spec.length - (pattern.length - star - 1)) : null);
-        if (matched === null) continue;
+        const matched = matchStarPattern(pattern, spec);
+        if (matched === null || !Array.isArray(targets)) continue;
         for (const t of targets) {
+          if (typeof t !== 'string') continue;
           const hit = tryJsFile(P.join(cfg.baseDir, t.split('*').join(matched)));
           if (hit) return { file: hit };
         }
@@ -130,7 +209,6 @@ export function createResolver(root, files) {
   };
   const resolvePy = (from, imp, repoPath) => {
     const spec = imp.spec;
-    const targets = [];
     if (spec.startsWith('.')) {
       const dots = spec.match(/^\.+/)[0].length;
       let base = P.dirname(from);
@@ -146,7 +224,8 @@ export function createResolver(root, files) {
     }
     const top = spec.split('.')[0];
     const modPath = spec.replace(/\./g, '/');
-    for (const r of pyRootsFor(from, repoPath)) {
+    const roots = pyRootsFor(from, repoPath);
+    for (const r of roots) {
       const base = r ? `${r}/${modPath}` : modPath;
       if (imp.from && imp.names?.length) {
         const subs = imp.names.map((n) => tryPyModule(`${base}/${n}`)).filter(Boolean);
@@ -154,13 +233,17 @@ export function createResolver(root, files) {
       }
       const hit = tryPyModule(base);
       if (hit) return { file: hit };
-      // `import a.b.c` where only a/b exists
-      const parts = modPath.split('/').slice(0, 20); // no real module path is deeper; each try joins them again
-      for (let k = parts.length - 1; k >= 1; k--) {
-        const h = tryPyModule((r ? r + '/' : '') + parts.slice(0, k).join('/'));
-        if (h && targets.length === 0) { targets.push(h); break; }
+    }
+    // `import a.b.c` where only a/b exists. Only once no root has the whole module, and the longest prefix
+    // in any root wins: otherwise a nearer root's short prefix is taken first (`apps.orders.models`
+    // imported inside a Django app hits that app's own apps.py).
+    const parts = modPath.split('/').slice(0, 20); // no real module path is deeper; each try joins them again
+    for (let k = parts.length - 1; k >= 1; k--) {
+      const prefix = parts.slice(0, k).join('/');
+      for (const r of roots) {
+        const h = tryPyModule(r ? `${r}/${prefix}` : prefix);
+        if (h) return { file: h };
       }
-      if (targets.length) return { file: targets[0] };
     }
     if (PY_STDLIB.has(top)) return { builtin: true };
     return { external: top, eco: 'pypi' };
@@ -219,13 +302,66 @@ export function createResolver(root, files) {
   };
 
   // ---- JVM ----
+  // `<package>.<name>` -> the files declaring it: each file's own name, and every top-level class, function,
+  // value and type alias in it (a Kotlin file often holds several, none named after the file)
   const jvmIndex = new Map();
-  for (const f of files) if (f.pkg) jvmIndex.set(`${f.pkg}.${P.basename(f.path).replace(/\.\w+$/, '')}`, f.path);
-  const resolveJvm = (from, spec) => {
-    if (jvmIndex.has(spec)) return { file: jvmIndex.get(spec) };
+  const addJvm = (key, file) => { const l = jvmIndex.get(key); if (!l) jvmIndex.set(key, [file]); else if (!l.includes(file)) l.push(file); };
+  // package -> top-level name -> the files declaring it, for names a file uses without importing them
+  const jvmPackages = new Map();
+  for (const f of files) {
+    if (!f.pkg) continue;
+    addJvm(`${f.pkg}.${P.basename(f.path).replace(/\.\w+$/, '')}`, f.path);
+    if (!jvmPackages.has(f.pkg)) jvmPackages.set(f.pkg, new Map());
+    const names = jvmPackages.get(f.pkg);
+    for (const d of f.decls || []) {
+      addJvm(`${f.pkg}.${d}`, f.path);
+      if (!names.has(d)) names.set(d, []);
+      names.get(d).push(f.path);
+    }
+  }
+  const jvmHit = (list) => (list.length === 1 ? { file: list[0] } : { files: list });
+  // Tests see the code they test, but nothing outside them sees a test's helpers
+  const JVM_TEST = /(^|\/)(src\/(test|androidTest|testFixtures|\w+Test)|tests?)\//;
+  /**
+   * The files of package `pkg` whose top-level names `file` mentions: what Kotlin and Java see without an
+   * import in their own package, or through `import pkg.*`. Looked up name by name, so a big package costs
+   * no more than a small one.
+   */
+  const jvmMentioned = (file, pkg, shadowedBy) => {
+    const names = jvmPackages.get(pkg);
+    if (!names?.size || !file.mentions) return [];
+    // An explicit import of the same simple name wins over the package (and, for `pkg.*`, so does the file's own package)
+    const imported = new Set((file.imports || []).filter((i) => !i.spec.endsWith('*')).map((i) => i.spec.split('.').pop()));
+    const own = shadowedBy ? jvmPackages.get(shadowedBy) : null;
+    const fromTest = JVM_TEST.test(file.path);
+    const out = new Set();
+    for (const n of file.mentions.split(' ')) {
+      const hits = names.get(n);
+      if (!hits || imported.has(n) || own?.has(n)) continue;
+      for (const h of hits) if (h !== file.path && (fromTest || !JVM_TEST.test(h))) out.add(h);
+    }
+    return [...out].sort();
+  };
+  const resolveJvm = (file, imp) => {
+    const spec = imp.spec;
+    if (spec.endsWith('.*') && jvmPackages.has(spec.slice(0, -2))) {
+      const pkg = spec.slice(0, -2);
+      const hits = jvmMentioned(file, pkg, imp.implicit || pkg === file.pkg ? null : file.pkg);
+      // a package of the project's own: linked to what's used from it, never an external package
+      return hits.length ? jvmHit(hits) : { internal: true };
+    }
+    if (imp.implicit) return { internal: true };
+    if (jvmIndex.has(spec)) return jvmHit(jvmIndex.get(spec));
     if (/^(java|javax|kotlin|scala|jdk|sun)\./.test(spec)) return { builtin: true };
     const parts = spec.split('.').slice(0, 20);
-    for (let k = parts.length - 1; k >= 2; k--) if (jvmIndex.has(parts.slice(0, k).join('.'))) return { file: jvmIndex.get(parts.slice(0, k).join('.')) };
+    // `Outer.Inner`, `Util.CONSTANT` (static imports), `Foo.Companion.bar`: the longest prefix that names a
+    // declaration. A package declared in the scanned code is the project's own, so reaching one first means
+    // a name missing from it, never an external package.
+    for (let k = parts.length - 1; k >= 1; k--) {
+      const prefix = parts.slice(0, k).join('.');
+      if (jvmPackages.has(prefix)) return { unresolved: true };
+      if (k >= 2 && jvmIndex.has(prefix)) return jvmHit(jvmIndex.get(prefix));
+    }
     return { external: parts.slice(0, Math.min(3, parts.length - 1)).join('.'), eco: 'maven' };
   };
 
@@ -247,7 +383,7 @@ export function createResolver(root, files) {
       case 'python': return resolvePy(file.path, imp, file.repo);
       case 'go': return resolveGo(file.path, imp.spec);
       case 'rust': return resolveRust(file.path, imp);
-      case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file.path, imp.spec);
+      case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file, imp);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolveRelative(file.path, imp.spec, ['.php']);
       case 'css': return resolveRelative(file.path, imp.spec, ['.css', '.scss', '.sass', '.less']).file ? resolveRelative(file.path, imp.spec, ['.css', '.scss']) : resolveRelative(file.path, P.join(P.dirname(imp.spec), '_' + P.basename(imp.spec)), ['.scss', '.sass']);

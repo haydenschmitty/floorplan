@@ -81,13 +81,16 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | File | What it checks |
 |---|---|
 | `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework |
+| `tsconfig-inheritance.test.mjs` | local configuration inheritance: arrays and single bases, alias links, relative paths, overrides, legacy baseUrl and cycles |
 | `helpers-lib.test.mjs` | globs, file types, command-line flags, fallback names |
 | `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
 | `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI, Flask and Express samples in `fixtures/`): sign-in checks recognised by name, and FastAPI dependencies by what their code does (a factory's result, a `Depends()` kept in a variable, a list kept in a constant, a function that raises a 401), with look-alikes that must stay open (logging decorators, schema validators, dependencies that check nothing) |
 | `fastapi-http-middleware.test.mjs` | a FastAPI `@app.middleware("http")` that turns callers away protects every route of that app, and one that only adds headers, logs or times requests protects nothing |
 | `public-by-design.test.mjs` | what Health leaves alone because it's public on purpose (feeds, addresses a project publishes, cached responses, routes with nothing private, Payload CMS, tracker tokens, files a tool opens), each with a near miss it must still report |
 | `stack-health.test.mjs` | Health's checks for Supabase row-level security, Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
-| `django.test.mjs` | Django: an app's `urls.py` included under a prefix, and the website's requests matched to it |
+| `django.test.mjs` | Django: an app's `urls.py` included under a prefix, the website's requests matched to it, and absolute imports between apps reaching the other app rather than the importing app's own `apps.py` |
+| `jvm-imports.test.mjs` | Kotlin and Java: imports of top-level declarations not named after their file, names used from the file's own package or a `.*` import with no import line, the project's own packages never listed as outside ones, what must stay unlinked (comments, strings, private declarations, other packages, a name imported from elsewhere, test helpers), a package of thousands of files, and files built to slow the reading down |
+| `subpath-imports.test.mjs` | imports through package.json `"imports"` (`#lib/x`): the nearest package.json, the most specific key, arrays and conditions, falling back to tsconfig `paths`, near misses left unlinked, and odd or endlessly nested shapes that must not stop the scan |
 | `fastify.test.mjs` | Fastify: plugins registered with a prefix, nested registers, and the website's requests reaching the right plugin (sample in `fixtures/`) |
 | `route-table-keys.test.mjs` | route tables keyed by `"METHOD /path"` in JavaScript and Python: which tables count, each entry's handler, the website's requests reaching them, and Health staying quiet about their sign-in (sample in `fixtures/`) |
 | `firebase.test.mjs` | Firebase Cloud Functions: callables and onRequest functions as endpoints, the website's calls to them, Screens, Health, background functions (React + Firebase sample in `fixtures/`) |
