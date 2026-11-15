@@ -8,6 +8,7 @@
   - publishable keys, which services make to be put in web pages: `pk_…` (Stripe, Clerk and others), Supabase's `sb_publishable_…` and PostHog's `phc_…`. A `sk_…` key is still flagged, and so is a password that happens to start with `pk_`. Reported by @notrdd in #119;
   - the two answers of a choice, like `mode === 'signup' ? 'new-password' : 'current-password'`, and the browser's autofill words (`new-password`, `one-time-code`). Reported by @adlewis82 in #93;
   - made-up keys with a run of the alphabet or the digits in them (`ghp_abcdefghij…0123456789…`), even in a well-known format. A random-looking key is still flagged, in test files too. Reported by @lexerio-seth in #101.
+- **Fewer files wrongly called unused:** Expo Router finds every file in an app's `app/` folder by its place, so in an app that uses `expo-router` those screens no longer look unused (a leftover file in a Next.js `app/` folder, or anywhere else, still does). And a file with dots in its name, like `users.service.ts`, now counts as used when another file names it (`'./users/users.service'`), as `users.ts` already did; before, the dot hid the name, so NestJS services and controllers reached through an import the map couldn't follow looked unused. Reported by @axelmorand-afk in #88 and #89, with the dotted-name cause found by @xunguangzlj-cloud in #100.
 
 ## 0.8.0 (2026-11-12)
 

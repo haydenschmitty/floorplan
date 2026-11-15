@@ -1367,8 +1367,22 @@ export function buildHealth({ graph, scan, arch, root }) {
   const entry = new Set(graph.project?.entrypoints || []);
   const routeFiles = new Set(graph.routes.map((r) => r.f));
   for (const fl of graph.flows || []) for (const s of fl.steps || []) if (s.ref?.startsWith('f:')) entry.add(s.ref.slice(2));
+  // Expo Router makes every file in an app's app/ (or src/app/) folder a screen, found by its path, so nothing
+  // imports them. (Next.js's app/ folder only counts its page, layout, route… files: see below.)
+  const expoRouterDirs = [];
+  for (const f of scan.files) {
+    if (!/(^|\/)package\.json$/.test(f.path)) continue;
+    let pj = null;
+    try { pj = JSON.parse(readSource(f.path).replace(/^\uFEFF/, '')); } catch { continue; }
+    const deps = { ...pj?.dependencies, ...pj?.devDependencies, ...pj?.peerDependencies };
+    if (!deps['expo-router'] && !/^expo-router\//.test(String(pj?.main || ''))) continue;
+    const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
+    expoRouterDirs.push(dir + 'app/', dir + 'src/app/');
+  }
+  const expoScreen = (p) => expoRouterDirs.some((d) => p.startsWith(d));
   const candidates = graph.files.filter((f) => {
     if (incoming.has(f.p) || entry.has(f.p) || routeFiles.has(f.p) || !USED_LANGS.has(f.l)) return false;
+    if (expoScreen(f.p)) return false;
     if (TEST_FILE.test(f.p) || SPECIAL_FILE.test(f.p) || /(^|\/)app\/.*\/(page|layout|route|loading|error|template|default)\.[jt]sx?$/.test(f.p)) return false;
     if (/(^|\/)src\/routes\//.test(f.p) && /\+|\$|\[/.test(f.p.split('/').pop())) return false;
     if (kinds(f.n).some((k) => NOT_USED_KINDS.has(k))) return false;
@@ -1378,12 +1392,18 @@ export function buildHealth({ graph, scan, arch, root }) {
   // Safety net for dynamic loading: skip a file whose name appears in any other source file.
   if (candidates.length) {
     const want = new Map(candidates.map((f) => [stemOf(f.p), f.p]));
+    const dotted = [...want.keys()].some((k) => k.includes('.'));
     const mentioned = new Set();
     for (const f of scan.files) {
       if (!['code', 'config', 'docs'].includes(f.category) || f.tooLarge) continue;
       let src;
       try { src = fs.readFileSync(path.join(root, f.path), 'utf8'); } catch { continue; }
       for (const tok of new Set(src.match(/[\w$-]+/g) || [])) { const p = want.get(tok); if (p && p !== f.path) mentioned.add(p); }
+      // a dotted name (users.service, from './users/users.service.js'), which the words above split at the dot
+      if (dotted) for (const tok of new Set(src.match(/[\w$-]+(?:\.[\w$-]+)+/g) || [])) {
+        const parts = tok.split('.', 6); // a name has a few dots at most; a long chain of them is code
+        for (let k = 2, name = parts[0]; k <= parts.length; k++) { name += '.' + parts[k - 1]; const p = want.get(name); if (p && p !== f.path) mentioned.add(p); }
+      }
     }
     const unused = candidates.filter((f) => !mentioned.has(f.p) && !LOADED_BY_NAME.test(readSource(f.p).split('\n', 20).map((l) => l.slice(0, 300)).join('\n')));
     // A module where most files look unused is more likely loaded in a way we can't see; stay quiet.
