@@ -328,6 +328,10 @@ function claudeRun(body, mode) {
     // Keep the agent out of the map's own generated files. floorplan/index.html inlines the layout engine and
     // fonts (about 2 MB on one line), and reading it can push a single question past the context limit.
     '--disallowedTools', 'Read(floorplan/index.html)', 'Read(floorplan/serve.mjs)', 'Read(floorplan/page-safety.mjs)', 'Read(floorplan/.cache/**)',
+    // No MCP servers: answers only read files and query the map, and the person's own servers (connectors,
+    // plugins) would otherwise load every tool's description into each question, enough to make it
+    // "Prompt is too long" before the question is read. The empty config is one argument, so no shell quoting.
+    '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     '--tools', 'Read,Grep,Glob,Bash', '--allowedTools', 'Bash(node floorplan/query.mjs:*)', 'Read', 'Grep', 'Glob'];
   if (body.session) args.push('--resume', String(body.session));
   if (model) args.push('--model', model);

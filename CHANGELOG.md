@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Asking a question on the map no longer fails with “Prompt is too long”:** the Ask bar lets Claude Code read and search the project, and it could open the map’s own generated `floorplan/index.html` (about 2 MB on one line). One short question could then grow past the context limit and stop with “Prompt is too long”, after using a lot of the person’s allowance. Claude Code is now told not to read that file or the map’s other generated files.
+- **Asking a question on the map no longer fails with “Prompt is too long”:** two things could fill Claude Code’s context before it got to the question. On a computer with many MCP servers set up (connectors and plugins), each question loaded every one of their tool descriptions, though answers never use them; now questions run with no MCP servers at all, which also makes each one much cheaper. And Claude Code could open the map’s own generated `floorplan/index.html` (about 2 MB on one line); it’s now told not to read that file or the map’s other generated files. Codex has no switch that turns off only its MCP servers, so it still loads them. Reported by @Kadreev in #66, with the second fix by @psingh-valorx in #120.
 
 ## 0.8.0 (2026-11-12)
 
