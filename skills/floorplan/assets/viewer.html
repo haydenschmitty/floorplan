@@ -1593,7 +1593,28 @@ function renderLegend(view) {
 }
 
 // ======================= inspector =======================
-const editorUrl = (p, line = 1) => G.meta.root && !PLAN ? `vscode://file/${encodeURI(G.meta.root.replace(/\\/g, '/'))}/${encodeURI(p)}:${line}` : null;
+// ---------- editor links ----------
+// "Open in editor": a link in an editor's own scheme, from the map's server (--editor), else architecture.json's
+// "editor", else VS Code. {path} is the file's full path, {line} its line and {column} 1. Both were checked when they
+// were set (editorTemplate in page-safety.mjs); they're checked again here, against the same list of schemes, so text
+// in the page can never make this a script, data or web link.
+const EDITOR_SCHEMES = ['vscode', 'vscode-insiders', 'vscodium', 'cursor', 'windsurf', 'zed', 'idea', 'phpstorm', 'pycharm', 'webstorm', 'goland', 'rubymine', 'clion', 'rider', 'txmt', 'mvim', 'subl'];
+const LINK_BREAKERS = ['"', "'", '<', '>', '`', String.fromCharCode(92)];
+const editorLink = (t) => typeof t === 'string' && t.length <= 300 && t.includes('{path}')
+  && EDITOR_SCHEMES.includes((/^([a-z][a-z0-9+.-]*):/i.exec(t)?.[1] || '').toLowerCase())
+  && ![...t].some((c) => c.charCodeAt(0) <= 32 || c.charCodeAt(0) === 127 || LINK_BREAKERS.includes(c)) ? t : null;
+const EDITOR = editorLink(window.FLOORPLAN_SERVER?.editor) || editorLink(G.meta.editor) || 'vscode://file/{path}:{line}';
+// a path as part of a link: encodeURI, plus the characters that would start a query, a fragment or another parameter
+const linkPath = (s) => encodeURI(s).replace(/[#?&=+]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+const editorUrl = (p, line = 1) => {
+  if (!G.meta.root || PLAN) return null;
+  try {
+    const full = linkPath(G.meta.root.replace(/[\\]/g, '/').replace(/[/]+$/, '') + '/' + p);
+    const at = { path: full, line: String(Math.max(1, Math.floor(Number(line)) || 1)), column: '1' };
+    return EDITOR.replace(/[{](path|line|column)[}]/g, (_, k) => at[k]);
+  } catch { return null; } // a path encodeURI can't take (a lone surrogate) gets no link
+};
+// ---------- end: editor links ----------
 const rowFor = (item, extra = '', dotColor) => {
   const i = info(item);
   return `<a class="row" data-go="${hk(item)}" title="${h(i.path || '')}"><span class="dot" style="background:${dotColor || colorOf(i)}"></span><span class="rt"><div class="rn">${h(i.name)}</div>${i.desc ? `<div class="rd">${h(i.desc)}</div>` : ''}</span>${extra ? `<span class="rc">${extra}</span>` : ''}</a>`;
@@ -1737,7 +1758,7 @@ function itemPanel(item, viaConnector) {
     if (f.note) html += `<div class="callout">${h(f.note)}</div>`;
     if (f.tooLarge) html += `<div class="callout">Too big for Floorplan to read, so what it uses, its endpoints and any secrets in it weren’t checked. Ask Claude or Codex to update the floorplan with a bigger file limit to include it.</div>`;
     html += pathBox(f.p);
-    if (url) actions.push(`<a class="btn soft" href="${url}">${iconI('open')}Open in editor</a>`);
+    if (url) actions.push(`<a class="btn soft" href="${hk(url)}">${iconI('open')}Open in editor</a>`);
     if (actions.length) html += `<div class="actions">${actions.join('')}</div>`;
     const owner = nodes.get(f.n);
     html += `</div><div class="sec"><div class="stats">${PLAN ? `<div><b>${fmt(G.links.filter((l) => l.a === fid).length)}</b><span>uses</span></div>` : `<div><b>${fmt(f.loc)}</b><span>lines</span></div>`}<div><b>${(routesByFile.get(f.p) || []).length}</b><span>endpoints</span></div><div><b>${technical() ? (f.s || []).length : fmt(G.links.filter((l) => l.b === 'f:' + f.p).length)}</b><span>${technical() ? 'exports' : 'used by'}</span></div></div>
@@ -1752,7 +1773,7 @@ function itemPanel(item, viaConnector) {
   } else if (i.type === 'route') {
     const r = i.r, url = editorUrl(r.f, r.l);
     html += pathBox(`${r.m} ${r.p}`);
-    if (url) actions.push(`<a class="btn soft" href="${url}">${iconI('open')}Open handler</a>`);
+    if (url) actions.push(`<a class="btn soft" href="${hk(url)}">${iconI('open')}Open handler</a>`);
     html += `<div class="actions">${actions.join('')}</div></div>`;
     html += `<div class="sec"><h3>Handled by</h3><div class="list">${rowFor('f:' + r.f, r.h ? h(r.h) + '()' : '')}</div></div>`;
     const ri = routes.indexOf(r);
@@ -1763,7 +1784,7 @@ function itemPanel(item, viaConnector) {
   } else if (i.type === 'symbol') {
     const url = editorUrl(i.f.p, i.s[2]);
     html += pathBox(`${i.f.p}:${i.s[2]}`);
-    if (url) actions.push(`<a class="btn soft" href="${url}">${iconI('open')}Open in editor</a>`);
+    if (url) actions.push(`<a class="btn soft" href="${hk(url)}">${iconI('open')}Open in editor</a>`);
     html += `<div class="actions">${actions.join('')}</div></div>`;
     html += `<div class="sec"><h3>Defined in</h3><div class="list">${rowFor('f:' + i.f.p)}</div></div>`;
     const users = G.links.filter((l) => l.b === 'f:' + i.f.p && (l.names || []).some((nm) => nm === i.s[0] || (nm === 'default' && i.s[3])));

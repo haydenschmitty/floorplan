@@ -117,8 +117,25 @@ test('the Claude Code CLI comes first for a map Claude built, with read-only too
   const [first, second] = s.calls();
   assert.ok(first.args.includes('-p'));
   assert.deepEqual(first.args.slice(first.args.indexOf('--allowedTools') + 1), ['Bash(node floorplan/query.mjs:*)', 'Read', 'Grep', 'Glob']);
+  assert.ok(first.args.slice(first.args.indexOf('--disallowedTools') + 1).includes('Read(floorplan/index.html)'), 'the generated map page is off limits');
+  // none of the person's MCP servers: the empty config arrives as one argument, exactly, on every platform
+  assert.ok(first.args.includes('--strict-mcp-config'), 'only the MCP servers given here');
+  assert.equal(first.args[first.args.indexOf('--mcp-config') + 1], '{"mcpServers":{}}');
+  assert.deepEqual(JSON.parse(first.args[first.args.indexOf('--mcp-config') + 1]), { mcpServers: {} });
+  assert.ok(second.args.includes('--strict-mcp-config') && second.args.includes('--mcp-config'), 'follow-ups too');
   assert.equal(first.input, 'How do refunds work?');
   assert.equal(second.args[second.args.indexOf('--resume') + 1], 'test-session');
+});
+
+test('a person with many MCP servers still gets answers: Claude Code is started with none of them', async () => {
+  const s = await serve({ FAKE_MANY_MCP: '1', FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli') });
+  const events = await ask(s, 'How do refunds work?');
+  assert.deepEqual(pick(events, 'failure'), []);
+  assert.equal(pick(events, 'answer')[0]?.title, 'Refunds');
+  // the same for the other kinds of request: a new guided flow
+  const flow = await fetch(s.base + '/api/ask', { method: 'POST', headers: { 'content-type': 'application/json', 'x-floorplan-token': s.token }, body: JSON.stringify({ question: 'Show checkout', mode: 'flow' }) });
+  assert.doesNotMatch(await flow.text(), /Prompt is too long/);
+  for (const call of s.calls()) assert.equal(call.args[call.args.indexOf('--mcp-config') + 1], '{"mcpServers":{}}');
 });
 
 test('--engine picks one CLI and never falls back to the other', async () => {

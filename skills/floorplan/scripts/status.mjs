@@ -5,7 +5,7 @@
 // blueprint | map, plus the text as "text".
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, mapDir, LEGACY_MAP_DIR, isMapDir, parseArgs, unattendedMode, printJson } from './lib/common.mjs';
+import { git, mapDir, LEGACY_MAP_DIR, isMapDir, parseArgs, unattendedMode, printJson, readJsonFile } from './lib/common.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 unattendedMode(args);
@@ -25,7 +25,7 @@ try {
     data.state = hasPlan ? 'blueprint-started' : hasArch ? 'unbuilt' : 'none';
     lines.push(hasPlan ? 'a blueprint was started (plan.json) but never drawn: write architecture.json if it is missing, then run plan.mjs and build.mjs.' : hasArch ? 'architecture.json exists but was never built: run build.mjs.' : 'none: no floorplan here yet (fresh run).');
   } else {
-    const g = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
+    const g = readJsonFile(graphFile);
     Object.assign(data, { builtAt: g.meta.generatedAt, files: g.meta.counts.files, nodes: g.nodes.length, agent: g.meta.agent || null });
     if (g.meta.blueprint) {
       data.state = 'blueprint';

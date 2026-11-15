@@ -3,11 +3,13 @@
 // have already reloaded themselves), restarts it if serve.mjs changed, otherwise starts it in the
 // background and opens a browser tab. Prints the URL and how to stop it.
 // usage: node open.mjs [root] [--no-open] [--port N] [--engine claude|codex] [--model M] [--claude PATH] [--codex PATH]
+//                      [--editor NAME|LINK]   (the editor "Open in editor" opens, e.g. cursor or "zed://file/{path}:{line}")
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { parseArgs, mapDir, unattendedMode } from './lib/common.mjs';
+import { parseArgs, mapDir, unattendedMode, readJsonFile } from './lib/common.mjs';
+import { editorTemplate } from '../assets/page-safety.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
@@ -27,8 +29,12 @@ if (!fs.existsSync(path.join(dir, 'index.html')) || !fs.existsSync(serveFile)) {
   process.exit(1);
 }
 
+// --editor: checked here too, so a mistake is named now rather than in the server's log
+const editor = args.editor === undefined ? null : editorTemplate(args.editor === true ? '' : String(args.editor));
+if (editor?.error) { console.error(`✗ --editor ${editor.error}`); process.exit(1); }
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return null; } };
+const readState = () => { try { return readJsonFile(stateFile); } catch { return null; } };
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 async function api(s, p) {
   try {
@@ -47,8 +53,9 @@ let status = s?.pid && alive(s.pid) ? await api(s, '/api/status') : null;
 let restarted = false;
 const hadTabs = status?.tabs > 0;
 
-if (status && status.hash !== hash) {
-  // a newer serve.mjs came with this build: restart so the map gets it; open tabs reconnect and reload
+// a newer serve.mjs came with this build, or a different --editor was asked for: restart so the map gets it;
+// open tabs reconnect and reload
+if (status && (status.hash !== hash || (editor?.template && status.editor !== editor.template))) {
   try { process.kill(s.pid); } catch {}
   for (let i = 0; i < 20 && alive(s.pid); i++) await sleep(150);
   status = null;
@@ -56,7 +63,7 @@ if (status && status.hash !== hash) {
 }
 
 if (!status) {
-  const pass = ['port', 'engine', 'model', 'claude', 'codex'].flatMap((k) => (args[k] ? ['--' + k, String(args[k])] : []));
+  const pass = ['port', 'engine', 'model', 'claude', 'codex', 'editor'].flatMap((k) => (args[k] ? ['--' + k, String(args[k])] : []));
   if (!args.port && s?.port) pass.push('--port', String(s.port)); // keep the address people have open
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   const log = fs.openSync(path.join(dir, '.cache', 'server.log'), 'w');

@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { discover, listGitFiles, explainGitError, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson, skippedConfigs, MAX_CONFIG_BYTES } from './lib/common.mjs';
+import { discover, listGitFiles, explainGitError, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson, skippedConfigs, MAX_CONFIG_BYTES, readJsonFile, notMapped } from './lib/common.mjs';
 import { extract, callableCallsVia } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
@@ -238,6 +238,11 @@ if (problems.length) {
 const byCat = {};
 for (const f of scan.files) byCat[f.category] = (byCat[f.category] || 0) + 1;
 line(`FILES  ${Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
+// the kinds the map will show: architecture.json's "include" once it's written, code alone until then
+let include = ['code'];
+try { const a = readJsonFile(path.join(outDir, 'architecture.json')); if (Array.isArray(a?.include) && a.include.every((k) => typeof k === 'string')) include = a.include; } catch {}
+const leftOut = notMapped(scan.files, include);
+if (leftOut.line) line(leftOut.line);
 const byLang = {};
 for (const f of code) { byLang[f.lang] ??= { files: 0, loc: 0 }; byLang[f.lang].files++; byLang[f.lang].loc += f.loc; }
 line(`CODE   ${Object.entries(byLang).sort((a, b) => b[1].loc - a[1].loc).slice(0, 10).map(([k, v]) => `${k} ${v.files} files/${fmtNum(v.loc)} loc`).join(' · ')}`);
@@ -353,6 +358,7 @@ else {
       files: scan.files.length,
       outsideRepos: looseCount,
       byCategory: byCat,
+      notMapped: leftOut.byCategory,
       code: { files: code.length, loc: code.reduce((s, f) => s + f.loc, 0) },
       byLanguage: byLang,
       routes: routes.length,

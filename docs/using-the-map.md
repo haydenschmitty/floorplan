@@ -132,7 +132,33 @@ Everything above describes a map of existing code, which is what most maps are. 
 | a line | Ask about this connection · Show details |
 | the background | Ask about this view · Up one level · Back to overview · Fit to screen · Search |
 
-**Open in editor** opens the file in VS Code (or another editor that handles `vscode://` links) at the right line.
+**Open in editor** opens the file at the right line, in VS Code unless you choose another editor.
+
+### Choosing the editor
+
+**Open in editor**, **Open handler** and the right-click **Open in editor** all use the same setting. Set it in `floorplan/architecture.json` (or ask Claude or Codex to: "open files from the map in Cursor"):
+
+```json
+{ "editor": "cursor" }
+```
+
+or for one run of the map's server, for every map it shows, which wins over `architecture.json`:
+
+```bash
+node floorplan/serve.mjs --editor zed
+```
+
+`open.mjs` passes `--editor` on (and restarts a running server that uses a different one), and `FLOORPLAN_EDITOR=cursor` (in PowerShell, `$env:FLOORPLAN_EDITOR = "cursor"`) sets it for every server you start.
+
+The setting is an editor's name or a link of your own:
+
+| Name | Opens |
+|---|---|
+| `vscode` (the default) | `vscode://file/{path}:{line}` |
+| `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed` | the same link in that editor's scheme, e.g. `cursor://file/{path}:{line}` |
+| `idea`, `phpstorm` | `idea://open?file={path}&line={line}` (and `phpstorm://…`), where the IDE registers its links (macOS, or with JetBrains Toolbox) |
+
+A link of your own uses `{path}` (the file's full path, required), `{line}` and `{column}` (always 1, since the map knows lines only), for example `"zed://file/{path}:{line}:{column}"` or `"pycharm://open?file={path}&line={line}"`. It must use an editor's own scheme: `vscode`, `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed`, `idea`, `phpstorm`, `pycharm`, `webstorm`, `goland`, `rubymine`, `clion`, `rider`, `txmt`, `mvim` or `subl`. Web addresses, `file:`, `javascript:` and `data:` links aren't allowed, so nothing written into `architecture.json` can turn the button into something else; the build names a setting it can't use, and the map's server won't start with one. Open an issue to add an editor's scheme. Exported copies have no editor links.
 
 ## Links to a place on the map
 
