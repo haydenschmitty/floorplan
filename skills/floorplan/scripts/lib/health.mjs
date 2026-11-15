@@ -477,32 +477,38 @@ function pyDepRefs(text, sig = '') {
   return [...refs];
 }
 
-// Read one Python argument/list expression without stopping at a nested call.
-// Ignore delimiters inside strings and comments; an incomplete expression is
-// not evidence of a guard, and must not swallow later routers or handlers.
+/**
+ * The inside of the Python bracket that opens at src[start] (`APIRouter(…)`, `[…]`), however deeply calls nest in
+ * it (`Depends(require_workspace("tours"))`), with comments and the insides of strings blanked, so a bracket or a
+ * `Depends(require_login)` written in either is neither a delimiter nor a dependency. An expression that doesn't
+ * close is '': it's no evidence of a check, and must not swallow the routers and handlers after it.
+ */
 function pyEnclosed(src, start) {
   const pairs = { '(': ')', '[': ']', '{': '}' }, stack = [pairs[src[start]]];
   if (!stack[0]) return '';
-  let quote = '', comment = false;
-  for (let i = start + 1; i < src.length; i++) {
+  let quote = '', comment = false, out = '';
+  for (let i = start + 1; i < src.length && i - start < 20000; i++) {
     const c = src[i];
-    if (comment) { if (c === '\n') comment = false; continue; }
+    if (comment) { if (c === '\n') { comment = false; out += c; } else out += ' '; continue; }
     if (quote) {
-      if (c === '\\') { i++; continue; }
-      if (src.startsWith(quote, i)) { i += quote.length - 1; quote = ''; }
+      if (c === '\\') { out += '  '; i++; continue; }
+      if (src.startsWith(quote, i)) { out += quote; i += quote.length - 1; quote = ''; continue; }
+      out += c === '\n' ? c : ' ';
       continue;
     }
-    if (c === '#') { comment = true; continue; }
+    if (c === '#') { comment = true; out += ' '; continue; }
     if (c === '"' || c === "'") {
       quote = src.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      out += quote;
       i += quote.length - 1;
       continue;
     }
     if (pairs[c]) stack.push(pairs[c]);
-    else if (/[)\]}]/.test(c)) {
+    else if (c === ')' || c === ']' || c === '}') {
       if (c !== stack.pop()) return '';
-      if (!stack.length) return src.slice(start + 1, i);
+      if (!stack.length) return out;
     }
+    out += c;
   }
   return '';
 }
