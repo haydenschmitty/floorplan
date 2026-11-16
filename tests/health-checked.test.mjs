@@ -110,9 +110,13 @@ test('PHP that answers requests itself, with no endpoints the scan can see, make
     const root = makeProject({ 'lib/db.php': '<?php\nfunction save($x) {}\n', ...files }, { arch: ARCH });
     try { scanAndBuild(root); return byCheck(readGraph(root)).endpoints; } finally { cleanup(root); }
   };
-  let c = loud({ 'public/contact.php': page(`if ($_SERVER['REQUEST_METHOD'] === 'POST') { save($_POST['email']); }`) });
+  let c = loud({ 'app/contact.php': page(`if ($_SERVER['REQUEST_METHOD'] === 'POST') { save($_POST['email']); }`) });
   assert.equal(c.loud, true);
-  assert.match(c.text, /public\/contact\.php looks like it runs a server \(it reads \$_SERVER\['REQUEST_METHOD'\]\)/);
+  assert.match(c.text, /app\/contact\.php looks like it runs a server \(it reads \$_SERVER\['REQUEST_METHOD'\]\)/);
+  // under a document root the same script is a page: an endpoint, found though Health can't judge it yet, so not loud
+  c = loud({ 'public/contact.php': page(`if ($_SERVER['REQUEST_METHOD'] === 'POST') { save($_POST['email']); }`) });
+  assert.equal(c.loud, undefined, c.text);
+  assert.match(c.text, /^not checked: 1 endpoint found, but set up in a way Floorplan can’t check for a login yet/);
   c = loud({ 'src/Controller/OrderController.php': `<?php\nclass OrderController {\n    #[Route('/orders', methods: ['GET'])]\n    public function list() { return []; }\n}\n` });
   assert.match(c.text, /OrderController\.php looks like it runs a server \(it declares routes with #\[Route\]\)/);
   c = loud({ 'index.php': `<?php\n$app = AppFactory::create();\n$app->get('/orders', fn ($req, $res) => $res);\n$app->run();\n` });
