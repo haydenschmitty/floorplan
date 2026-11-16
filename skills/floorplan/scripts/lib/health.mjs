@@ -1905,6 +1905,17 @@ export function buildHealth({ graph, scan, arch, root }) {
     // one verdict per endpoint: several events (with and without an authorizer) can share a handler
     routeFinding.set(`${r.file}|${r.line}|${r.method}|${r.path}`, rec);
   }
+  // Supabase Edge Functions answering every request themselves: the function's own code decides who may call it.
+  // Supabase's verify_jwt (on unless config.toml turns it off) isn't counted: the public anon key the website
+  // ships passes it, so it doesn't say the caller signed in.
+  for (const r of scan.routes || []) {
+    if (r.framework !== 'supabase-edge') continue;
+    const body = readSource(r.file);
+    const rec = { k: 'route', line: r.line, method: r.method, fn: null };
+    if (INLINE_CHECK.test(body)) rec.via = 'inline';
+    if (SIGNATURE_CHECK.test(body)) rec.signed = true;
+    routeFinding.set(`${r.file}|${r.line}|${r.method}|${r.path}`, rec);
+  }
   const published = new Map(); // repo -> addresses it lists for crawlers and AI tools
   for (const f of scan.files) {
     if (!LISTING_FILE.test(f.path) || TEST_FILE.test(f.path) || EXAMPLE_FILE.test(f.path)) continue;
