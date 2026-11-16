@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Serverless Framework endpoints are on the map:** a backend whose endpoints are declared in `serverless.yml` rather than in code showed none, so the website's requests to it weren't connected and Health skipped its sign-in check. Endpoints now come from each function's `http` and `httpApi` events (`path` and `method`, `any` and `*`, and the short `http: GET /orders` form) in `serverless.yml`, `serverless-*.yml` and `serverless_*.yml`, including function lists split across files included with `${file(./functions.yml)}`. Each endpoint sits in the file its `handler:` names (`src/orders.create` is `create` in `src/orders.ts`), followed through a file that re-exports it, or into another file's function when the handler only passes the request on to it (`(event) => withEvent(event, options, orders.create)`). Health counts an `authorizer`, `private: true` (an API key) or a sign-in check handed to the wrapper as protecting an endpoint, and still reads the handler for a check of its own. CloudFormation tags (`!Ref`, `!GetAtt`, `!Sub`), `${opt:…}` and `${self:…}` variables and anchors are read without trouble, and the scan summary lists schedules, queues, streams and other background functions for a worker node.
+
 ## 0.10.0 (2026-11-15)
 
 - **One unusual letter no longer blanks the map:** to list the page's own scripts in its Content-Security-Policy, the build reads a lower-cased copy of the page, and a few letters get longer when lower-cased (the Turkish "İ" becomes two characters). One of them anywhere before the scripts, in a comment the scan picked up, a file name or a description, moved every later script by one character in that copy, so their fingerprints were wrong, the browser blocked them and the map drew nothing. Only A to Z are lower-cased now, the way the browser reads tag names, so the copy always lines up with the page. Fixed by @OfficialCodeVoyage in #118.

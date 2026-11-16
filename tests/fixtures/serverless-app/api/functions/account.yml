@@ -1,0 +1,11 @@
+functions:
+  signUp:
+    handler: src/route.signUp
+    events:
+      - http:
+          path: account/signup
+          method: post
+  changeEmail:
+    handler: src/route.changeEmail
+    events:
+      - http: POST account/email

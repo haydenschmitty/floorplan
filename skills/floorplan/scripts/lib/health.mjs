@@ -1875,6 +1875,23 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
     return sourceOf.get(p);
   };
+  // Serverless Framework: an authorizer (or API key) on the event in serverless.yml checks the caller before the
+  // handler runs; without one, the handler may still check a token itself
+  for (const r of scan.routes || []) {
+    if (r.framework !== 'serverless') continue;
+    const rec = { k: 'route', line: r.line, method: r.method, fn: r.handler };
+    // a wrapper that hands the event on (`(e) => withAuth(e, users.update)`) may name the check among its arguments
+    const wrapper = r.wrapFile ? readSource(r.wrapFile).split('\n').slice(r.wrapLine - 1, r.wrapLine + 15).join('\n').split(/\n\s*export\b/)[0] : '';
+    const wrapGuard = (wrapper.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$]*/g) || []).find(isJsGuardName);
+    if (r.auth) Object.assign(rec, { guard: r.auth, via: 'gateway' });
+    else if (wrapGuard) Object.assign(rec, { guard: wrapGuard, via: 'wrapper' });
+    else {
+      const body = readSource(r.file).split('\n').slice(r.line - 1, r.line + 80).join('\n');
+      if (INLINE_CHECK.test(body) || INLINE_CHECK.test(wrapper)) rec.via = 'inline';
+      if (SIGNATURE_CHECK.test(body)) rec.signed = true;
+    }
+    routeFinding.set(`${r.file}|${r.line}|${r.method}`, rec);
+  }
   const published = new Map(); // repo -> addresses it lists for crawlers and AI tools
   for (const f of scan.files) {
     if (!LISTING_FILE.test(f.path) || TEST_FILE.test(f.path) || EXAMPLE_FILE.test(f.path)) continue;

@@ -18,6 +18,7 @@ import { findScreens } from './lib/screens.mjs';
 import { createResolver, applyGlobalUsings } from './lib/resolve.mjs';
 import { resolveRoutes, matchCalls, matchWayfinder, inertiaLinks } from './lib/routes.mjs';
 import { nuxtAutoImports } from './lib/nuxt.mjs';
+import { serverlessRoutes } from './lib/serverless.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const unattended = unattendedMode(args);
@@ -178,6 +179,9 @@ if (wrappers.size) for (const f of files) {
 
 // ---------- 4. routes and HTTP calls ----------
 const routes = resolveRoutes(files);
+// Serverless Framework: endpoints declared in serverless.yml, placed in the file that answers them (lib/serverless.mjs)
+const serverless = serverlessRoutes(files, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
+routes.push(...serverless.routes);
 const http = matchCalls(files, routes);
 // Laravel: Wayfinder's named routes and controller actions, and the Inertia page each endpoint opens
 const wayfinderLinks = matchWayfinder(files, routes, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
@@ -354,6 +358,19 @@ if (fbRoutes.length || triggers.length) {
     line('  background (schedules and triggers; place them in a worker node):');
     for (const t of triggers.slice(0, 20)) line(`    ${t.name}  ${t.on}${t.what ? ` "${t.what}"` : ''}  ${t.file}:${t.line}`);
     if (triggers.length > 20) line(`    … ${triggers.length - 20} more`);
+  }
+  line();
+}
+
+// Serverless Framework: how many endpoints its configs declare, and the background functions beside them
+if (serverless.configs.length) {
+  const signedIn = serverless.routes.filter((r) => r.auth).length;
+  line(`SERVERLESS  ${serverless.routes.length} endpoints from ${serverless.configs.length} config file(s) (${serverless.configs.slice(0, 4).join(', ')}${serverless.configs.length > 4 ? ' …' : ''}), ${signedIn} behind an authorizer or API key, ${serverless.triggers.length} background`);
+  if (serverless.unresolved.length) line(`  ${serverless.unresolved.length} function(s) whose handler file wasn't found, so their endpoints aren't on the map: ${serverless.unresolved.slice(0, 5).map((u) => `${u.name} (${u.handler})`).join(', ')}${serverless.unresolved.length > 5 ? ' …' : ''}`);
+  if (serverless.triggers.length) {
+    line('  background (schedules, queues, streams, buckets; place them in a worker node):');
+    for (const t of serverless.triggers.slice(0, 20)) line(`    ${t.name}  ${t.on}${t.what ? ` "${t.what}"` : ''}  ${t.file}:${t.line}`);
+    if (serverless.triggers.length > 20) line(`    … ${serverless.triggers.length - 20} more`);
   }
   line();
 }
