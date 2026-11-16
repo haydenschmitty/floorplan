@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { lib, shopApp, run, readGraph, readJson, cleanup } from './helpers.mjs';
 
-const { detectAgent } = await lib('agent.mjs');
+const { detectAgent, cliLabel } = await lib('agent.mjs');
 
 test('Codex is recognised by the variables it sets for every command', () => {
   assert.equal(detectAgent({}, { CODEX_THREAD_ID: 'abc' }), 'codex');
@@ -73,4 +73,15 @@ test('the copy for the Claude app always says Claude, whoever built the map', ()
     assert.match(html, /"agent":"claude"/);
     assert.equal(readJson(path.join(root, 'floorplan', 'graph.json')).meta.agent, 'codex');
   } finally { cleanup(root); }
+});
+
+test("open.mjs names the program that answers questions, even when another one answers to the claude command (#95)", () => {
+  assert.equal(cliLabel('claude', '2.0.14 (Claude Code)'), 'the Claude Code CLI');
+  assert.equal(cliLabel('claude', ''), 'the Claude Code CLI');
+  assert.equal(cliLabel('codex', 'codex-cli 0.46.0'), 'Codex');
+  // a wrapper installed as `claude` says what it is in its --version
+  assert.equal(cliLabel('claude', 'devin 3000.11.238'), 'devin, found as the claude command');
+  assert.equal(cliLabel('codex', 'othertool v1.2.0'), 'othertool, found as the codex command');
+  // text that isn't a program and its version leaves the usual name
+  assert.equal(cliLabel('claude', 'unknown'), 'the Claude Code CLI');
 });

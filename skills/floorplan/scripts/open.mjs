@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { parseArgs, mapDir, unattendedMode, readJsonFile } from './lib/common.mjs';
 import { editorTemplate } from '../assets/page-safety.mjs';
+import { cliLabel } from './lib/agent.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
@@ -97,6 +98,6 @@ const CLI = {
   codex: { name: 'Codex', docs: 'https://developers.openai.com/codex' },
 };
 console.log(health?.cli
-  ? `ASK  works: questions run through ${CLI[health.engine]?.name || 'the Claude Code CLI'}${health.version ? ' (' + health.version + ')' : ''}`
+  ? `ASK  works: questions run through ${cliLabel(health.engine, health.version)}${health.version ? ' (' + health.version + ')' : ''}`
   : `ASK  needs ${(CLI[health?.want] || CLI.claude).name}, which was not found; the map itself works (${(CLI[health?.want] || CLI.claude).docs})`);
 console.log(`SERVER  runs in the background, updates open tabs when the map is rebuilt, and stops ${IDLE_MINUTES / 60} hours after the last tab closes. Stop it now: node ${rel}/serve.mjs --stop`);
