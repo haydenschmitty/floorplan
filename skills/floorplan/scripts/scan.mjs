@@ -19,6 +19,7 @@ import { createResolver, applyGlobalUsings } from './lib/resolve.mjs';
 import { resolveRoutes, matchCalls, matchWayfinder, inertiaLinks } from './lib/routes.mjs';
 import { nuxtAutoImports } from './lib/nuxt.mjs';
 import { serverlessRoutes } from './lib/serverless.mjs';
+import { edgeFunctionRoutes } from './lib/supabase-functions.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const unattended = unattendedMode(args);
@@ -182,6 +183,8 @@ const routes = resolveRoutes(files);
 // Serverless Framework: endpoints declared in serverless.yml, placed in the file that answers them (lib/serverless.mjs)
 const serverless = serverlessRoutes(files, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
 routes.push(...serverless.routes);
+// Supabase Edge Functions: each one's address under /functions/v1 (lib/supabase-functions.mjs)
+const edge = edgeFunctionRoutes(files, routes, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
 const http = matchCalls(files, routes);
 // Laravel: Wayfinder's named routes and controller actions, and the Inertia page each endpoint opens
 const wayfinderLinks = matchWayfinder(files, routes, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
@@ -363,6 +366,12 @@ if (fbRoutes.length || triggers.length) {
 }
 
 // Serverless Framework: how many endpoints its configs declare, and the background functions beside them
+if (edge.functions.length) {
+  const n = edge.functions.reduce((a, x) => a + x.routes, 0);
+  line(`SUPABASE EDGE FUNCTIONS  ${edge.functions.length} function(s), ${n} endpoint(s) under /functions/v1: ${edge.functions.slice(0, 8).map((x) => x.name).join(', ')}${edge.functions.length > 8 ? ' …' : ''}`);
+  line();
+}
+
 if (serverless.configs.length) {
   const signedIn = serverless.routes.filter((r) => r.auth).length;
   line(`SERVERLESS  ${serverless.routes.length} endpoints from ${serverless.configs.length} config file(s) (${serverless.configs.slice(0, 4).join(', ')}${serverless.configs.length > 4 ? ' …' : ''}), ${signedIn} behind an authorizer or API key, ${serverless.triggers.length} background`);

@@ -490,7 +490,27 @@ function extractJs(src, filePath) {
   }
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
   calls.push(...callables.calls);
+  if (/\.functions\s*\.\s*invoke\b/.test(code)) calls.push(...edgeInvokeCalls(code, at));
   return { imports, symbols, routes, mounts, calls, hosts, ...(routerVars.size ? { routerVars: [...routerVars] } : {}), ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
+}
+
+// ---------- Supabase Edge Functions ----------
+
+const EDGE_INVOKE = /\.functions\s*\.\s*invoke\s*(?:<[^()]{0,200}>)?\s*\(\s*(["'`])([A-Za-z0-9][\w-]*(?:\/[\w-]+)*)\1/g;
+/**
+ * supabase.functions.invoke('send-invite', { body }) is a request to /functions/v1/send-invite: a POST unless its
+ * options (read up to the call's closing bracket, a few hundred characters at most) give another method.
+ */
+function edgeInvokeCalls(code, at) {
+  const out = [];
+  for (const m of code.matchAll(EDGE_INVOKE)) {
+    const rest = code.slice(m.index + m[0].length, m.index + m[0].length + 600);
+    let depth = 1, end = 0;
+    for (; end < rest.length && depth; end++) depth += rest[end] === '(' ? 1 : rest[end] === ')' ? -1 : 0;
+    const method = /\bmethod\s*:\s*["'`](GET|POST|PUT|PATCH|DELETE)["'`]/i.exec(rest.slice(0, end))?.[1]?.toUpperCase() || 'POST';
+    out.push({ path: '/functions/v1/' + m[2], method, line: at(m.index) });
+  }
+  return out;
 }
 
 // ---------- Firebase Cloud Functions ----------
