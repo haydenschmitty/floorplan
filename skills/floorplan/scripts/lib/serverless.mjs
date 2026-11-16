@@ -36,7 +36,7 @@ function yamlLines(src) {
   const out = [];
   for (const raw of src.replace(/\r/g, '').split('\n')) {
     if (/^(---|\.\.\.)\s*$/.test(raw)) continue;
-    const t = stripComment(raw.replace(/\t/g, '  ')).replace(/\s+$/, '');
+    const t = stripComment(raw.replace(/\t/g, '  ')).trimEnd();
     if (!t.trim()) { out.push({ indent: -1, text: '' }); continue; }
     let indent = t.length - t.trimStart().length;
     let text = t.trimStart();
@@ -53,8 +53,28 @@ function yamlLines(src) {
   return out;
 }
 
-// a key may hold colons not followed by a space (Fn::ImportValue:)
-const KEY = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s"'{[\]#&*!|>-](?:[^:]|:(?=\S))*?|-[^\s:](?:[^:]|:(?=\S))*?|<<)\s*:(?:\s+(.*))?$/;
+/**
+ * `key: value` as [key, value], or null. One pass along the line (a regular expression here slowed down on long
+ * lines). A key may hold colons not followed by a space (Fn::ImportValue:), or be quoted.
+ */
+function splitKey(text) {
+  let end;
+  if (text[0] === '"' || text[0] === "'") {
+    const close = /^"(?:[^"\\]|\\.)*"|^'(?:[^']|'')*'/.exec(text);
+    if (!close) return null;
+    end = close[0].length;
+    while (text[end] === ' ') end++;
+    if (text[end] !== ':') return null;
+  } else {
+    if (/^[\s{[\]#&*!|>:]|^-(?:[\s:]|$)/.test(text)) return null;
+    end = -1;
+    for (let i = 0; i < text.length; i++) if (text[i] === ':' && (i + 1 === text.length || text[i + 1] === ' ')) { end = i; break; }
+    if (end < 0) return null;
+  }
+  const after = text.slice(end + 1);
+  if (after && after[0] !== ' ') return null;
+  return [text.slice(0, end).trimEnd(), after.trim()];
+}
 
 function unquote(s) {
   if (/^".*"$/.test(s)) return s.slice(1, -1).replace(/\\"/g, '"');
@@ -99,14 +119,17 @@ export function parseYaml(src) {
     const ws = () => { while (p < s.length && /\s/.test(s[p])) p++; };
     const item = () => {
       ws();
-      if (s[p] === '[') { p++; const arr = []; for (ws(); p < s.length && s[p] !== ']'; ws()) { arr.push(item()); ws(); if (s[p] === ',') p++; } p++; return arr; }
+      // each pass moves forward: a stray ] or } where a value should be is skipped, never read forever
+      if (s[p] === '[') { p++; const arr = []; for (ws(); p < s.length && s[p] !== ']'; ws()) { const at = p; arr.push(item()); ws(); if (s[p] === ',') p++; if (p === at) p++; } p++; return arr; }
       if (s[p] === '{') {
         p++; const obj = {};
         for (ws(); p < s.length && s[p] !== '}'; ws()) {
+          const at = p;
           const k = atom(true); ws();
           let v = null;
           if (s[p] === ':') { p++; v = item(); }
           obj[k] = v; ws(); if (s[p] === ',') p++;
+          if (p === at) p++;
         }
         p++; return obj;
       }
@@ -141,7 +164,7 @@ export function parseYaml(src) {
     if (i >= lines.length || lines[i].indent < indent) return null;
     const at = lines[i].indent;
     if (lines[i].text === '-') return list(at);
-    if (KEY.test(lines[i].text)) return map(at);
+    if (splitKey(lines[i].text)) return map(at);
     const first = lines[i++].text;
     return scalar(continued(first, at));
   };
@@ -159,15 +182,15 @@ export function parseYaml(src) {
   const map = (indent) => {
     const obj = {};
     for (skipBlank(); i < lines.length && lines[i].indent === indent; skipBlank()) {
-      const m = KEY.exec(lines[i].text);
+      const m = splitKey(lines[i].text);
       if (!m) { // not `key: value`: skip it and what's under it
         i++;
         while (i < lines.length && (lines[i].indent < 0 || lines[i].indent > indent)) i++;
         continue;
       }
       i++;
-      const key = unquote(m[1].trim());
-      let rest = (m[2] || '').trim();
+      const key = unquote(m[0]);
+      const rest = m[1];
       let v;
       if (/^[|>][-+\d]*$/.test(rest)) { // a block of text: not needed
         while (i < lines.length && (lines[i].indent < 0 || lines[i].indent > indent)) i++;
@@ -254,7 +277,7 @@ export function serverlessRoutes(files, read) {
         if (kind === 'http' || kind === 'httpApi') {
           const e = httpEvent(kind, spec);
           if (!e) continue;
-          routes.push({ file: target.file, method: e.method, path: e.path, line: target.line, handler: target.handler, framework: 'serverless', ...(e.auth ? { auth: e.auth } : {}), ...(target.wrap ? { wrapFile: target.wrap.file, wrapLine: target.wrap.line } : {}), config: p });
+          routes.push({ file: target.file, method: e.method, path: e.path, line: target.line, handler: target.handler, framework: 'serverless', ...(e.auth ? { auth: e.auth } : {}), ...(target.wrap ? { wrapFile: target.wrap.file, wrapLine: target.wrap.line, wrapName: target.wrap.name } : {}), config: p });
         } else if (BACKGROUND.includes(kind)) {
           triggers.push({ name, on: kind, ...(describeTrigger(spec) ? { what: describeTrigger(spec) } : {}), file: target.file, line: target.line });
         }
@@ -282,7 +305,7 @@ function httpEvent(kind, spec) {
     if (a && !(typeof a === 'string' && /^(none|false)$/i.test(a))) auth = authName(a);
     else if (spec.private === true) auth = 'API key';
   } else return null;
-  if (typeof p !== 'string' || !p) {
+  if (typeof p !== 'string') { // '' is the root
     if (kind === 'httpApi' && method === '*') p = '/{proxy+}'; else return null;
   }
   method = String(method || (kind === 'httpApi' ? '*' : '')).toUpperCase();
@@ -337,7 +360,7 @@ function handlerTarget(handler, serviceDir, byPath, read) {
   if (/\.py$/.test(file.path)) return own;
   const hop = wrappedHandler(read(file.path), name, file, byPath);
   // the wrapper is kept too: a sign-in check handed to it (withAuth, requireUser) protects the endpoint
-  return hop ? { file: hop.file.path, line: lineOf(hop.file, hop.name), handler: hop.name, wrap: { file: own.file, line: own.line } } : own;
+  return hop ? { file: hop.file.path, line: lineOf(hop.file, hop.name), handler: hop.name, wrap: { file: own.file, line: own.line, name } } : own;
 }
 
 /** The function an export passes the request on to, when it's clearly one function from another project file. */

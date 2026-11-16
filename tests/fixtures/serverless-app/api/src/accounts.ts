@@ -7,3 +7,8 @@ export async function registerUser(body) {
 export async function changeEmail(body) {
   return { email: body.email };
 }
+
+/** Deletes an account. */
+export async function deleteUser(body) {
+  return { deleted: body.id };
+}

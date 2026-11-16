@@ -30,6 +30,9 @@ functions:
       handler: src/index.ping
       events:
         - httpApi: GET /status
+        - httpApi:
+            path: ''
+            method: get
   - nightlyCleanup:
       handler: src/jobs.cleanup
       events:

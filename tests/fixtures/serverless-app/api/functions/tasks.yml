@@ -27,6 +27,8 @@ importTasks:
         path: tasks/import
         method: post
         private: true
+    # the same handler at a second address, with no check: an oversight Health must still see
+    - http: POST admin/tasks/import
 shareTask:
   handler: src/share.handler
   events:

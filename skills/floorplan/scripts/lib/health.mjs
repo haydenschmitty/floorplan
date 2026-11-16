@@ -1882,7 +1882,9 @@ export function buildHealth({ graph, scan, arch, root }) {
     const rec = { k: 'route', line: r.line, method: r.method, fn: r.handler };
     // a wrapper that hands the event on (`(e) => withAuth(e, users.update)`) may name the check among its arguments
     const wrapper = r.wrapFile ? readSource(r.wrapFile).split('\n').slice(r.wrapLine - 1, r.wrapLine + 15).join('\n').split(/\n\s*export\b/)[0] : '';
-    const wrapGuard = (wrapper.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$]*/g) || []).find(isJsGuardName);
+    // only what it's handed counts, not its own name (deleteUser, getSession) or the function it passes the request to
+    const wrapGuard = (wrapper.replace(/^[^=]*=/, '').replace(JS_STRING, '""').match(/[A-Za-z_$][\w$]*/g) || [])
+      .filter((n) => n !== r.wrapName && n !== r.handler).find(isJsGuardName);
     if (r.auth) Object.assign(rec, { guard: r.auth, via: 'gateway' });
     else if (wrapGuard) Object.assign(rec, { guard: wrapGuard, via: 'wrapper' });
     else {
@@ -1890,7 +1892,8 @@ export function buildHealth({ graph, scan, arch, root }) {
       if (INLINE_CHECK.test(body) || INLINE_CHECK.test(wrapper)) rec.via = 'inline';
       if (SIGNATURE_CHECK.test(body)) rec.signed = true;
     }
-    routeFinding.set(`${r.file}|${r.line}|${r.method}`, rec);
+    // one verdict per endpoint: several events (with and without an authorizer) can share a handler
+    routeFinding.set(`${r.file}|${r.line}|${r.method}|${r.path}`, rec);
   }
   const published = new Map(); // repo -> addresses it lists for crawlers and AI tools
   for (const f of scan.files) {
@@ -1939,7 +1942,7 @@ export function buildHealth({ graph, scan, arch, root }) {
   const perRepo = new Map(); // repo -> { guarded, open: [], guardCounts }
   const appWide = new Map(); // `${file}|${line}` -> an app-wide check and how many endpoints only it protects
   graph.routes.forEach((r, i) => {
-    const own = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
+    const own = routeFinding.get(`${r.f}|${r.l}|${r.m}|${r.p}`) || routeFinding.get(`${r.f}|${r.l}|${r.m}`);
     const fnd = /\.cs$/.test(r.f) ? csFinding(own, r, cs) : own;
     if (!fnd) return; // framework we don't analyse: say nothing
     const gf = fileByPath.get(r.f);

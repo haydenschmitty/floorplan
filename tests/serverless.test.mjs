@@ -29,8 +29,8 @@ const where = (m, p) => { const r = graph.routes.find((x) => x.m === m && x.p ==
 
 test('endpoints come from serverless.yml and the files it includes, in short and long forms', () => {
   assert.deepEqual(routeKeys(graph), [
-    'ANY /tasks/{id}/share', 'DELETE /tasks/{id}', 'GET /status', 'GET /tasks',
-    'POST /account/email', 'POST /account/signup', 'POST /tasks', 'POST /tasks/import',
+    'ANY /tasks/{id}/share', 'DELETE /account', 'DELETE /tasks/{id}', 'GET /', 'GET /status', 'GET /tasks',
+    'POST /account/email', 'POST /account/signup', 'POST /admin/tasks/import', 'POST /tasks', 'POST /tasks/import',
   ]);
 });
 
@@ -58,15 +58,17 @@ test("the website's requests reach the serverless endpoints", () => {
 });
 
 test('Health: an authorizer, an API key, a check handed to the wrapper or one in the handler protects an endpoint; none leaves it open', () => {
-  // changeEmail's wrapper is given requireUser; signUp's only checkInput, and a sign-up page is public anyway
-  assert.deepEqual(openEndpoints(graph), ['DELETE /tasks/{id}']);
+  // changeEmail's wrapper is given requireUser; signUp's only checkInput, and a sign-up page is public anyway.
+  // deleteUser's own name sounds like a check but isn't one; importAll answers at two addresses, and only
+  // /tasks/import is behind an API key
+  assert.deepEqual(openEndpoints(graph), ['DELETE /account', 'DELETE /tasks/{id}', 'POST /admin/tasks/import']);
   const checked = graph.health.checked.find((c) => c.check === 'endpoints');
   assert.equal(checked.checked, true, checked.text);
-  assert.match(checked.text, /8 endpoints/);
+  assert.match(checked.text, /11 endpoints/);
 });
 
 test('background functions are listed in the scan summary', () => {
-  assert.match(summary, /SERVERLESS {2}8 endpoints from 1 config file\(s\) \(api\/serverless\.yml\), 3 behind an authorizer or API key, 2 background/);
+  assert.match(summary, /SERVERLESS {2}11 endpoints from 1 config file\(s\) \(api\/serverless\.yml\), 3 behind an authorizer or API key, 2 background/);
   assert.match(summary, /nightlyCleanup {2}schedule "rate\(1 day\)" {2}api\/src\/jobs\.ts:2/);
   assert.match(summary, /nightlyCleanup {2}sqs {2}api\/src\/jobs\.ts:2/);
 });
@@ -100,6 +102,14 @@ test('YAML: CloudFormation tags, variables, anchors, flow lists and text blocks 
   assert.equal(doc.after, 'yes');
   // nonsense is text, never an error
   for (const junk of ['{ unclosed', '- - - :', ': : :', '"open quote', '&a *b !c', '\t\tkey:\n  - x\n y: [']) assert.doesNotThrow(() => parseYaml(junk));
+});
+
+test('YAML: stray brackets and very long lines are read quickly, never forever', { timeout: 10000 }, () => {
+  for (const junk of ['key: [}]', 'key: {]}', 'cors: { origin: * ] }', 'k: [[[}}}]]]', 'k: {{{]]]}}}']) assert.doesNotThrow(() => parseYaml(junk));
+  const t0 = Date.now();
+  parseYaml(['a' + ' '.repeat(200000) + 'b', 'k' + ':x'.repeat(100000), 'key: ' + '['.repeat(5000)].join('\n'));
+  assert.ok(Date.now() - t0 < 2000, `took ${Date.now() - t0} ms`);
+  assert.deepEqual(parseYaml('Fn::ImportValue: x\n"quoted key": y\n-dash: z'), { 'Fn::ImportValue': 'x', 'quoted key': 'y', '-dash': 'z' });
 });
 
 test('includes that loop back, handlers that are missing, and events without an address are skipped', () => {
