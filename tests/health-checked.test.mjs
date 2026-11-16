@@ -104,6 +104,29 @@ test('a Supabase Edge Function with no endpoints the scan can see makes the endp
   } finally { cleanup(root); }
 });
 
+test('PHP that answers requests itself, with no endpoints the scan can see, makes the endpoint line loud', () => {
+  const page = (body) => `<?php\nrequire __DIR__.'/lib/db.php';\n${body}\n`;
+  const loud = (files) => {
+    const root = makeProject({ 'lib/db.php': '<?php\nfunction save($x) {}\n', ...files }, { arch: ARCH });
+    try { scanAndBuild(root); return byCheck(readGraph(root)).endpoints; } finally { cleanup(root); }
+  };
+  let c = loud({ 'public/contact.php': page(`if ($_SERVER['REQUEST_METHOD'] === 'POST') { save($_POST['email']); }`) });
+  assert.equal(c.loud, true);
+  assert.match(c.text, /public\/contact\.php looks like it runs a server \(it reads \$_SERVER\['REQUEST_METHOD'\]\)/);
+  c = loud({ 'src/Controller/OrderController.php': `<?php\nclass OrderController {\n    #[Route('/orders', methods: ['GET'])]\n    public function list() { return []; }\n}\n` });
+  assert.match(c.text, /OrderController\.php looks like it runs a server \(it declares routes with #\[Route\]\)/);
+  c = loud({ 'index.php': `<?php\n$app = AppFactory::create();\n$app->get('/orders', fn ($req, $res) => $res);\n$app->run();\n` });
+  assert.match(c.text, /index\.php looks like it runs a server \(it calls \$app->get\)/);
+  // only mentioned in a comment or a string, a container's $app->get('config'), a template showing a value, or a test: quiet
+  c = loud({
+    'src/notes.php': page(`// read $_POST here later\n$help = 'use $_GET and $_SERVER["REQUEST_METHOD"]';\n$config = $app->get('config');`),
+    'resources/views/form.blade.php': `<p>{{ $_GET['q'] ?? '' }}</p>\n`,
+    'tests/Feature/ContactTest.php': page(`$_POST['email'] = 'a@example.com';`),
+  });
+  assert.equal(c.loud, undefined, c.text);
+  assert.match(c.text, /^not checked: no endpoints found\. If your app has a server/);
+});
+
 // ---------- the Health panel ----------
 
 /** Runs the Health panel's code against a stand-in for the viewer, and returns the list's HTML and the overview row's. */

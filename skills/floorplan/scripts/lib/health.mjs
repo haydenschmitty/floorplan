@@ -12,6 +12,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob, blockComments, blankBlockComments, forwardIndexOf, callArgs } from './common.mjs';
+import { csRoutes, csCors, csStripeEvents, csStripeVerified, csBuildContext, csFinding } from './health-csharp.mjs';
+import { stripPhp, phpBare, phpBrackets, phpBudget, phpParts, phpSplit, phpStr, phpArrayBody, phpNamed, phpPairs } from './extract.mjs';
 
 export const lineIndex = (src) => {
   const starts = [0];
@@ -75,12 +77,17 @@ const FORMATS = [
 for (const fm of FORMATS) if (fm.re.source.startsWith('\\b')) fm.re = new RegExp(`(?<![A-Za-z0-9_\\-.])${fm.re.source.slice(2)}`, fm.re.flags);
 const JWT = /(?<![A-Za-z0-9_\-.])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}/g;
 const DB_URL = /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?)(?:\+\w+)?:\/\/([^:\s\/'"@]{1,200}):([^@\s'"]{1,200})@([^\/\s'":?,]+)/g;
+// .NET-style connection strings: "Server=db.example.com;User Id=app;Password=…;". Each part is bounded and
+// ends at ";", so a long line of look-alikes can't make every match scan to its end.
+const ADO_CONN = /\b(?:Server|Host|Data Source|Address|Addr)\s*=[^"'\n;]{0,200};(?:[^"'\n;]{0,200};){0,10}?[ \t]*(?:Password|Pwd)\s*=\s*([^;"'\n]{1,200})/gi;
+// SQL Server's names for this computer: (localdb)\MSSQLLocalDB, (local), "."
+const ADO_LOCAL_HOST = /^(\(localdb\)|\(local\)|\.)$/i;
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|db|postgres|mysql|redis|mongo|database|host\.docker\.internal)$/i;
 
 // Names that hold secrets (after camelCase → snake_case). Public-by-design keys are excluded below.
 const SECRET_NAME = /(?:^|[_.-])(api_?key|apikey|secret(?:_?key)?|client_?secret|app_?secret|token|access_?token|refresh_?token|auth_?token|authtoken|bearer_?token|passw(?:or)?d|passwd|pwd|private_?key|secret_?access_?key|signing_?(?:key|secret)|signature_?key|webhook_?secret|encryption_?key|auth(?:orization)?_?key|master_?key|credentials?)$/i;
 const PUBLIC_NAME = /(^|_)(public|publishable|anon|site_?key|example|sample|test|dummy|fake|mock|placeholder|default|field|label|header|name|type|url|uri|endpoint|path|file|env|var|prefix|length|len|min|max|regex|pattern|format|expires?|ttl)(_|$)|^(next_public|vite|react_app|expo_public|nuxt_public|gatsby)_/i;
-const ENV_LOOKUP = /os\.environ|os\.getenv|getenv\(|process\.env|import\.meta\.env|ENV\[|ENV\.fetch|System\.getenv|Deno\.env|secrets\.|config\(\s*['"]|env\(\s*['"]|\$\{\{/;
+const ENV_LOOKUP = /Environment\.GetEnvironmentVariable|GetConnectionString\(|Configuration\[|os\.environ|os\.getenv|getenv\(|process\.env|import\.meta\.env|ENV\[|ENV\.fetch|System\.getenv|Deno\.env|secrets\.|config\(\s*['"]|env\(\s*['"]|\$\{\{/;
 const PASSWORD_NAME = /pass|pwd/i;
 const CONFIG_LANGS = new Set(['yaml', 'yml', 'ini', 'cfg', 'conf', 'properties', 'env', 'toml']);
 
@@ -238,6 +245,14 @@ function findSecrets(src, f, out) {
       if (payload?.role !== 'service_role') continue; // "anon" keys are public by design
       add(at(m.index), { what: 'a Supabase service-role key (full access to your database, skipping all security rules)', svc: 'Supabase', sev: 'high', hint: mask(m[0]) });
     }
+    for (const m of src.matchAll(ADO_CONN)) {
+      const host = (/(?:Server|Host|Data Source|Address|Addr)\s*=\s*(?:tcp:)?([^;,"'\s]+)/i.exec(m[0])?.[1] || '').split(/[:\\]/)[0];
+      const pw = m[1].trim();
+      // the same rules as any other password: variables ($(DbPassword), %DB_PASSWORD%), C# interpolation
+      // ({password}), placeholders and made-up words aren't secrets
+      if (LOCAL_HOST.test(host) || ADO_LOCAL_HOST.test(host) || PLACEHOLDER.test(pw) || /^[:$%{<]/.test(pw) || !valueLooksReal(pw, 'password')) continue;
+      add(at(m.index), { what: 'a database password inside a connection string', svc: 'your database', sev: 'high', hint: mask(pw, true) });
+    }
     for (const m of src.matchAll(DB_URL)) {
       const [, user, pw, host] = m;
       if (LOCAL_HOST.test(host) || PLACEHOLDER.test(pw) || /^[:$%{<]/.test(pw) || pw.length < 4 || /^(password|pass|postgres|root|secret|admin|user)$/i.test(pw)) continue;
@@ -330,7 +345,7 @@ const GUARD_NAME = /(^|_)(login|auth|authenticated|authorized?|jwt|token|permiss
 // but not `login_required` or `logged_in_required`; validating a payload's shape (`validate`, `validate_body`,
 // `validate_user_input`) but not a credential (`validate_jwt`, `validate_api_key`, `validateToken`).
 const NOT_GUARD = /^(route|get|post|put|patch|delete|cached?|limit|limiter|rate_?limit\w*|cross_origin|wraps|staticmethod|classmethod|property|retry|timed|log(?!in(?:_|$)|ged_?in(?:_|$))\w*|swag_from|validate(?!_(?:\w+_)?(?:login|auth|authenticated|authorized?|jwt|tokens?|permissions?|perms?|roles?|staff|admin|superuser|owner|scopes?|session|api_?key|signature|signed|hmac|device|member|user|credentials?|bearer)$)\w*|expects|marshal\w*|doc|json_required|fields?_required|params?_required|body_required|transaction\w*|csrf\w*|exempt)$/i;
-const isGuardName = (name) => !!name && !NOT_GUARD.test(snake(name)) && GUARD_NAME.test(snake(name));
+const isGuardName = (name) => !!name && !NOT_GUARD.test(snake(name)) && (GUARD_NAME.test(snake(name)) || /^(authenticate|authorize)$/.test(snake(name)));
 // JavaScript checks GUARD_NAME doesn't spell out: passport.authenticate('jwt'), expressjwt({ … }), isLoggedIn
 const JS_GUARD_NAME = /(^|_)authenticate(_|$)|^express_?jwt$|(^|_)logged_in(_|$)/;
 const isJsGuardName = (name) => isGuardName(name) || (!!name && !NOT_GUARD.test(snake(name)) && JS_GUARD_NAME.test(snake(name)));
@@ -372,6 +387,12 @@ function useArgName(arg) {
   if (NOT_GUARD_MIDDLEWARE.test(snake(last)) || NOT_A_CHECK.test(snake(last))) return null;
   return [...segs].reverse().find(isUseGuard) || null;
 }
+// NestJS guards that check the caller (AuthGuard, JwtAuthGuard, RolesGuard), not rate limits or quotas
+const isNestAuthGuard = (name) => isGuardName(name) && !/rate_?limit|throttl|quota|limiter/i.test(snake(name));
+// an app-wide one also needs a name that says what it checks, past the word "guard" (see isUseGuard)
+const isNestGlobalGuard = (name) => isNestAuthGuard(name) && isUseGuard(name);
+// decorators that open a route past a global NestJS guard
+const NEST_PUBLIC = /@(?:Public|IsPublic|SkipAuth|NoAuth|AllowAnonymous|Anonymous)\s*\(/;
 // FastAPI dependencies that hand over a database session rather than check the caller
 // (SessionDep, get_db, get_sql_session, SessionLocal, a unit of work), matched on the snake_case name
 const DB_DEPENDENCY = /^(get_|new_|create_)?(async_)?(db|database|session|db_session|sessionmaker)$|(^|_)(db|database|sql\w*|engine|conn|connection|cursor|uow|unit_of_work)(_|$)|session_?(local|maker|factory)/i;
@@ -471,6 +492,42 @@ function pyDepRefs(text, sig = '') {
   return [...refs];
 }
 
+/**
+ * The inside of the Python bracket that opens at src[start] (`APIRouter(…)`, `[…]`), however deeply calls nest in
+ * it (`Depends(require_workspace("tours"))`), with comments and the insides of strings blanked, so a bracket or a
+ * `Depends(require_login)` written in either is neither a delimiter nor a dependency. An expression that doesn't
+ * close is '': it's no evidence of a check, and must not swallow the routers and handlers after it.
+ */
+function pyEnclosed(src, start) {
+  const pairs = { '(': ')', '[': ']', '{': '}' }, stack = [pairs[src[start]]];
+  if (!stack[0]) return '';
+  let quote = '', comment = false, out = '';
+  for (let i = start + 1; i < src.length && i - start < 20000; i++) {
+    const c = src[i];
+    if (comment) { if (c === '\n') { comment = false; out += c; } else out += ' '; continue; }
+    if (quote) {
+      if (c === '\\') { out += '  '; i++; continue; }
+      if (src.startsWith(quote, i)) { out += quote; i += quote.length - 1; quote = ''; continue; }
+      out += c === '\n' ? c : ' ';
+      continue;
+    }
+    if (c === '#') { comment = true; out += ' '; continue; }
+    if (c === '"' || c === "'") {
+      quote = src.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      out += quote;
+      i += quote.length - 1;
+      continue;
+    }
+    if (pairs[c]) stack.push(pairs[c]);
+    else if (c === ')' || c === ']' || c === '}') {
+      if (c !== stack.pop()) return '';
+      if (!stack.length) return out;
+    }
+    out += c;
+  }
+  return '';
+}
+
 function pyRoutes(src, f, out) {
   const lines = src.split('\n');
   const lineAt = (() => { const at = lineIndex(src); return (i) => at(i) - 1; })(); // 0-based line of an offset
@@ -493,9 +550,10 @@ function pyRoutes(src, f, out) {
   // APIRouter(dependencies=[...]): a check named as one counts here; anything else (a factory's result,
   // a Depends() kept in a variable, a list kept in a constant) is left for build to judge (routerRefs)
   const routerRefs = new Map();
-  for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\(((?:[^()]|\([^()]{0,500}\)){0,3000})\)/gm)) {
-    if (!/\bdependencies\s*=/.test(m[2])) continue;
-    const refs = pyDepRefs(m[2]);
+  for (const m of src.matchAll(/^[ \t]*(\w+)\s*=\s*(?:\w+\.)?APIRouter\s*\(/gm)) {
+    const args = pyEnclosed(src, m.index + m[0].length - 1);
+    if (!/\bdependencies\s*=/.test(args)) continue;
+    const refs = pyDepRefs(args);
     const named = refs.find((r) => r.startsWith('fn:') && isGuardDep(r.slice(3)));
     if (named) guardedVars.set(m[1], named.slice(3));
     else if (refs.length) routerRefs.set(m[1], refs);
@@ -616,9 +674,25 @@ function pyRoutes(src, f, out) {
 }
 
 function jsRoutes(src, f, out) {
-  const routes = f.routes || [];
-  if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path)) return;
+  // route tables (keyed, listed, Bun.serve's) are checked by the dispatcher or inside the handler, where this can't
+  // see; leaving them out also keeps them from cutting short the code read for the routes around them
+  const routes = (f.routes || []).filter((r) => r.framework !== 'table');
+  if (!routes.length && !/\.use\(/.test(src) && !/(^|\/)middleware\.(t|j)s$/.test(f.path) && !/\bAPP_GUARD\b|\.useGlobalGuards\s*\(/.test(src)) return;
   const lines = src.split('\n');
+  // NestJS: `{ provide: APP_GUARD, useClass: AuthGuard }` in a module, or `app.useGlobalGuards(new JwtAuthGuard())`
+  // in main.ts, guards every Nest route of the app, except the ones a @Public()-style decorator opens. It turns
+  // off the open-endpoint check for all of them, so its name must say what it checks, as for app.use() (#72):
+  // a rate-limit or quota guard, or one named only "guard" (MaintenanceGuard), isn't a sign-in check.
+  const commented = (i) => { const before = src.slice(Math.max(0, i - 300), i); return /(^|[^:])\/\//.test(before.slice(before.lastIndexOf('\n') + 1)); };
+  for (const m of src.matchAll(/\bprovide\s*:\s*APP_GUARD\s*,\s*useClass\s*:\s*([A-Za-z_$][\w$]*)/g)) {
+    if (!commented(m.index) && isNestGlobalGuard(m[1])) out.push({ k: 'global-guard', framework: 'nest', name: m[1], line: lineIndex(src)(m.index) });
+  }
+  for (const m of src.matchAll(/(?<![\w$])[A-Za-z_$][\w$]*\.useGlobalGuards\s*\(/g)) {
+    if (commented(m.index)) continue;
+    const names = (callArgs(src, m.index + m[0].length) || []).map((a) => /^(?:new\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/.exec(a.replace(JS_STRING, '""').trim())?.[1]?.split('.').pop());
+    const name = names.find(isNestGlobalGuard);
+    if (name) out.push({ k: 'global-guard', framework: 'nest', name, line: lineIndex(src)(m.index) });
+  }
   // Next.js middleware.ts protecting the app
   if (/(^|\/)(src\/)?middleware\.(t|j)s$/.test(f.path) && NEXT_MIDDLEWARE_GUARD.test(src)) {
     const matcher = /matcher\s*:\s*([^\n]+)/.exec(src)?.[1] || '';
@@ -641,8 +715,35 @@ function jsRoutes(src, f, out) {
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
 
   routes.forEach((r, idx) => {
-    if (r.framework === 'table') return; // sign-in is checked by the dispatcher or inside the handler
     const rec = { k: 'route', line: r.line, method: r.method };
+    if (r.framework === 'nest') {
+      // the decorators stacked on this method (above and below the route one, up to the handler), and the
+      // ones on its class (around the nearest @Controller above)
+      const i0 = r.line - 1;
+      let top = i0; while (top > 0 && /^\s*@/.test(lines[top - 1])) top--;
+      let hIdx = i0 + 1;
+      const hRe = r.handler ? new RegExp(`^\\s*(?:(?:public|private|protected|static|async|readonly)\\s+)*${r.handler.replace(/\$/g, '\\$')}\\s*\\(`) : null;
+      while (hIdx < lines.length && hIdx < i0 + 30 && !(hRe && hRe.test(lines[hIdx]))) hIdx++;
+      const methodDecos = lines.slice(top, hIdx).join('\n');
+      let c = i0; while (c >= 0 && !/@Controller\s*\(/.test(lines[c])) c--;
+      let cTop = c, cEnd = c;
+      if (c >= 0) { while (cTop > 0 && /^\s*@/.test(lines[cTop - 1])) cTop--; while (cEnd < lines.length - 1 && !/\bclass\s/.test(lines[cEnd])) cEnd++; }
+      const classDecos = c >= 0 ? lines.slice(cTop, cEnd + 1).join('\n') : '';
+      const decos = methodDecos + '\n' + classDecos;
+      const guards = [...decos.matchAll(/@UseGuards\s*\(([^)]{0,500})\)/g)].flatMap((m) => m[1].match(/[A-Za-z_$][\w$]*/g) || []);
+      const guard = guards.find(isNestAuthGuard);
+      rec.nest = true; // only Nest routes are behind a Nest app-wide guard
+      if (NEST_PUBLIC.test(decos)) rec.nestPublic = true;
+      const next = routes.slice(idx + 1).find((x) => x.line > r.line)?.line || r.line + 80;
+      const body = lines.slice(hIdx, Math.min(next - 1, hIdx + 80)).join('\n');
+      if (guard) Object.assign(rec, { guard, via: 'decorator' });
+      else if (rec.nestPublic && INLINE_CHECK.test(body)) rec.via = 'inline';
+      if (SIGNATURE_CHECK.test(body)) rec.signed = true;
+      if (PUBLIC_RESPONSE.test(body)) rec.publicResponse = true;
+      if (r.handler) rec.fn = r.handler;
+      out.push(rec);
+      return;
+    }
     if (r.framework === 'firebase') {
       // a callable checks request.auth (v1: context.auth) or turns on App Check; an onRequest function
       // checks a token or signature itself, like any other handler
@@ -677,9 +778,15 @@ function jsRoutes(src, f, out) {
       const fn = /(?:async\s*)?(?:\(\s*req\b|function\b|\breq\s*=>|\(\s*\{|\(\s*c\s*\)|\(\s*ctx\b)/.exec(own);
       args = fn ? own.slice(0, fn.index) : own.slice(0, Math.max(0, own.lastIndexOf(',')));
     }
-    // (names, not words inside strings: cache('user-token') isn't a check)
-    const mw = (args.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || []).map((x) => x.split('.').pop()).find(isJsGuardName);
-    const next = routes[idx + 1]?.line || r.line + 60;
+    // Fastify per-route hooks take precedence over adjacent route middleware.
+    const objectMw = (r.guardOptions || [])
+      .flatMap((option) => option.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || [])
+      .map((name) => name.split('.').pop())
+      .find(isJsGuardName);
+    const mw = objectMw || (args.replace(JS_STRING, '""').match(/[A-Za-z_$][\w$.]*/g) || [])
+      .map((name) => name.split('.').pop()).find(isJsGuardName);
+    // the next route below this one (routes are listed by kind, not in file order)
+    const next = Math.min(...routes.map((x) => x.line).filter((l) => l > r.line), r.line + 60);
     const body = lines.slice(r.line - 1, Math.min(next - 1, r.line + 60)).join('\n');
     const prior = uses.find((u) => u.v === r.var && u.line < r.line);
     if (mw) Object.assign(rec, { guard: mw, via: 'middleware' });
@@ -690,6 +797,154 @@ function jsRoutes(src, f, out) {
     out.push(rec);
   });
 }
+
+// ---------- Laravel: who may call each endpoint ----------
+// Laravel's routes come from routes.mjs with the middleware of the route, its groups and the route files around
+// it. Here, per PHP file: the app's middleware aliases and groups (bootstrap/app.php, or app/Http/Kernel.php
+// before Laravel 11), a controller's own middleware, the checks inside each controller method and the form
+// requests it takes. buildHealth puts them together for each endpoint (laravelFinding).
+
+const LARAVEL_MW_CONFIG = /->\s*withMiddleware\s*\(|\$(?:middlewareGroups|middlewareAliases|routeMiddleware)\s*=/;
+// a method that checks the caller itself: a policy or gate, a permission test, an abort with 401/403
+// (an abort_if's condition is read up to 300 characters, so a file of `abort_if(` with no `;` isn't read once per call)
+const PHP_INLINE_CHECK = /\$this\s*->\s*authorize\w*\s*\(|\bGate\s*::\s*(?:authorize|allows|denies|check|any|none|inspect|forUser)\s*\(|\babort_(?:if|unless)\s*\([^;]{0,300}?(?:->\s*(?:can|cannot|cant|user)\s*\(|auth\(\)|Auth\s*::|\b40[13]\b)|\babort\s*\(\s*40[13]\b|->\s*(?:can|cannot|cant)\s*\(|\bAuth\s*::\s*(?:check|guest|authenticate)\s*\(|\bauth\(\)\s*->\s*(?:check|guest|authenticate)\s*\(|\bpolicy\s*\(|\bthrow\s+new\s+\\?(?:[\w\\]*\\)?(?:AuthorizationException|AuthenticationException|AccessDeniedHttpException|UnauthorizedHttpException)\b/;
+// a form request's authorize() that looks at the user, rather than `return true;`
+const PHP_REQUEST_CHECK = /->\s*user\s*\(|->\s*(?:can|cannot|cant)\s*\(|\bGate\s*::|\bauth\(\)|\bAuth\s*::|->\s*authorize\w*\s*\(/;
+
+/** A middleware entry as a name: 'auth:sanctum' stays, EnsureStaff::class and Authenticate::using('x') become the class name. */
+const phpMwName = (t) => {
+  const s = phpStr(t);
+  if (s != null) return s;
+  const m = /^\\?((?:[\w]+\\)*)(\w+)\s*::\s*(?:class\b|using\s*\()/.exec((t || '').trim());
+  return m ? m[2] : null;
+};
+const phpMwItems = (t) => { const b = phpArrayBody(t); return (b != null ? phpSplit(b) : t ? [t] : []).map(phpMwName).filter(Boolean); };
+const phpStrList = (t) => { const s = phpStr(t); if (s != null) return [s]; const b = phpArrayBody(t); return b == null ? [] : phpSplit(b).map(phpStr).filter((x) => x != null); };
+
+/**
+ * One PHP file, ready to read: code (stripPhp), bare (strings blanked), close (where brackets close) and spend
+ * (phpBudget). args(open) is the argument list of the call whose ( is at open, and text(from, to) a piece of code,
+ * each empty once the file's allowance for reading nested text again is used up.
+ */
+function phpSource(src) {
+  const code = stripPhp(src), bare = phpBare(code), close = phpBrackets(bare), spend = phpBudget(code.length);
+  const args = (open) => { const a = phpParts(code, bare, close, open + 1, close(open) - 1); return spend(a.reduce((n, x) => n + x.length, 0)) ? a : []; };
+  return { code, bare, close, args, text: (from, to) => (spend(to - from) ? code.slice(from, to) : '') };
+}
+
+/** The middleware aliases and groups an app defines: { aliases: { name: ClassName }, groups: { name: [entries] } }. */
+function laravelMiddlewareConfig({ bare, close, args, text }) {
+  const aliases = {}, groups = {};
+  const add = (g, list, front) => { groups[g] = front ? [...list, ...(groups[g] || [])] : [...(groups[g] || []), ...list]; };
+  // Laravel 11+: $middleware->alias([...]), ->group('x', [...]), ->appendToGroup('x', [...]), ->web(append: [...])
+  for (const m of bare.matchAll(/->\s*(alias|group|appendToGroup|prependToGroup|web|api)\s*\(/g)) {
+    const a = args(m.index + m[0].length - 1);
+    if (m[1] === 'alias') { for (const [k, v] of phpPairs(a[0])) if (k) aliases[k] = phpMwName(v); }
+    else if (m[1] === 'web' || m[1] === 'api') { for (const x of a) { const [name, val] = phpNamed(x); if (name === 'append' || name === 'prepend') add(m[1], phpMwItems(val), name === 'prepend'); } }
+    else { const g = phpStr(a[0]); if (g) add(g, phpMwItems(a[1]), m[1] === 'prependToGroup'); }
+  }
+  // Laravel 10 and older: properties of app/Http/Kernel.php
+  for (const m of bare.matchAll(/\$(middlewareGroups|middlewareAliases|routeMiddleware)\s*=\s*(?=\[|array\s*\()/g)) {
+    const start = m.index + m[0].length;
+    const open = bare[start] === '[' ? start : bare.indexOf('(', start);
+    const pairs = phpPairs(text(start, close(open)));
+    for (const [k, v] of pairs) if (k) { if (m[1] === 'middlewareGroups') add(k, phpMwItems(v)); else aliases[k] = phpMwName(v); }
+  }
+  return { aliases, groups };
+}
+
+/** A controller's own middleware: HasMiddleware's static middleware() (Laravel 11+), or $this->middleware(…) in its constructor. */
+function controllerMiddleware({ bare, close, args, text }) {
+  const out = [];
+  const m = /\bfunction\s+middleware\s*\(\s*\)\s*(?::\s*\??[\w\\]+\s*)?\{/.exec(bare);
+  if (m) {
+    const open = m.index + m[0].length - 1;
+    // the list it returns: from its first return to the ; that ends the method
+    const body = text(open + 1, close(open) - 1).trim();
+    const ret = body.endsWith(';') ? /\breturn\s+/.exec(body) : null;
+    for (const item of phpSplit(phpArrayBody(ret ? body.slice(ret.index + ret[0].length, -1).trim() : '') ?? '')) {
+      const nm = /^new\s+\\?(?:[\w\\]*\\)?Middleware\s*\(([\s\S]*)\)$/.exec(item.trim());
+      if (!nm) { const name = phpMwName(item); if (name) out.push({ name }); continue; }
+      const parts = phpSplit(nm[1]).map(phpNamed);
+      const named = Object.fromEntries(parts.filter(([k]) => k));
+      const first = parts.find(([k]) => !k)?.[1] ?? named.middleware;
+      for (const name of phpMwItems(first)) out.push({ name, ...(named.only ? { only: phpStrList(named.only) } : {}), ...(named.except ? { except: phpStrList(named.except) } : {}) });
+    }
+  }
+  const tail = /\s*->\s*(only|except)\s*\(/y;
+  for (const mm of bare.matchAll(/\$this\s*->\s*middleware\s*\(/g)) {
+    const open = mm.index + mm[0].length - 1;
+    tail.lastIndex = close(open);
+    const t = tail.exec(bare);
+    const limit = t ? phpStrList(args(tail.lastIndex - 1)[0]) : null;
+    for (const name of args(open).flatMap(phpMwItems)) out.push({ name, ...(t ? { [t[1]]: limit } : {}) });
+  }
+  return out;
+}
+
+// PHP that answers web requests itself: it reads the request, or declares routes in a way the scan doesn't read
+// yet (Symfony's #[Route], Slim's or Lumen's $app->get('/…')). Read outside comments and strings.
+const PHP_SERVER_CODE = /\$_(?:GET|POST|REQUEST|FILES)\b|\$_SERVER\s*\[|#\[\s*Route\s*\(|\$(?:app|router)\s*->\s*(?:get|post|put|patch|delete|any|map)\s*\(/g;
+function phpServerCode({ code, bare }) {
+  for (const m of bare.matchAll(PHP_SERVER_CODE)) {
+    const next = code.slice(m.index + m[0].length, m.index + m[0].length + 40);
+    if (m[0].startsWith('$_SERVER')) {
+      const key = /^\s*(['"])(REQUEST_(?:METHOD|URI))\1/.exec(next);
+      if (key) return { at: m.index, how: 'reads', what: `$_SERVER['${key[2]}']` };
+    } else if (m[0].startsWith('$')) {
+      if (!m[0].startsWith('$_')) { if (/^\s*['"]\//.test(next)) return { at: m.index, how: 'calls', what: m[0].replace(/\s*\($/, '').replace(/\s+/g, '') }; }
+      else return { at: m.index, how: 'reads', what: m[0] };
+    } else return { at: m.index, how: 'declares routes with', what: '#[Route]' };
+  }
+  return null;
+}
+
+function phpChecks(src, f, out) {
+  if (TEST_FILE.test(f.path)) return;
+  const php = phpSource(src);
+  const { code, bare, close, text } = php;
+  // code that answers web requests, for "What was checked" when no endpoints were found (templates only show what they're given)
+  if (!EXAMPLE_FILE.test(f.path) && !/\.blade\.php$/i.test(f.path)) {
+    const sv = phpServerCode(php);
+    if (sv) out.push({ k: 'server-code', line: lineIndex(code)(sv.at), how: sv.how, what: sv.what });
+  }
+  if (LARAVEL_MW_CONFIG.test(bare)) out.push({ k: 'laravel-mw', ...laravelMiddlewareConfig(php) });
+  const mw = controllerMiddleware(php);
+  if (mw.length) out.push({ k: 'php-ctrl-mw', items: mw });
+  // each public method: does it check the caller itself, and which classes does it take (a form request may check)
+  const starts = [0];
+  for (let i = 0; i < code.length; i++) if (code.charCodeAt(i) === 10) starts.push(i + 1);
+  const brace = /\s*(?::[^{;]{1,300})?\{/y;
+  for (const m of f.methods || []) {
+    if (m.hidden) continue;
+    const from = bare.indexOf('(', starts[m.line - 1] ?? 0);
+    if (from < 0) continue;
+    brace.lastIndex = close(from);
+    const body = brace.exec(bare) ? text(brace.lastIndex, close(brace.lastIndex - 1) - 1) : '';
+    const checked = PHP_INLINE_CHECK.test(body);
+    if (checked || m.types?.length) out.push({ k: 'php-fn', fn: m.name, ...(checked ? { checked: true } : {}), ...(m.types?.length ? { takes: m.types } : {}) });
+  }
+  // a form request whose authorize() looks at the user
+  if (/\bextends\s+\\?(?:[\w\\]*\\)?FormRequest\b/.test(bare) && f.classes?.length) {
+    const a = /\bfunction\s+authorize\s*\(\s*\)\s*(?::\s*\??\w+\s*)?\{/.exec(bare);
+    const body = a ? text(a.index + a[0].length, close(a.index + a[0].length - 1) - 1) : '';
+    if (PHP_REQUEST_CHECK.test(body)) out.push({ k: 'php-form-request', cls: f.classes[0] });
+  }
+}
+
+// Laravel's own middleware that let only signed-in (or permitted) callers through
+const LARAVEL_GUARD = /^(auth|auth\.basic|auth\.session|can|verified|signed|password\.confirm|abilities|ability|role|permission|role_or_permission|subscribed)$/;
+// middleware classes that check the caller, by name (EnsurePortalAccess, RequireTwoFactor, BindDevice…)…
+const LARAVEL_GUARD_CLASS = /(^|_)(authenticate|authenticated|authenticates|auth|authorize|authorized|login|permissions?|roles?|admins?|staff|access|two_?factor|2fa|tokens?|signature|signed|abilities|ability|owner|members?|verified|device|account)(_|$)/;
+// …unless the name says it does something else
+const NOT_LARAVEL_GUARD = /header|version|locale|json|log|throttle|cors|cache|store|request_?id|idempot|deprecat|https|body|trim|encrypt|cookie|csrf|binding|precognit|maintenance|trust|appearance|inertia|preload|observe|security_?header/;
+const laravelGuard = (entry, aliases) => {
+  const base = entry.split(':')[0];
+  if (LARAVEL_GUARD.test(base)) return true;
+  const cls = aliases[base] || (/^[A-Z]/.test(base) ? base : null);
+  const n = cls && snake(cls);
+  return !!n && LARAVEL_GUARD_CLASS.test(n) && !NOT_LARAVEL_GUARD.test(n);
+};
 
 /**
  * FastAPI dependencies that check the caller, per repo: Map(repo -> { aliases: Map(alias -> file), checks(ref) }).
@@ -803,10 +1058,56 @@ const STRIPE_VERIFIED = /constructEvent(?:Async)?\s*\(|construct_event\s*\(|veri
 function findStripeWebhook(src, f, out) {
   if (!/stripe/i.test(src)) return;
   // checked and fine: counted in "What was checked"
-  if (STRIPE_VERIFIED.test(src)) { out.push({ k: 'stripe-signed' }); return; }
-  const hits = [...src.matchAll(STRIPE_EVENT)];
+  if (STRIPE_VERIFIED.test(src) || (f.lang === 'csharp' && csStripeVerified(src))) { out.push({ k: 'stripe-signed' }); return; }
+  const hits = [...src.matchAll(STRIPE_EVENT)].map((m) => ({ index: m.index, event: m[1] }));
+  if (f.lang === 'csharp') hits.push(...csStripeEvents(src));
   if (!hits.length) return;
-  out.push({ k: 'stripe-unsigned', line: lineIndex(src)(hits[0].index), events: [...new Set(hits.map((m) => m[1]))].slice(0, 4) });
+  hits.sort((a, b) => a.index - b.index);
+  out.push({ k: 'stripe-unsigned', line: lineIndex(src)(hits[0].index), events: [...new Set(hits.map((h) => h.event))].slice(0, 4) });
+}
+
+const ENV_SECRET_STEP = `4. Add STRIPE_WEBHOOK_SECRET (empty) to .env.example and tell me where to get it: the Stripe dashboard (Developers → Webhooks → the endpoint → Signing secret), or \`stripe listen\` when testing locally.`;
+const STRIPE_FIX = {
+  python: {
+    verify: 'stripe.Webhook.construct_event',
+    steps: [
+      `1. Read the raw request body as bytes (FastAPI: \`await request.body()\`; Flask: \`request.get_data()\`), not the parsed JSON.`,
+      `2. Call \`stripe.Webhook.construct_event(payload, request.headers["stripe-signature"], os.environ["STRIPE_WEBHOOK_SECRET"])\` and return 400 if it raises.`,
+    ],
+    secret: ENV_SECRET_STEP,
+  },
+  next: {
+    verify: 'stripe.webhooks.constructEvent',
+    steps: [
+      `1. Read the raw request body with \`await req.text()\` (App Router) or turn off the body parser for this route (Pages Router), not the parsed JSON.`,
+      `2. Call \`stripe.webhooks.constructEvent(rawBody, signatureHeader, process.env.STRIPE_WEBHOOK_SECRET)\` (the \`stripe-signature\` header) and return 400 if it throws.`,
+    ],
+    secret: ENV_SECRET_STEP,
+  },
+  express: {
+    verify: 'stripe.webhooks.constructEvent',
+    steps: [
+      `1. Give this route the raw body: \`express.raw({ type: 'application/json' })\` on it, registered before \`express.json()\` runs for it.`,
+      `2. Call \`stripe.webhooks.constructEvent(rawBody, signatureHeader, process.env.STRIPE_WEBHOOK_SECRET)\` (the \`stripe-signature\` header) and return 400 if it throws.`,
+    ],
+    secret: ENV_SECRET_STEP,
+  },
+  csharp: {
+    verify: 'EventUtility.ConstructEvent',
+    steps: [
+      `1. Read the raw request body with \`await new StreamReader(Request.Body).ReadToEndAsync()\`, not a model-bound parameter.`,
+      `2. Call \`EventUtility.ConstructEvent(json, Request.Headers["Stripe-Signature"], webhookSecret)\` with the secret read from configuration, and return 400 if it throws a \`StripeException\`.`,
+    ],
+    secret: `4. Add an empty Stripe:WebhookSecret setting (user secrets locally, an environment variable such as Stripe__WebhookSecret when deployed) and tell me where to get it: the Stripe dashboard (Developers → Webhooks → the endpoint → Signing secret), or \`stripe listen\` when testing locally.`,
+  },
+};
+
+/** Which Stripe fix instructions fit a file: Python, a Next.js route, Express, or ASP.NET Core. */
+function stripeStack(file) {
+  if (/\.py$/.test(file)) return 'python';
+  if (/\.cs$/.test(file)) return 'csharp';
+  if (/(^|\/)app\/.*route\.[jt]s$|(^|\/)pages\/api\//.test(file)) return 'next';
+  return 'express';
 }
 
 // CORS: a server that tells browsers any website may call it. Harmless for a public API without login
@@ -838,6 +1139,8 @@ function findCors(src, f, out) {
     }
     const all = /^[ \t]*CORS_(?:ALLOW_ALL_ORIGINS|ORIGIN_ALLOW_ALL)\s*=\s*True\b/m.exec(src);
     if (all) add(all.index, 'CORS_ALLOW_ALL_ORIGINS = True', /^[ \t]*CORS_ALLOW_CREDENTIALS\s*=\s*True\b/m.test(src));
+  } else if (f.lang === 'csharp') {
+    csCors(src, add);
   }
 }
 
@@ -993,7 +1296,7 @@ export function findIssues(src, f) {
   if (f.lang === 'sql') findSql(src, f, out);
   if (!TEST_FILE.test(f.path) && !EXAMPLE_FILE.test(f.path)) {
     if (['typescript', 'javascript', 'vue', 'svelte', 'astro'].includes(f.lang)) findPublicEnv(src, f, out);
-    if (['typescript', 'javascript', 'python'].includes(f.lang)) { findStripeWebhook(src, f, out); findCors(src, f, out); }
+    if (['typescript', 'javascript', 'python', 'csharp'].includes(f.lang)) { findStripeWebhook(src, f, out); findCors(src, f, out); }
   }
   if (['typescript', 'javascript', 'python'].includes(f.lang) && USES_SUPABASE.test(src)) out.push({ k: 'uses-supabase' });
   // code that starts a server, for "What was checked" when no endpoints were found
@@ -1003,6 +1306,8 @@ export function findIssues(src, f) {
   }
   if (f.lang === 'python') pyRoutes(src, f, out);
   else if (['typescript', 'javascript'].includes(f.lang)) jsRoutes(src, f, out);
+  else if (f.lang === 'csharp' && !TEST_FILE.test(f.path)) csRoutes(src, f, out, SIGNATURE_CHECK);
+  else if (f.lang === 'php') phpChecks(src, f, out);
   // run directly or registered by name (so "nothing imports it" doesn't mean unused)
   if (/^#!|if\s+__name__\s*==\s*['"]__main__['"]|@(?:\w+\.)*(?:task|shared_task|command|group|receiver|scheduled_job|on_event|listener|hookimpl|periodic_task|cli\.command)\b|require\.main\s*===\s*module|import\.meta\.main/m.test(src)) out.push({ k: 'runnable' });
   // a frontend calling a fixed localhost address (breaks once deployed)
@@ -1019,6 +1324,9 @@ export function findIssues(src, f) {
 
 const SEV_ORDER = { high: 0, medium: 1, low: 2 };
 const PUBLIC_PATH = /(^|\/)(health|healthz|healthcheck|ping|status|ready|readyz|readiness|live|livez|liveness|version|metrics|robots\.txt|sitemap[\w.]*|favicon[\w.]*|\.well-known|login|logout|signin|pair|sign-in|signout|signup|sign-up|register|forgot[\w-]*|reset[\w-]*|verify[\w-]*|oauth\w*|callback|auth|token|refresh|static|assets|public|newsletter|contact|waitlist|unsubscribe|openapi\.json|docs|swagger[\w.]*|i|images?)(\/|$)/i;
+// A site's privacy, terms and legal pages, which every visitor may read: only reading them, and only when the whole
+// address is the page (/privacy, /legal/imprint), so /account/privacy (someone's settings) or /api/legal/cases is still checked
+const LEGAL_PAGE = /^\/(?:legal\/)?(?:privacy(?:-policy|-notice|-statement)?|terms(?:-of-(?:service|use)|-and-conditions|-conditions)?|tos|legal|imprint|impressum)\/?$/i;
 // Files and feeds that exist to be read by crawlers, feed readers and AI tools. Only for reading: see publicByDesign.
 const PUBLIC_FILE_PATH = /(^|\/)(llms(-full)?\.txt|ai\.txt|humans\.txt|(app-)?ads\.txt|security\.txt|rss(\.xml)?|atom(\.xml)?|feed\.(xml|rss|atom|json)|index\.xml|opensearch\.xml|site\.webmanifest|manifest\.(json|webmanifest)|openapi\.ya?ml)$/i;
 const LISTING_FILE = /(^|\/)(llms(-full)?\.txt|robots\.txt)$/i;
@@ -1034,8 +1342,18 @@ const NOT_USED_KINDS = new Set(['test', 'script', 'infra', 'config', 'worker', '
 const SPECIAL_FILE = /(^|\/)(index|main|app|server|cli|manage|wsgi|asgi|__init__|__main__|conftest|setup|config|settings|env|middleware|instrumentation|layout|page|route|loading|error|not-found|template|default|global-error|sitemap|robots|manifest|opengraph-image|twitter-image|icon|apple-icon|_app|_document|_error|404|500|models|admin|apps|views|urls|signals|tasks|forms|serializers|celery|gunicorn\.conf|vite-env\.d|worker|sw|service-worker)\.[a-z]+$|\.d\.ts$|\.config\.[a-z]+$|\.stories\.|(^|\/)(pages|migrations|alembic|versions|scripts|bin|tools|seeds?|fixtures?|examples?|docs?|public|static|templates|\.github|e2e|cypress|playwright)\//i;
 // A comment saying a tool opens this file by name, or that it's generated: not leftover code, whatever imports it
 const LOADED_BY_NAME = /^\s*(?:\/\/|\/?\*|#|<!--|"""|''')[^\n]*(?:\b(?:cli|tool|tooling|framework|runner|bundler|build|compiler|plugin|sdk|script)\b[^\n]*\b(?:reads?|loads?|imports?|runs?|executes?|opens?|requires?|picks? up)\b[^\n]*\b(?:this file|directly|by name|by path|at runtime)\b|\bthis file is (?:read|loaded|imported|run|executed|required|used|picked up)\b[^\n]*\b(?:by|directly|at runtime)\b|\bthis (?:file|code) (?:is|was) (?:auto-?)?generated\b|@generated\b|\b(?:auto-?)?generated (?:file|code)\b|\bcode generated by\b|\bdo not (?:edit|modify|delete|remove) (?:this|it)\b)/im;
-const USED_LANGS = new Set(['typescript', 'javascript', 'python', 'vue', 'svelte', 'astro']);
+const USED_LANGS = new Set(['typescript', 'javascript', 'python', 'vue', 'svelte', 'astro', 'liquid']);
 const plural = (n, w, ws) => `${n} ${n === 1 ? w : ws || w + 's'}`;
+
+/** How a fix prompt names a check: a FastAPI alias parameter, a Python decorator, a C# attribute, or as written. */
+function guardLabel(name, defs, lang) {
+  if (defs.some((g) => g.alias)) return `a parameter typed ${name}`;
+  if (lang === 'python') return '@' + name;
+  if (lang === 'php' && /^[a-z]/.test(name)) return `the '${name}' middleware`;
+  // [Authorize(...)] and .RequireAuthorization(...) arrive written out; a custom attribute arrives as its name
+  if (lang === 'csharp' && !/^[[.]/.test(name)) return `[${name}]`;
+  return name;
+}
 
 export function buildHealth({ graph, scan, arch, root }) {
   const issues = [];
@@ -1405,8 +1723,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     const routesHere = graph.routes.map((r, i) => ({ r, i })).filter(({ r }) => r.f === file && r.m !== 'GET');
     const it = itemFor(file);
     const items = [...(it ? [it] : []), ...routesHere.map(({ i }) => 'r:' + i)];
-    const py = /\.py$/.test(file);
-    const next = /(^|\/)app\/.*route\.[jt]s$|(^|\/)pages\/api\//.test(file);
+    const fixSteps = STRIPE_FIX[stripeStack(file)];
     issues.push({
       id: 'stripe-webhook:' + file, kind: 'stripe-webhook', severity: 'high',
       title: `Anyone could fake a Stripe payment in ${nameOf(file)}`,
@@ -1416,16 +1733,11 @@ export function buildHealth({ graph, scan, arch, root }) {
       fix: [
         `Security fix in ${file}: verify Stripe webhook signatures before acting on any event. Do not print any secret values.`,
         ``,
-        `It handles ${x.events.join(', ')} (line ${x.line}) without calling ${py ? 'stripe.Webhook.construct_event' : 'stripe.webhooks.constructEvent'}.`,
+        `It handles ${x.events.join(', ')} (line ${x.line}) without calling ${fixSteps.verify}.`,
         ``,
-        py
-          ? `1. Read the raw request body as bytes (FastAPI: \`await request.body()\`; Flask: \`request.get_data()\`), not the parsed JSON.`
-          : next ? `1. Read the raw request body with \`await req.text()\` (App Router) or turn off the body parser for this route (Pages Router), not the parsed JSON.` : `1. Give this route the raw body: \`express.raw({ type: 'application/json' })\` on it, registered before \`express.json()\` runs for it.`,
-        py
-          ? `2. Call \`stripe.Webhook.construct_event(payload, request.headers["stripe-signature"], os.environ["STRIPE_WEBHOOK_SECRET"])\` and return 400 if it raises.`
-          : `2. Call \`stripe.webhooks.constructEvent(rawBody, signatureHeader, process.env.STRIPE_WEBHOOK_SECRET)\` (the \`stripe-signature\` header) and return 400 if it throws.`,
+        ...fixSteps.steps,
         `3. Use only the verified event from then on, and handle each event once even if Stripe sends it again.`,
-        `4. Add STRIPE_WEBHOOK_SECRET (empty) to .env.example and tell me where to get it: the Stripe dashboard (Developers → Webhooks → the endpoint → Signing secret), or \`stripe listen\` when testing locally.`,
+        fixSteps.secret,
       ].join('\n'),
     });
   }
@@ -1462,13 +1774,15 @@ export function buildHealth({ graph, scan, arch, root }) {
 
   // ---------- endpoints anyone can call ----------
   const routeFinding = new Map(); // `${file}|${line}|${method}` -> finding
+  // ASP.NET Core facts that span files: projects, mounted and inherited access, handler checks, base classes
+  const cs = csBuildContext(scan, findings);
   const globalGuards = new Map(); // repo -> [{framework, name, file}]
   const guardDefs = new Map();    // name -> [{ file, wrapper }]
   for (const f of scan.files) for (const x of findings(f.path)) {
     if (x.k === 'route') routeFinding.set(`${f.path}|${x.line}|${x.method}`, x);
     // app-wide checks count only from the app itself, not from scripts or tests that spin up their own
     if (x.k === 'global-guard' && !TEST_FILE.test(f.path) && !/(^|\/)(scripts?|tools|bin|examples?)\//.test(f.path) && !(fileByPath.has(f.path) && kinds(fileByPath.get(f.path).n).some((k) => NOT_USED_KINDS.has(k)))) { const k = f.repo ?? ''; if (!globalGuards.has(k)) globalGuards.set(k, []); globalGuards.get(k).push({ ...x, file: f.path }); }
-    if (x.k === 'guard-def' && !TEST_FILE.test(f.path)) { if (!guardDefs.has(x.name)) guardDefs.set(x.name, []); guardDefs.get(x.name).push({ file: f.path, wrapper: !!x.wrapper }); }
+    if (x.k === 'guard-def' && !TEST_FILE.test(f.path)) { if (!guardDefs.has(x.name)) guardDefs.set(x.name, []); guardDefs.get(x.name).push({ file: f.path, wrapper: !!x.wrapper, ...(x.base ? { base: true } : {}) }); }
   }
   const verifiedHelpers = new Map();
   for (const f of scan.files) {
@@ -1506,9 +1820,56 @@ export function buildHealth({ graph, scan, arch, root }) {
   // like app-wide middleware since they cover every route behind them (app.use('/api', cors()) isn't one), and a
   // route served at two paths (mounted twice, or under /api and outside it) is open if either is.
   const isPy = (r) => scanByPath.get(r.file)?.lang === 'python';
-  const mountCheck = (r) => r.mountMw?.find(isPy(r) ? isGuardDep : isUseGuard);
+  const mountCheck = (r) => r.framework !== 'laravel' && r.mountMw?.find(isPy(r) ? isGuardDep : isUseGuard);
   const mountGuard = new Map((scan.routes || []).filter(mountCheck).map((r) => [`${r.file}|${r.line}|${r.method}`, mountCheck(r)]));
   for (const r of scan.routes || []) if (!isPy(r) && !mountCheck(r)) mountGuard.delete(`${r.file}|${r.line}|${r.method}`);
+  // Laravel: the route's own middleware and its groups' (through the app's aliases and groups), then the
+  // controller's middleware, a form request that checks the user, or a check inside the method
+  const lvConfig = new Map(); // repo -> { aliases, groups }
+  const formRequests = new Set();
+  for (const f of scan.files) for (const x of findings(f.path)) {
+    if (x.k === 'php-form-request') formRequests.add(String(x.cls).toLowerCase());
+    if (x.k !== 'laravel-mw') continue;
+    const k = f.repo ?? '';
+    const c = lvConfig.get(k) || { aliases: {}, groups: {} };
+    Object.assign(c.aliases, x.aliases);
+    for (const [g, list] of Object.entries(x.groups || {})) c.groups[g] = [...(c.groups[g] || []), ...list];
+    lvConfig.set(k, c);
+  }
+  // a controller file's own middleware and its methods' facts, gathered once per file rather than once per route
+  const factsOf = new Map();
+  const phpFacts = (file) => {
+    if (!factsOf.has(file)) {
+      const fns = new Map();
+      let ctrlMw = null;
+      for (const x of findings(file)) {
+        if (x.k === 'php-ctrl-mw' && !ctrlMw) ctrlMw = x;
+        else if (x.k === 'php-fn' && !fns.has(x.fn.toLowerCase())) fns.set(x.fn.toLowerCase(), x);
+      }
+      factsOf.set(file, { ctrlMw, fns });
+    }
+    return factsOf.get(file);
+  };
+  const laravelFinding = (r) => {
+    const { aliases, groups } = lvConfig.get(scanByPath.get(r.file)?.repo ?? '') || { aliases: {}, groups: {} };
+    const expand = (n, depth = 0) => { const g = groups[n.split(':')[0]]; return g && depth < 6 ? g.flatMap((x) => expand(x, depth + 1)) : [n]; };
+    const rec = { k: 'route', line: r.line, method: r.method, fn: r.action?.fn || null, ...(r.defFile ? { defFile: r.defFile, defLine: r.defLine } : {}) };
+    const names = [...(r.mw || []), ...(r.mountMw || [])].flatMap((n) => expand(n));
+    if (names.some((n) => n.split(':')[0] === 'guest')) return { ...rec, guest: true }; // for people who aren't signed in: sign-in pages
+    const mw = names.find((n) => laravelGuard(n, aliases));
+    if (mw) return { ...rec, guard: mw.split(':')[0], via: 'middleware' };
+    const fn = r.action?.fn;
+    const own = phpFacts(r.file);
+    const ctrl = own.ctrlMw?.items.filter((i) => (!i.only || i.only.includes(fn)) && !(i.except || []).includes(fn)).flatMap((i) => expand(i.name)).find((n) => laravelGuard(n, aliases));
+    if (ctrl) return { ...rec, guard: ctrl.split(':')[0], via: 'controller' };
+    const method = fn && own.fns.get(fn.toLowerCase());
+    const request = method?.takes?.find((t) => formRequests.has(t.toLowerCase()));
+    if (request) return { ...rec, guard: request.split('\\').pop(), via: 'form request' };
+    if (method?.checked) return { ...rec, via: 'inline' };
+    // a closure that only redirects or answers something fixed, or a plain page: nothing to protect
+    return r.quiet ? { ...rec, quiet: true } : rec;
+  };
+  for (const r of scan.routes || []) if (r.framework === 'laravel') routeFinding.set(`${r.file}|${r.line}|${r.method}`, laravelFinding(r));
   const sourceOf = new Map();
   const readSource = (p) => {
     if (!sourceOf.has(p)) { let src = ''; try { src = readHead(path.join(root, p), 262144); } catch { /* unreadable: nothing to go on */ } sourceOf.set(p, src); }
@@ -1561,16 +1922,24 @@ export function buildHealth({ graph, scan, arch, root }) {
   const perRepo = new Map(); // repo -> { guarded, open: [], guardCounts }
   const appWide = new Map(); // `${file}|${line}` -> an app-wide check and how many endpoints only it protects
   graph.routes.forEach((r, i) => {
-    const fnd = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
+    const own = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
+    const fnd = /\.cs$/.test(r.f) ? csFinding(own, r, cs) : own;
     if (!fnd) return; // framework we don't analyse: say nothing
     const gf = fileByPath.get(r.f);
     if (!gf || kinds(gf.n).some((k) => NOT_USED_KINDS.has(k)) || TEST_FILE.test(r.f)) return;
     const repo = gf.r ?? '';
     if (!perRepo.has(repo)) perRepo.set(repo, { guarded: 0, total: 0, open: [], misplaced: [], guardCounts: new Map(), fileGuards: new Map(), guardedIn: new Map() });
     const pr = perRepo.get(repo);
-    pr.total++;
-    // a Flask before_request or FastAPI middleware guards that Python app, not a JavaScript server beside it
-    const global = (globalGuards.get(repo) || []).find((g) => ((g.framework === 'flask' || g.framework === 'fastapi') && /\.py$/.test(r.f)) || g.framework === 'express' || (g.framework === 'next' && fnd.fn === r.m));
+    pr.total++; // checked, so "What was checked" counts it
+    if (fnd.public) return; // [AllowAnonymous] / .AllowAnonymous(): public on purpose
+    // a Flask before_request or FastAPI middleware guards that Python app, not a JavaScript server beside it;
+    // a Nest APP_GUARD or useGlobalGuards() guards Nest's controllers, not an Express or Next.js server beside it;
+    // an ASP.NET Core fallback policy guards its own project (the .csproj folder), and nothing else guards C# endpoints
+    const csRoute = /\.cs$/.test(r.f);
+    const global = (globalGuards.get(repo) || []).find((g) => ((g.framework === 'flask' || g.framework === 'fastapi') && /\.py$/.test(r.f))
+      || (g.framework === 'express' && !csRoute) || (g.framework === 'next' && !csRoute && fnd.fn === r.m)
+      || (g.framework === 'aspnet' && csRoute && cs.projectOf(g.file) === cs.projectOf(r.f))
+      || (g.framework === 'nest' && fnd.nest && !fnd.nestPublic));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));
     const mounted = !fnd.via && mountGuard.get(`${r.f}|${r.l}|${r.m}`);
@@ -1596,14 +1965,14 @@ export function buildHealth({ graph, scan, arch, root }) {
       }
       return;
     }
-    if (r.m === 'OPTIONS' || r.m === 'HEAD' || fnd.notAllowed) return;
+    if (r.m === 'OPTIONS' || r.m === 'HEAD' || fnd.notAllowed || fnd.guest || fnd.quiet) return;
     // webhook receivers: by URL, or a webhook-ish handler in a webhook file (not that file's admin endpoints)
     const webhook = (WEBHOOK_PATH.test(r.p) && !WEBHOOK_ADMIN.test(r.p)) || (/webhook|hooks?\//i.test(r.f) && /webhook|hook|notify|event|ingress|pubsub|callback|receive|inbound/i.test(r.h || '') && !/create|list|manage|register|delete|test|setup|sync/i.test((r.h || '') + r.p));
     if (webhook && fnd.signed) return;
     // a Stripe webhook that doesn't check Stripe's signature has its own, more specific issue
     if (stripeFiles.has(r.f) && (webhook || /stripe|payment|hook/i.test(r.p) || graph.routes.filter((x) => x.f === r.f && x.m !== 'GET').length === 1)) return;
     if (!webhook && PUBLIC_PATH.test(r.p.replace(/<[^>]*>|\{[^}]*\}|:\w+|\[[^\]]*\]/g, 'x'))) return;
-    if (r.p === '/' && r.m === 'GET') return;
+    if ((r.p === '/' || LEGAL_PAGE.test(r.p)) && r.m === 'GET') return;
     if (!webhook && publicByDesign(r, fnd, repo)) return;
     const entry = { i, r, fnd, write: !['GET', 'ANY'].includes(r.m), webhook };
     if (fnd.misplaced) pr.misplaced.push(entry); else pr.open.push(entry);
@@ -1613,15 +1982,17 @@ export function buildHealth({ graph, scan, arch, root }) {
     const top = (m) => m && [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
     // prefer what this file already uses, then the project's most common real (non-wrapper) check
     const guardHint = (file, lang) => {
-      const local = top(pr.fileGuards.get(file));
-      const name = local || top(new Map([...pr.guardCounts].filter(([n]) => !guardDefs.get(n)?.every((g) => g.wrapper))));
+      // a base controller or hub that carries [Authorize] isn't a check to copy onto an endpoint
+      const copyable = (m) => m && new Map([...m].filter(([n]) => !guardDefs.get(n)?.some((g) => g.base)));
+      const local = top(copyable(pr.fileGuards.get(file)));
+      const name = local || top(new Map([...copyable(pr.guardCounts)].filter(([n]) => !guardDefs.get(n)?.every((g) => g.wrapper))));
       if (!name) return `the project's existing login check (find how other protected endpoints verify the user; if there is none, ask me before adding one)`;
       const defs = guardDefs.get(name) || [];
       const where = defs.find((g) => g.file === file) ? 'defined in this file' : defs.length ? `defined in ${defs[0].file}` : '';
-      const how = defs.some((g) => g.alias) ? `a parameter typed ${name}` : `${lang === 'python' ? '@' : ''}${name}`;
+      const how = guardLabel(name, defs, lang);
       return `the same check ${local ? 'the other endpoints in this file' : 'the protected endpoints'} already use (${how}${where ? ', ' + where : ''})`;
     };
-    const routeLine = (e) => `- ${e.r.m} ${e.r.p} — ${e.r.f}:${e.r.l}${e.fnd.fn && !/^[A-Z]+$/.test(e.fnd.fn) ? ` (${e.fnd.fn})` : ''}`;
+    const routeLine = (e) => `- ${e.r.m} ${e.r.p} — ${e.r.f}:${e.r.l}${e.fnd.fn && !/^[A-Z]+$/.test(e.fnd.fn) ? ` (${e.fnd.fn})` : ''}${e.fnd.defFile ? `, route registered in ${e.fnd.defFile}:${e.fnd.defLine}` : ''}`;
     if (pr.misplaced.length) {
       const list = pr.misplaced;
       issues.push({
@@ -1709,6 +2080,8 @@ export function buildHealth({ graph, scan, arch, root }) {
   const candidates = graph.files.filter((f) => {
     if (incoming.has(f.p) || entry.has(f.p) || routeFiles.has(f.p) || !USED_LANGS.has(f.l)) return false;
     if (expoScreen(f.p)) return false;
+    // Shopify loads a theme's layouts, templates, sections and blocks by name
+    if (f.l === 'liquid' && !/(^|\/)snippets\//.test(f.p)) return false;
     if (TEST_FILE.test(f.p) || SPECIAL_FILE.test(f.p) || /(^|\/)app\/.*\/(page|layout|route|loading|error|template|default)\.[jt]sx?$/.test(f.p)) return false;
     if (/(^|\/)src\/routes\//.test(f.p) && /\+|\$|\[/.test(f.p.split('/').pop())) return false;
     if (kinds(f.n).some((k) => NOT_USED_KINDS.has(k))) return false;
@@ -1808,7 +2181,7 @@ function whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTabl
   for (const f of scan.files) {
     if (!live(f.path) || f.category !== 'code') continue;
     const sv = findings(f.path).find((x) => x.k === 'server-code');
-    if (sv) servers.push({ file: f.path, what: `it calls ${sv.what}` });
+    if (sv) servers.push({ file: f.path, what: `it ${sv.how || 'calls'} ${sv.what}` });
     else if (/(^|\/)supabase\/functions\/[^/]+\/index\.[jt]s$/.test(f.path)) servers.push({ file: f.path, what: 'it’s a Supabase Edge Function' });
   }
   if (checkedRoutes) add('endpoints', 'Endpoint sign-in', true, found > checkedRoutes
@@ -1827,7 +2200,8 @@ function whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTabl
   else add('firebase', 'Firebase rules', false, firebaseJson ? 'not checked: the project uses Firebase, but no rules files were found. Rules set in the Firebase console can’t be checked from the code.' : 'no rules files found');
 
   const stripe = scan.files.filter((f) => live(f.path) && findings(f.path).some((x) => x.k === 'stripe-unsigned' || x.k === 'stripe-signed')).length;
-  const usesStripe = (scan.externals || []).some((e) => e.name === 'stripe' || /^@stripe\//.test(e.name || ''));
+  // Stripe.net is `using Stripe;`, listed as the NuGet package Stripe
+  const usesStripe = (scan.externals || []).some((e) => e.name === 'stripe' || /^@stripe\//.test(e.name || '') || (e.eco === 'nuget' && e.name === 'Stripe'));
   if (stripe) add('stripe', 'Stripe webhooks', true, `checked ${plural(stripe, 'file')} that receive${stripe === 1 ? 's' : ''} Stripe events`);
   else add('stripe', 'Stripe webhooks', false, usesStripe ? 'the app uses Stripe, but no code that receives its events was found' : 'no Stripe code found');
 
