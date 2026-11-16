@@ -73,6 +73,34 @@ test('a password written into a script or pipeline, next to those variables, is 
   assert.equal(findIssues(`    password: ${FAKE_PASSWORD}\n`, { path: 'ci/image.yml', category: 'config', lang: 'yaml' }).filter((x) => x.k === 'secret').length, 1);
 });
 
+test('"put your key here" in Portuguese, Spanish, French or German is a placeholder, not a secret (#107, #108, #110)', () => {
+  const yml = (text) => findIssues(text, { path: 'deploy/imagem.yml', category: 'config', lang: 'yaml' }).filter((x) => x.k === 'secret');
+  const sh = (text) => secrets(text, 'db/init/init-postgres.sh', 'shell');
+  for (const value of ['sua-chave-secreta-aqui-123', 'troque-esta-chave-2024', 'altere-este-segredo-2024', 'defina-no-env-123456', 'mude_isto_em_producao_1',
+    'gere-uma-chave-com-openssl-rand-hex-32', 'tu_clave_secreta_aqui_1', 'cambia-esta-clave-123', 'votre_cle_secrete_ici_1', 'changez-moi-en-prod-12',
+    'deine-geheime-zeichenkette-1', 'exemplo-de-chave-123456', 'generate-with-openssl-rand-hex-32']) {
+    assert.deepEqual(yml(`  SECRET_KEY: "${value}"\n  JWT_SECRET: ${value}\n`), [], value);
+  }
+  assert.deepEqual(yml('  POSTGRES_PASSWORD: "sua_senha_aqui"\n  APP_PASSWORD: troque_esta_senha\n'), []);
+  assert.deepEqual(sh('APP_PASSWORD="sua_senha_aqui"\nOCR_PASSWORD="troque-esta-senha"\nPOSTGRES_PASSWORD="defina-uma-senha-forte"\n'), []);
+  // whole words only: the same letters inside a random key, or a password that only looks like one of them, are still found
+  const key = 'Kq8' + 'sua3Zt0' + 'aqui9LmR4tZ8wNc3Hy7Jk2';
+  assert.equal(yml(`  SECRET_KEY: "${key}"\n`).length, 1);
+  assert.equal(sh(`OCR_PASSWORD="${'Tr0que' + '1234!'}"\n`).length, 1);
+  assert.equal(sh(`APP_PASSWORD="${FAKE_PASSWORD}"\n`).length, 1);
+});
+
+test('psql variables without a space, and SQL comments, in a database set-up script are not passwords (#107, #110)', () => {
+  const sh = (text) => secrets(text, 'db/init/01-papeis.sh', 'shell');
+  assert.deepEqual(sh("psql -v app_password=\"$APP_PASSWORD\" <<-EOSQL\n  ALTER ROLE app PASSWORD:'app_password';\nEOSQL\n"), []);
+  assert.deepEqual(sh(`psql <<-EOSQL\n  -- password = 'set from APP_PASSWORD, never written here'\n  -- app_password: '${FAKE_PASSWORD}'\nEOSQL\n`), []);
+  assert.deepEqual(secrets(`-- password = '${FAKE_PASSWORD}'\nALTER ROLE ro PASSWORD:'ro_password';\n`, 'db/01-roles.sql', 'sql'), []);
+  // the same lines in code that isn't SQL, and a password written in below the comment, are still found
+  assert.equal(secrets(`const cfg = { password:'${FAKE_PASSWORD.replace(/-/g, '_')}' };\n`, 'src/db.ts', 'typescript').length, 1);
+  assert.equal(secrets(`-- the app's role\npassword = '${FAKE_PASSWORD}'\n`, 'db/01-roles.sql', 'sql').length, 1);
+  assert.equal(sh(`psql <<-EOSQL\n  -- app role\nEOSQL\nAPP_PASSWORD="${FAKE_PASSWORD}"\n`).length, 1);
+});
+
 test("the answers of a choice and the browser's autofill words are not passwords (#93)", () => {
   const tsx = (line) => secrets(line, 'src/screens/LoginScreen.tsx', 'typescript');
   assert.deepEqual(tsx(`<TextInput autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />\n`), []);

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Requests reach the right endpoint again when part of the address is filled in:** since 0.10.0, a request like ``fetch(`/api/users/${user.id}`, { method: "PATCH" })`` could be linked to a fixed endpoint beside the right one, `GET /api/users/stripe`, instead of `PATCH /api/users/[userId]`. Learning a client's base address (new in 0.10.0) let looser matches under that base back in beside the best one. Now the best matches under the base come first, and a looser one only stands in when none of them is under it. The request's method is also read from its options when they start on the lines below the address, as they usually do with `fetch`, where before it counted as a read.
+- **Placeholders in other languages are not secrets:** Health knew "your key here" and "change me" only in English, so a value like `SECRET_KEY: troque-esta-chave-2024` or `APP_PASSWORD="sua_senha_aqui"` was reported as a secret written into the code. The same words in Portuguese, Spanish, French and German now mark a placeholder too (`sua`, `aqui`, `troque`, `defina`, `tu`, `cambia`, `votre`, `ici`, `changez`, `dein`, `hier` and others), as whole words only, so a random key that happens to hold those letters is still found. In database set-up scripts, a psql variable written without a space (`PASSWORD:'app_password'`) and a SQL comment line (`-- password = …`) no longer count either. Reported by @auroraferraz in #107 and #108 and @jeanlima17-cmd in #110.
 
 ## 0.10.0 (2026-11-15)
 
