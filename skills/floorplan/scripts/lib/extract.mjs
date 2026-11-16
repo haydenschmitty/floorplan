@@ -158,6 +158,22 @@ function variableUse(lines, i, name) {
   return null;
 }
 
+/**
+ * The method in a call's options when they start on the lines below it, as in fetch(`/api/users/${id}`, {
+ * then method: "PATCH" a line or two down. Read only while the call's brackets are still open, for a few lines.
+ */
+function methodBelow(lines, i) {
+  const depthOf = (l, d) => { for (const c of l) d += c === '(' ? 1 : c === ')' ? -1 : 0; return d; };
+  let depth = lines[i].length <= 500 ? depthOf(lines[i], 0) : 0;
+  for (let j = i + 1; depth > 0 && j < Math.min(lines.length, i + 12); j++) {
+    if (lines[j].length > 500) return null;
+    const m = METHOD_OPT.exec(lines[j]);
+    if (m) return /^(get|post|put|patch|delete|head|options)$/i.test(m[1]) ? m[1] : null;
+    depth = depthOf(lines[j], depth);
+  }
+  return null;
+}
+
 function extractCalls(src, at, { skip } = {}) {
   const calls = [];
   const hosts = [];
@@ -175,7 +191,7 @@ function extractCalls(src, at, { skip } = {}) {
     // a call whose URL wraps onto its own line: `this.http.post<Order>(` with the template on the line below
     const wrapped = i > 0 && /^\s*["'`]/.test(line) && lines[i - 1].length <= 500 ? WRAPPED_CALL.exec(lines[i - 1])?.[1] : null;
     if (!HTTP_CONTEXT.test(line) && !use && !wrapped) continue;
-    const method = (METHOD_CALL.exec(line)?.[1] || HELPER_ARG_VERB.exec(line)?.[1] || HELPER_VERB.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || wrapped || '').toUpperCase() || null;
+    const method = (METHOD_CALL.exec(line)?.[1] || HELPER_ARG_VERB.exec(line)?.[1] || HELPER_VERB.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || wrapped || methodBelow(lines, i) || '').toUpperCase() || null;
     for (const m of line.matchAll(STR_LITERAL)) {
       const n = normalizeCallLiteral(m[2]);
       if (!n) continue;

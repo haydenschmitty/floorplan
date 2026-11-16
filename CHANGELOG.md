@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Requests reach the right endpoint again when part of the address is filled in:** since 0.10.0, a request like ``fetch(`/api/users/${user.id}`, { method: "PATCH" })`` could be linked to a fixed endpoint beside the right one, `GET /api/users/stripe`, instead of `PATCH /api/users/[userId]`. Learning a client's base address (new in 0.10.0) let looser matches under that base back in beside the best one. Now the best matches under the base come first, and a looser one only stands in when none of them is under it. The request's method is also read from its options when they start on the lines below the address, as they usually do with `fetch`, where before it counted as a read.
+
 ## 0.10.0 (2026-11-15)
 
 - **One unusual letter no longer blanks the map:** to list the page's own scripts in its Content-Security-Policy, the build reads a lower-cased copy of the page, and a few letters get longer when lower-cased (the Turkish "İ" becomes two characters). One of them anywhere before the scripts, in a comment the scan picked up, a file name or a description, moved every later script by one character in that copy, so their fingerprints were wrong, the browser blocked them and the map drew nothing. Only A to Z are lower-cased now, the way the browser reads tag names, so the copy always lines up with the page. Fixed by @OfficialCodeVoyage in #118.

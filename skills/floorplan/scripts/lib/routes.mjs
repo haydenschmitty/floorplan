@@ -437,7 +437,15 @@ export function matchCalls(files, routes) {
     // even when a shorter address elsewhere fits this call more closely (thin evidence still needs the file's own record)
     const own = top(f.path), base = pref ?? top(scope(f));
     if (base != null && !hits[0].weak) {
-      const viaBase = [...new Set([...keep, ...alts])].filter((h) => h.prefix === base && (!h.weak || own === base));
+      const underBase = (list) => list.filter((h) => h.prefix === base && (!h.weak || own === base));
+      // the best matches under that base first: a looser one under it (a fixed /api/users/stripe for
+      // `/api/users/${id}`) only stands in when none of the best is, and then the closest of them
+      let viaBase = underBase(keep);
+      if (!viaBase.length) {
+        const more = underBase(alts);
+        const s = Math.max(...more.map((h) => h.s));
+        viaBase = more.filter((h) => h.s === s);
+      }
       if (viaBase.length) keep = viaBase;
     }
     // weak matches need the caller's own track record, not a neighbour's
