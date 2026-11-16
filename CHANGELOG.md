@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Placeholders in other languages are not secrets:** Health knew "your key here" and "change me" only in English, so a value like `SECRET_KEY: troque-esta-chave-2024` or `APP_PASSWORD="sua_senha_aqui"` was reported as a secret written into the code. The same words in Portuguese, Spanish, French and German now mark a placeholder too (`sua`, `aqui`, `troque`, `defina`, `tu`, `cambia`, `votre`, `ici`, `changez`, `dein`, `hier` and others), as whole words only, so a random key that happens to hold those letters is still found. In database set-up scripts, a psql variable written without a space (`PASSWORD:'app_password'`) and a SQL comment line (`-- password = …`) no longer count either. Reported by @auroraferraz in #107 and #108 and @jeanlima17-cmd in #110.
+
 ## 0.10.0 (2026-11-15)
 
 - **One unusual letter no longer blanks the map:** to list the page's own scripts in its Content-Security-Policy, the build reads a lower-cased copy of the page, and a few letters get longer when lower-cased (the Turkish "İ" becomes two characters). One of them anywhere before the scripts, in a comment the scan picked up, a file name or a description, moved every later script by one character in that copy, so their fingerprints were wrong, the browser blocked them and the map drew nothing. Only A to Z are lower-cased now, the way the browser reads tag names, so the copy always lines up with the page. Fixed by @OfficialCodeVoyage in #118.

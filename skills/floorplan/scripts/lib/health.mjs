@@ -37,7 +37,15 @@ function entropy(s) {
 // Files where keys are usually fake: tests, fixtures, examples, docs.
 const TEST_FILE = /(^|\/)(tests?|__tests__|__mocks__|spec|specs|e2e|fixtures?|testdata|mocks?)\/|\.(test|spec|stories)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/i;
 const EXAMPLE_FILE = /(^|\/)(examples?|samples?|docs?|demo)\/|\.(example|sample|template|dist|tmpl)(\.|$)|(^|\/)[^/]*example[^/]*$/i;
-const PLACEHOLDER = /your|xxxx|example|changeme|change[-_]?me|placeholder|replace|dummy|fake|sample|redacted|insert|<[^>]*>|\$\{|\{\{|%\(|\*\*\*|0{8,}|1234567|abcdef|_here\b|-here\b/i;
+// The same "your key here" and "change this" words in Portuguese, Spanish, French and German, whole words only
+// (between separators), so a random key that happens to hold the letters "sua" or "ici" is still a key.
+const PLACEHOLDER_WORDS = 'generate'
+  + '|sua|seu|aqui|aquí|troque|trocar|altere|alterar|mude|mudar|substitua|substituir|defina|definir|coloque|insira|gere|gerar|exemplo'
+  + '|tu|cambia|cambiar|cambiame|cámbiame|reemplaza|reemplazar|genera|generar|ejemplo'
+  + '|votre|ici|changez|changer|remplacez|remplacer|modifiez|générez|generez|exemple'
+  + '|dein|deine|hier|ändern|aendern|ersetzen|beispiel';
+const PLACEHOLDER = new RegExp(String.raw`your|xxxx|example|changeme|change[-_]?me|placeholder|replace|dummy|fake|sample|redacted|insert|<[^>]*>|\$\{|\{\{|%\(|\*\*\*|0{8,}|1234567|abcdef|_here\b|-here\b`
+  + String.raw`|(?<![\p{L}\d])(?:${PLACEHOLDER_WORDS})(?![\p{L}\d])`, 'iu');
 
 // ---------- 1. secrets ----------
 
@@ -219,7 +227,8 @@ function notAnAssignment(m, text, sqlish) {
   const op = /^\s*(:=|=>|=|:)/.exec(whole.slice(q.length * 2 + name.length))?.[1];
   if (op !== ':') return false;
   if (q && /\?\s*$/.test(text.slice(0, m.index))) return true;
-  return sqlish && !q && /^password$/i.test(name) && /^[A-Za-z_]\w*$/.test(value) && /^\s+:["']/.test(whole.slice(name.length));
+  // (psql reads :'name' as a variable with or without a space before it: PASSWORD:'app_password')
+  return sqlish && !q && /^password$/i.test(name) && /^[A-Za-z_]\w*$/.test(value) && /^\s*:["']/.test(whole.slice(name.length));
 }
 
 function findSecrets(src, f, out) {
@@ -270,7 +279,8 @@ function findSecrets(src, f, out) {
   const unquoted = /^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*[:=]\s*([^\s#'"]{6,200})\s*(?:#.*)?$/;
   const sqlish = ['shell', 'sql'].includes(f.lang) || /\.(sh|bash|sql|psql)$/i.test(f.path);
   lines.forEach((text, i) => {
-    if (text.length > 400 || ENV_LOOKUP.test(text) || PUBLIC_TOKEN_LINE.test(text) || inDoc.has(i + 1) || /^\s*(#|\/\/|\*|\/\*|<!--)/.test(text)) return;
+    // (in SQL, and in the SQL a shell script hands to psql, a line starting with -- is a comment)
+    if (text.length > 400 || ENV_LOOKUP.test(text) || PUBLIC_TOKEN_LINE.test(text) || inDoc.has(i + 1) || /^\s*(#|\/\/|\*|\/\*|<!--)/.test(text) || (sqlish && /^\s*--\s/.test(text))) return;
     const pairs = [...text.matchAll(quoted)].filter((m) => !notAnAssignment(m, text, sqlish)).map((m) => [m[2], m[4]]);
     if (!pairs.length && (f.category === 'config' && CONFIG_LANGS.has(f.lang))) { const u = unquoted.exec(text); if (u) pairs.push([u[1], u[2]]); }
     for (const [name, value] of pairs) {
