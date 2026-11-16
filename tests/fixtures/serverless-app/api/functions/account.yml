@@ -1,0 +1,17 @@
+functions:
+  signUp:
+    handler: src/route.signUp
+    events:
+      - http:
+          path: account/signup
+          method: post
+  changeEmail:
+    handler: src/route.changeEmail
+    events:
+      - http: POST account/email
+  deleteUser:
+    handler: src/route.deleteUser
+    events:
+      - http:
+          path: account
+          method: delete

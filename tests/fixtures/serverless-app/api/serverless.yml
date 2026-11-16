@@ -1,0 +1,55 @@
+service: todo-api
+frameworkVersion: '3'
+
+custom:
+  stage: ${opt:stage, 'dev'}
+  authorizer: &jwt
+    name: jwtAuthorizer
+    type: request
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: ${self:custom.stage}
+  environment:
+    TASKS_TABLE: !Ref TasksTable
+    TOPIC_ARN: !GetAtt [Notifications, Arn]
+    SITE_URL: !Sub "https://${AWS::Region}.example.com"
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action: [dynamodb:Query, dynamodb:PutItem]
+          Resource:
+            - !GetAtt TasksTable.Arn
+
+functions:
+  - ${file(./functions/tasks.yml)}
+  - ${file(./functions/account.yml):functions}
+  - status:
+      handler: src/index.ping
+      events:
+        - httpApi: GET /status
+        - httpApi:
+            path: ''
+            method: get
+  - nightlyCleanup:
+      handler: src/jobs.cleanup
+      events:
+        - schedule: rate(1 day)
+        - sqs:
+            arn: !GetAtt CleanupQueue.Arn
+
+resources:
+  Resources:
+    TasksTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: tasks-${self:custom.stage}
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+    Policy:
+      Description: |
+        A long note: with colons, - dashes
+        and http: lines that aren't events.
