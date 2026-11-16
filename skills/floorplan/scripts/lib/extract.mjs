@@ -1923,6 +1923,42 @@ function laravelRoutes(code, bare, close, spend, at, cls, requires) {
   return { routes, mounts };
 }
 
+// The folder a web server serves PHP files from: each script there answers at its own address
+const PHP_DOC_ROOT = /^((?:.*\/)?(?:public|public_html|www|htdocs))\//;
+/**
+ * Plain PHP sites, with no framework routing: a script under the document root (public/, public_html/, www/,
+ * htdocs/) answers requests at its own address, public/orders/save.php at /orders/save.php and an index.php at
+ * its folder's. Scripts other scripts include are parts of pages, not pages, and so are files and folders
+ * starting with _ or a dot. A document root whose index.php loads Composer's vendor/autoload.php is a framework's
+ * front controller (Laravel, Symfony, Slim), whose routes are read elsewhere, so it's left alone.
+ * Adds the endpoints to each file's routes; call it after imports are resolved (imp.files).
+ * After @maccydee's document-root rule in #13.
+ */
+export function phpPages(files) {
+  const php = files.filter((f) => f.lang === 'php' && f.category === 'code' && !f.tooLarge);
+  if (!php.length) return 0;
+  const included = new Set(php.flatMap((f) => (f.imports || []).flatMap((imp) => imp.files || [])));
+  const byPath = new Map(php.map((f) => [f.path, f]));
+  const frontController = new Map();
+  let added = 0;
+  for (const f of php) {
+    const m = PHP_DOC_ROOT.exec(f.path);
+    if (!m || f.routes?.length || included.has(f.path)) continue;
+    const root = m[1];
+    if (!frontController.has(root)) {
+      const index = byPath.get(`${root}/index.php`);
+      frontController.set(root, !!index?.imports?.some((imp) => /(^|\/)vendor\/autoload\.php$/.test(imp.spec || '')));
+    }
+    if (frontController.get(root)) continue;
+    const rel = f.path.slice(root.length + 1);
+    if (rel.split('/').some((part) => /^[_.]/.test(part)) || !/\.php$/i.test(rel) || /\.blade\.php$/i.test(rel)) continue;
+    const page = '/' + rel.replace(/(^|\/)index\.php$/i, '');
+    (f.routes ||= []).push({ method: 'ANY', path: page.length > 1 ? page.replace(/\/$/, '') : '/', var: null, line: f.phpStart || 1, framework: 'php' });
+    added++;
+  }
+  return added;
+}
+
 function extractPhp(src, filePath) {
   const code = stripPhp(src);
   const at = lineIndex(code);
@@ -2030,6 +2066,8 @@ function extractPhp(src, filePath) {
   return {
     imports, symbols, routes, mounts, calls, hosts,
     ...(classes.length ? { classes } : {}), ...(methods.length ? { methods } : {}), ...(inertia.length ? { inertia } : {}),
+    // where the PHP starts, for a page's endpoint (phpPages)
+    ...(/<\?(?:php\b|=)/i.test(src) ? { phpStart: at(src.search(/<\?(?:php\b|=)/i)) } : {}),
   };
 }
 

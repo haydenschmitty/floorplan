@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { discover, listGitFiles, explainGitError, gitInfo, classify, themeRoots, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson, skippedConfigs, MAX_CONFIG_BYTES, readJsonFile, notMapped } from './lib/common.mjs';
-import { extract, callableCallsVia } from './lib/extract.mjs';
+import { extract, callableCallsVia, phpPages } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
 import { createResolver, applyGlobalUsings } from './lib/resolve.mjs';
@@ -179,6 +179,8 @@ if (wrappers.size) for (const f of files) {
 }
 
 // ---------- 4. routes and HTTP calls ----------
+// plain PHP sites: each script under the document root is a page with its own address (needs the imports above)
+phpPages(files);
 const routes = resolveRoutes(files);
 // Serverless Framework: endpoints declared in serverless.yml, placed in the file that answers them (lib/serverless.mjs)
 const serverless = serverlessRoutes(files, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
