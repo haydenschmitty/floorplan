@@ -10,6 +10,8 @@
 import path from 'node:path';
 
 const CONFIG_NAME = /(^|\/)serverless[\w.-]*\.ya?ml$/i;
+// samples in a test folder describe no real endpoints (the folders whose routes the other frameworks skip too)
+const TEST_DIR = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\//;
 const HANDLER_EXT = ['.ts', '.js', '.mjs', '.cjs', '.tsx', '.jsx', '.mts', '.cts', '.py'];
 const BACKGROUND = ['schedule', 'eventBridge', 'stream', 'sqs', 's3', 'sns', 'cloudwatchEvent', 'cloudwatchLog', 'cognitoUserPool', 'websocket', 'kafka', 'alb', 'iot'];
 const MAX_INCLUDE_DEPTH = 8;
@@ -228,10 +230,11 @@ const FILE_REF = /^\$\{file\(\s*['"]?([^'")]+?)['"]?\s*\)(?::([\w.-]+))?(?:\s*,[
  */
 export function serverlessRoutes(files, read) {
   const byPath = new Map(files.map((f) => [f.path, f]));
-  const configs = files.filter((f) => isServerlessConfig(f.path));
+  // (a config too big for the scan to read is left alone too, rather than read here after all)
+  const configs = files.filter((f) => isServerlessConfig(f.path) && !TEST_DIR.test(f.path) && !f.tooLarge);
   if (!configs.length) return { routes: [], triggers: [], configs: [], unresolved: [] };
   const parsed = new Map();
-  const load = (p) => { if (!parsed.has(p)) parsed.set(p, byPath.has(p) ? parseYaml(read(p)) : null); return parsed.get(p); };
+  const load = (p) => { if (!parsed.has(p)) parsed.set(p, byPath.has(p) && !byPath.get(p).tooLarge ? parseYaml(read(p)) : null); return parsed.get(p); };
 
   // ${file(./x.yml)} and ${file(./x.yml):functions} replaced by what they point at, relative to the file they're in
   const included = new Set();

@@ -123,3 +123,12 @@ test('includes that loop back, handlers that are missing, and events without an 
   assert.deepEqual(out.routes.map((r) => `${r.method} ${r.path} ${r.file}`), ['POST /ok src/ok.ts']);
   assert.deepEqual(out.unresolved.map((u) => u.name), ['gone']);
 });
+
+test('a sample config in a test folder, and one too big for the scan to read, add no endpoints', () => {
+  const yml = 'functions:\n  list:\n    handler: src/ok.run\n    events:\n      - http: GET /items\n';
+  const src = { 'serverless.yml': yml, 'tests/fixtures/serverless.yml': yml, 'e2e/serverless-e2e.yml': yml, 'big/serverless.yml': yml, 'src/ok.ts': 'export const run = async () => ({});', 'big/src/ok.ts': 'export const run = async () => ({});' };
+  const files = Object.keys(src).map((p) => ({ path: p, symbols: p.endsWith('.ts') ? [{ name: 'run', line: 1 }] : [], ...(p === 'big/serverless.yml' ? { tooLarge: true } : {}) }));
+  const out = serverlessRoutes(files, (p) => src[p] || '');
+  assert.deepEqual(out.routes.map((r) => `${r.method} ${r.path} ${r.config}`), ['GET /items serverless.yml']);
+  assert.deepEqual(out.configs, ['serverless.yml']);
+});
