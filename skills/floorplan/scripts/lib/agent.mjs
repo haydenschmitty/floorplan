@@ -19,3 +19,17 @@ export function detectAgent(args = {}, env = process.env) {
   if (isUnattended(env)) return 'none';
   return AGENTS.find((a) => DETECT[a](env)) || 'claude';
 }
+
+const CLI_NAMES = { claude: 'the Claude Code CLI', codex: 'Codex' };
+/**
+ * What the CLI answering the map's questions is called, for open.mjs: its usual name, or, when its --version
+ * names another program (a wrapper installed under the same command, `devin 3000.11.238` answering to
+ * `claude`), that program, so the label never claims Claude Code or Codex for something else.
+ */
+export function cliLabel(engine, version = '') {
+  const usual = CLI_NAMES[engine] || CLI_NAMES.claude;
+  const v = String(version || '').trim();
+  const named = /^([A-Za-z][\w.-]{0,40})\s+v?\d/.exec(v)?.[1];
+  if (!named || new RegExp(engine === 'codex' ? 'codex' : 'claude', 'i').test(v)) return usual;
+  return `${named}, found as the ${engine === 'codex' ? 'codex' : 'claude'} command`;
+}
