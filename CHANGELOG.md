@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Express's chained route is on the map:** `app.route('/orders').get(listOrders).post(createOrder)` declares two endpoints on one statement, but the map showed none of them, so the website's requests to them weren't connected. Each method in the chain is now an endpoint on the route's path, on a router or under its mount. Hono's two-argument `app.route('/api', api)` still mounts a router, and a `route()` with nothing chained after it declares nothing. Fixed by @ryoaonetsuki.
+- **Express's chained route is on the map:** `app.route('/orders').get(listOrders).post(createOrder)` declares two endpoints on one statement, but the map showed none of them, so the website's requests to them weren't connected. Each method in the chain is now an endpoint on the route's path, on a router or under its mount. Hono's two-argument `app.route('/api', api)` still mounts a router, and a `route()` with nothing chained after it declares nothing. Fixed by @ryoaonetsuki in #136.
 
 ## 0.11.0 (2026-11-16)
 
