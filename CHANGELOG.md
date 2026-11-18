@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Go router groups are on the map:** a Go server that groups its endpoints (`api := r.Group("/api")` in Gin, Echo, Fiber or chi, nested groups, or chi's `r.Route("/api", func(r chi.Router) { … })` with a check in front of it) showed them without their prefix, so the website's requests to them weren't connected. The group's prefix now sits in front of its routes, and Go 1.22's `mux.HandleFunc("GET /orders/{id}", …)` reads its method from the pattern instead of showing as `ANY`. A route beside a group, or on a router the callback doesn't hand over, keeps no prefix. Fixed by @ryoaonetsuki.
+- **Go router groups are on the map:** a Go server that groups its endpoints (`api := r.Group("/api")` in Gin, Echo, Fiber or chi, nested groups, or chi's `r.Route("/api", func(r chi.Router) { … })` with a check in front of it) showed them without their prefix, so the website's requests to them weren't connected. The group's prefix now sits in front of its routes, and Go 1.22's `mux.HandleFunc("GET /orders/{id}", …)` reads its method from the pattern instead of showing as `ANY`. A route beside a group, or on a router the callback doesn't hand over, keeps no prefix. Fixed by @ryoaonetsuki in #134.
 
 ## 0.11.0 (2026-11-16)
 
