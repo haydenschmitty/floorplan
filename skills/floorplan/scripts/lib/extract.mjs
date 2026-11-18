@@ -372,6 +372,22 @@ function extractJs(src, filePath) {
     if (!ROUTER_NAME.test(m[1]) && !routerVars.has(m[1])) continue;
     routes.push({ method: m[2].toUpperCase(), path: m[3], var: m[1], line: at(m.index) });
   }
+  // Express's chained route: `app.route('/orders').get(listOrders).post(createOrder)` declares
+  // two endpoints on one statement, and the methods carry no path of their own. Hono's
+  // `app.route('/api', api)` mounts a router instead (two arguments), so it is left to the
+  // mounts below; a `route()` with nothing chained after it declares nothing.
+  for (const m of all(/(?<![\w$])([A-Za-z_$][\w$]*)\.route\(\s*["'`](\/[^"'`]*)["'`]\s*\)/g, code)) {
+    if (!ROUTER_NAME.test(m[1]) && !routerVars.has(m[1])) continue;
+    let pos = m.index + m[0].length;
+    for (;;) {
+      const c = /^\s*\.\s*(get|post|put|patch|delete|all|options|head)\s*\(/.exec(code.slice(pos, pos + 400));
+      if (!c) break;
+      routes.push({ method: c[1].toUpperCase(), path: m[2], var: m[1], line: at(pos + c.index + c[0].lastIndexOf(c[1])) });
+      const args = callArgs(code, pos + c.index + c[0].length);
+      if (!args) break;
+      pos = args.end + 1;
+    }
+  }
   // Mounts and middleware: app.use('/api', requireAuth, orders), app.route('/api', api), app.use('/billing',
   // createBillingRoutes()), app.use('/api/*', auth), app.use(requireAuth), app.use(router). Each records the
   // receiver (`on`), so routers nested in one file compose; resolveRoutes tells a router from middleware.
