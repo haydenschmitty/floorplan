@@ -797,3 +797,29 @@ test("workflow.json's answer schemas use only the keywords it promises, and acce
   assert.notDeepEqual(validate(WORKFLOW.schemas.descriptions, { files: { 'a.js': { name: 'A' } } }), []);
   assert.notDeepEqual(validate(WORKFLOW.schemas.recent_work, { tasks: [{ title: 'T', summary: 'S', items: [{ ref: 'a.js', change: 'moved', note: 'n' }] }] }), []);
 });
+
+test('status does not report zero changes when the previous map commit is unavailable', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'floorplan-status-'));
+  try {
+    execFileSync('git', ['init', '-q', root]);
+    fs.writeFileSync(path.join(root, 'hello.js'), 'console.log("hello");\n');
+    execFileSync('git', ['-C', root, 'add', 'hello.js']);
+    execFileSync('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
+      '-c', 'commit.gpgsign=false', 'commit', '-qm', 'initial']);
+    fs.mkdirSync(path.join(root, 'floorplan'));
+    fs.writeFileSync(path.join(root, 'floorplan', 'graph.json'), JSON.stringify({
+      meta: { generatedAt: '2026-01-01', counts: { files: 1 },
+        repos: [{ path: '.', head: 'a'.repeat(40) }] },
+      nodes: [],
+    }));
+    const result = JSON.parse(execFileSync(process.execPath, [
+      path.join(SKILL, 'scripts', 'status.mjs'), root, '--json',
+    ], { encoding: 'utf8' }));
+    assert.equal(result.state, 'map');
+    assert.equal(result.repos[0].compared, false);
+    assert.equal(result.repos[0].changedFiles, undefined);
+    assert.match(result.text, /previous map commit is unavailable/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
