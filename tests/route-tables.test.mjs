@@ -135,6 +135,62 @@ test('Bun.serve routes: method objects give one endpoint per method, anything el
   assert.deepEqual(routesOf(src.replace('Bun.serve(', 'configure('), 'server/index.ts'), []);
 });
 
+test('Bun.serve routes inside a wrapping call, and method maps a helper is handed', () => {
+  const src = [
+    `const server = Bun.serve({`,
+    `  routes: secureRoutes({`,
+    `    "/api/carts": createRouteHandler({ GET: carts.index, POST: carts.create }),`,
+    `    "/api/health": cached({ ttl: 5, handler: health }),`,
+    `  }),`,
+    `});`,
+  ].join('\n');
+  assert.deepEqual(routesOf(src, 'server/index.ts'), [
+    'GET /api/carts table L3 index',
+    'POST /api/carts table L3 create',
+    // a helper handed anything but methods serves the route as a whole
+    'ANY /api/health table L4 -',
+  ]);
+});
+
+test('route maps a Bun.serve spreads in are endpoints where they are defined, and only then', () => {
+  const project = makeProject({
+    'server/package.json': JSON.stringify({ name: 'server' }),
+    'server/src/main.ts': [
+      `import { cartRoutes } from "./routes/carts";`,
+      `import { adminRoutes } from "./routes";`,
+      `const healthRoutes = { "/api/health": () => new Response("ok") };`,
+      `Bun.serve({ port: 3000, routes: secureRoutes({ ...cartRoutes, ...adminRoutes, ...healthRoutes }) });`,
+    ].join('\n'),
+    'server/src/routes/carts.ts': [
+      `export const cartRoutes = {`,
+      `  "/api/carts": createRouteHandler({ GET: carts.index, POST: carts.create }),`,
+      `  "/api/carts/:id": createRouteHandler({ DELETE: carts.destroy }),`,
+      `};`,
+    ].join('\n'),
+    'server/src/routes/index.ts': `export { adminRoutes } from "./admin";\n`,
+    'server/src/routes/admin.ts': `export const adminRoutes = { "/admin": admin.index };\n`,
+    // every key a path, but nothing serves it: the website's own list of links
+    'server/src/links.ts': `export const footerLinks = { "/about": aboutPage, "/terms": termsPage };\n`,
+    'web/src/api.ts': `export const addToCart = () => fetch("/api/carts", { method: "POST" });\n`,
+  }, { arch: {
+    project: { name: 'bun-route-maps', summary: 'Test fixture.' },
+    nodes: [
+      { id: 'web', label: 'Website', kind: 'ui', summary: 'The website.', paths: ['web/**'] },
+      { id: 'api', label: 'Server', kind: 'service', summary: 'The Bun server.', paths: ['server/**'] },
+    ],
+  } });
+  try {
+    run('scan.mjs', project);
+    run('build.mjs', project, '--no-claude-md');
+    const g = readGraph(project);
+    assert.deepEqual(routeKeys(g), ['ANY /admin', 'ANY /api/health', 'DELETE /api/carts/:id', 'GET /api/carts', 'POST /api/carts']);
+    const http = g.links.filter((l) => l.k === 'http').map((l) => `${l.a.slice(2)} -> ${l.b.slice(2)}`);
+    assert.deepEqual(http, ['web/src/api.ts -> server/src/routes/carts.ts']);
+  } finally {
+    cleanup(project);
+  }
+});
+
 test("a website's list of the requests it makes is not a route table", () => {
   // `action`, `resolve` and `fetch` are as common in an API client's call list as in a server's routes
   const client = [

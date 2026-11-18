@@ -112,8 +112,35 @@ function mountTarget(f, mount, byPath) {
   return { file: f.path, v: head }; // defined in the same file
 }
 
+/**
+ * Route maps a Bun.serve spreads into its routes (`routes: secureRoutes({ ...appRoutes, ...apiRoutes })`)
+ * become endpoints of the file that defines them: the serving file itself, or the one it imports each name
+ * from, through barrels as exportOf follows them. A map nothing serves stays data.
+ */
+function placeBunRouteMaps(files, byPath) {
+  const placed = new Set();
+  const take = (t, name) => {
+    const key = `${t.path}|${name}`;
+    if (!placed.has(key)) { placed.add(key); t.routes = [...(t.routes || []), ...t.routeMaps[name]]; }
+  };
+  const fromExport = (file, name, depth) => {
+    const t = byPath.get(file);
+    if (!t || depth > 8) return;
+    if (t.routeMaps && Object.hasOwn(t.routeMaps, name)) return take(t, name);
+    const passed = (t.imports || []).filter((i) => i.reexport && i.files?.length);
+    for (const imp of passed) if (imp.exported && Object.hasOwn(imp.exported, name)) return fromExport(imp.files[0], imp.exported[name], depth + 1);
+    for (const imp of passed) if (!imp.exported) fromExport(imp.files[0], name, depth + 1);
+  };
+  for (const f of files) for (const name of isTestFile(f.path) ? [] : f.bunSpreads || []) {
+    if (f.routeMaps && Object.hasOwn(f.routeMaps, name)) { take(f, name); continue; }
+    const imp = (f.imports || []).find((i) => i.files?.length && i.locals && Object.hasOwn(i.locals, name));
+    if (imp && imp.locals[name] !== '*') fromExport(imp.files[0], imp.locals[name], 0);
+  }
+}
+
 export function resolveRoutes(files) {
   const byPath = new Map(files.map((f) => [f.path, f]));
+  placeBunRouteMaps(files, byPath);
   const servesOrMounts = (p) => { const t = byPath.get(p); return !!(t?.routes?.length || t?.mounts?.some((m) => m.var || m.spec)); };
   // mountsTo[file] = [{ from, on, v, prefix, line }]   (v === '*' applies to every route in the file)
   const mountsTo = new Map();

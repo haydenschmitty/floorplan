@@ -1,7 +1,7 @@
 // Per-language, regex-based extraction of imports, exported symbols, HTTP routes and HTTP calls.
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
 import { forwardIndexOf, importStatements, callArgs } from './common.mjs';
-import { dataRoutes } from './route-tables.mjs';
+import { dataRoutes, bunRouteSpreads, routeMaps } from './route-tables.mjs';
 
 import path from 'node:path';
 
@@ -460,6 +460,12 @@ function extractJs(src, filePath) {
   routes.push(...dataRoutes(code, at, { handlerOf: tableHandler, serves: dataAt > 0 || routerVars.size > 0 || SERVES.test(code), skip: objectRoutes.map((o) => o[3]) }));
   for (const r of routes.slice(dataAt)) objectRoutes.push([r.line, r.line, r.path]);
 
+  // route maps a Bun.serve spreads into its routes, read where they're defined and placed by resolveRoutes
+  const bunSpreads = bunRouteSpreads(code);
+  const maps = /["'`]\/[^"'`\n]*["'`]\s*:/.test(code) ? routeMaps(code, at, tableHandler) : {};
+  // a map's own keys are its routes, not requests the file makes
+  const mapKeys = Object.values(maps).flat().map((r) => [r.line, r.path]);
+
   routes.push(...keyedRouteTable(code, at));
   if (/@nestjs\/common/.test(code) && /@Controller\s*\(/.test(code)) routes.push(...nestRoutes(code, at));
 
@@ -477,6 +483,9 @@ function extractJs(src, filePath) {
   if (objectRoutes.length) for (let i = calls.length - 1; i >= 0; i--) {
     if (objectRoutes.some(([a, b, url]) => calls[i].line >= a && calls[i].line <= b && calls[i].path === url)) calls.splice(i, 1);
   }
+  if (mapKeys.length) for (let i = calls.length - 1; i >= 0; i--) {
+    if (mapKeys.some(([line, key]) => calls[i].line === line && key.endsWith(calls[i].path))) calls.splice(i, 1);
+  }
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
   const built = urlBuilderCalls(code, at);
@@ -491,7 +500,7 @@ function extractJs(src, filePath) {
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
   calls.push(...callables.calls);
   if (/\.functions\s*\.\s*invoke\b/.test(code)) calls.push(...edgeInvokeCalls(code, at));
-  return { imports, symbols, routes, mounts, calls, hosts, ...(routerVars.size ? { routerVars: [...routerVars] } : {}), ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
+  return { imports, symbols, routes, mounts, calls, hosts, ...(routerVars.size ? { routerVars: [...routerVars] } : {}), ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}), ...(bunSpreads.length ? { bunSpreads } : {}), ...(Object.keys(maps).length ? { routeMaps: maps } : {}) };
 }
 
 // ---------- Supabase Edge Functions ----------
