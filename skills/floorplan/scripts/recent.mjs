@@ -77,7 +77,7 @@ data.since = since;
 for (const r of G.meta.repos || []) {
   const abs = path.join(root, r.path);
   const prefix = r.path === '.' ? '' : r.path + '/';
-  const status = (git(abs, ['status', '--porcelain=v1', '-uall']) || '').split('\n').filter(Boolean);
+  const status = (git(abs, ['status', '--porcelain=v1', '-z', '-uall']) || '').split('\0').filter(Boolean);
   const log = (git(abs, ['log', `--since=${since}`, '--max-count=20', '--no-merges', '--name-only', '--date=short', '--format=@@%h %ad %s']) || '').trim();
   if (!status.length && !log) continue;
   const repo = { path: r.path, uncommitted: [], commits: [] };
@@ -85,7 +85,14 @@ for (const r of G.meta.repos || []) {
   L.push('', `REPO ${r.path === '.' ? G.meta.rootName : r.path}`);
   if (status.length) {
     L.push('  uncommitted:');
-    const rows = status.map((s) => ({ status: s.slice(0, 2).trim(), path: prefix + s.slice(3).replace(/^.* -> /, '').replace(/"/g, '') }));
+    const rows = [];
+    for (let i = 0; i < status.length; i += 1) {
+      const record = status[i];
+      const code = record.slice(0, 2);
+      rows.push({ status: code.trim(), path: prefix + record.slice(3) });
+      // With -z Git prints the destination first, then the original path.
+      if (/[RC]/.test(code)) i += 1;
+    }
     repo.uncommitted = rows.map((u) => ({ ...u, card: cardOf(u.path) }));
     list(rows.map((u) => `  ${u.status.padEnd(2)} ${u.path}  → ${card(u.path)}`));
   }
