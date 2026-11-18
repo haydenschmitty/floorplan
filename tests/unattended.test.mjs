@@ -797,3 +797,31 @@ test("workflow.json's answer schemas use only the keywords it promises, and acce
   assert.notDeepEqual(validate(WORKFLOW.schemas.descriptions, { files: { 'a.js': { name: 'A' } } }), []);
   assert.notDeepEqual(validate(WORKFLOW.schemas.recent_work, { tasks: [{ title: 'T', summary: 'S', items: [{ ref: 'a.js', change: 'moved', note: 'n' }] }] }), []);
 });
+
+test('recent work resolves exact Git paths for renamed and untracked files', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'floorplan-recent-'));
+  try {
+    const renamed = 'café menu.js';
+    const untracked = 'mañana.js';
+    execFileSync('git', ['init', '-q', root]);
+    fs.writeFileSync(path.join(root, 'menu.js'), 'console.log("menu");\n');
+    commitAll(root, 'initial menu');
+    execFileSync('git', ['-C', root, 'mv', 'menu.js', renamed]);
+    fs.writeFileSync(path.join(root, untracked), 'console.log("new");\n');
+    fs.mkdirSync(path.join(root, 'floorplan'));
+    fs.writeFileSync(path.join(root, 'floorplan', '.gitignore'), '*\n');
+    writeJson(path.join(root, 'floorplan', 'graph.json'), {
+      project: { name: 'Menus' },
+      meta: { generatedAt: '2026-01-01', rootName: 'Menus', repos: [{ path: '.' }] },
+      nodes: [{ id: 'menu', label: 'Menu' }],
+      files: [{ p: renamed, n: 'menu', name: 'Menu' }, { p: untracked, n: 'menu', name: 'Specials' }],
+      routes: [],
+    });
+    const { json } = unattended('recent.mjs', root);
+    assert.deepEqual(json.repos[0].uncommitted.map(({ status, path, card }) => [status, path, card?.name]), [
+      ['R', renamed, 'Menu'], ['??', untracked, 'Specials'],
+    ]);
+  } finally {
+    cleanup(root);
+  }
+});
