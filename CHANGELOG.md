@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **SvelteKit and Nuxt server endpoints are on the map:** a SvelteKit `+server.ts` and a Nuxt file under `server/api/` or `server/routes/` answer a URL by where they sit in the folder, but the map showed none of them, so the website's requests to them weren't connected. They now show up: one endpoint per exported method in SvelteKit, the method from a `.get.` / `.post.` suffix on the file name in Nuxt (or `ANY` without one), route groups `(…)` and parallel slots `@…` skipped, `[param]` as `:param` and `[...rest]` as `*`. A Nuxt file without `defineEventHandler` is left alone. Fixed by @ryoaonetsuki.
+- **SvelteKit and Nuxt server endpoints are on the map:** a SvelteKit `+server.ts` and a Nuxt file under `server/api/` or `server/routes/` answer a URL by where they sit in the folder, but the map showed none of them, so the website's requests to them weren't connected. They now show up: one endpoint per exported method in SvelteKit, the method from a `.get.` / `.post.` suffix on the file name in Nuxt (or `ANY` without one), route groups `(…)` and parallel slots `@…` skipped, `[param]` as `:param` and `[...rest]` as `*`. A Nuxt file without `defineEventHandler` is left alone. Fixed by @ryoaonetsuki in #138.
 
 ## 0.11.0 (2026-11-16)
 
