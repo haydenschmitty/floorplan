@@ -39,7 +39,13 @@ try {
         const head = git(abs, ['rev-parse', 'HEAD']);
         // compared: false when there's no commit to compare (no git repo now, or none when the map was built)
         if (!head || !r.head) { lines.push(`  ${r.path}: not a git repo now`); data.repos.push({ path: r.path, compared: false }); continue; }
-        const changed = head === r.head ? [] : (git(abs, ['diff', '--name-only', r.head, head]) || '').split('\n').filter(Boolean);
+        const diff = head === r.head ? '' : git(abs, ['diff', '--name-only', r.head, head]);
+        if (diff === null) {
+          lines.push(`  ${r.path}: could not compare changes (the previous map commit is unavailable or git could not read the diff)`);
+          data.repos.push({ path: r.path, compared: false });
+          continue;
+        }
+        const changed = diff.split('\n').filter(Boolean);
         const dirty = (git(abs, ['status', '--porcelain']) || '').split('\n').filter(Boolean).length;
         data.repos.push({ path: r.path, compared: true, sameCommit: head === r.head, changedFiles: changed.length, uncommitted: dirty });
         lines.push(`  ${r.path}: ${head === r.head ? 'same commit' : `${changed.length} file(s) changed since ${r.head.slice(0, 7)}`}${dirty ? `, ${dirty} uncommitted` : ''}`);
