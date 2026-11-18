@@ -454,6 +454,37 @@ function extractJs(src, filePath) {
     const methods = all(/export\s+(?:async\s+)?(?:function|const)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g, code).map((m) => m[1]);
     for (const method of methods.length ? methods : ['ANY']) routes.push({ method, path: p, var: null, line: 1, framework: 'next' });
   }
+  // SvelteKit server endpoints and Nuxt server endpoints, derived from the file path. A SvelteKit
+  // `+server.ts` answers the URL of its folder, one endpoint per exported method; a Nuxt file
+  // under `server/api/` or `server/routes/` answers the matching URL, its method from a `.get.` /
+  // `.post.` suffix on the file name (or ANY without one), `index` meaning the folder itself.
+  // Route groups `(…)` and parallel slots `@…` are not part of the URL; `[param]` becomes
+  // `:param`, `[...rest]` becomes `*`, and `[[optional]]` becomes `:param`.
+  const fileSeg = (s) => {
+    if (/^\(.*\)$/.test(s) || s.startsWith('@')) return '';
+    const rest = /^\[\.\.\.(.+)\]$/.exec(s); if (rest) return '*';
+    const opt = /^\[\[(.+)\]\]$/.exec(s); if (opt) return ':' + opt[1];
+    const par = /^\[(.+)\]$/.exec(s); if (par) return ':' + par[1];
+    return s;
+  };
+  const svelte = /(?:^|\/)routes\/((?:[^/]+\/)*)\+server\.(?:t|j)sx?$/.exec(filePath);
+  if (svelte) {
+    const p = '/' + (svelte[1] || '').split('/').filter(Boolean).map(fileSeg).filter(Boolean).join('/');
+    for (const m of all(/export\s+(?:async\s+)?(?:function|const|let|var)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g, code)) {
+      routes.push({ method: m[1], path: p, var: null, line: at(m.index), framework: 'sveltekit' });
+    }
+  }
+  const nuxt = /(?:^|\/)server\/(api|routes)\/((?:[^/]+\/)*)([^/]+)\.(?:ts|js|mjs)$/.exec(filePath);
+  if (nuxt && /define\w*EventHandler\s*\(/.test(code)) {
+    const base = nuxt[1] === 'api' ? '/api' : '';
+    const dirs = (nuxt[2] || '').split('/').filter(Boolean).map(fileSeg);
+    const mm = /^(.+)\.(get|post|put|patch|delete|head|options)$/i.exec(nuxt[3]);
+    const last = mm ? mm[1] : nuxt[3];
+    const segs = [...dirs, ...(last === 'index' ? [] : [fileSeg(last)])].filter(Boolean);
+    const p = (base + '/' + segs.join('/')).replace(/\/+$/, '') || '/';
+    const handler = /define\w*EventHandler\s*\(/.exec(code);
+    routes.push({ method: mm ? mm[2].toUpperCase() : 'ANY', path: p, var: null, line: at(handler.index), framework: 'nuxt' });
+  }
   // Endpoints listed as data: `[{ method: 'GET', path: /^\/api\/items$/, handle: listItems }]` and Bun.serve({ routes })
   // (route-tables.mjs). A route object Fastify's reading above already took isn't counted again.
   const dataAt = routes.length;
