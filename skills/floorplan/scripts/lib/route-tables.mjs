@@ -282,25 +282,87 @@ function routeTableRoutes(code, at, { handlerOf, serves, skip }) {
   return found.filter((t) => t.serving || table).flatMap((t) => t.routes);
 }
 
-/** `routes: { "/api/x": { GET: a, POST: b }, "/y": handler }` in a file that starts Bun.serve. */
-function bunRoutes(code, at, handlerOf) {
-  if (!/\bBun\.serve\s*(?:<[^>]*>)?\s*\(/.test(code)) return [];
+const BUN_SERVE = /\bBun\.serve\s*(?:<[^>]*>)?\s*\(/;
+// a call wrapping an object, `secureRoutes({` or `createRouteHandler({`: the object is what it's handed
+const WRAPPED = /^[A-Za-z_$][\w$.]*\s*\(\s*\{/;
+
+/**
+ * The methods of one route's value: a `{ GET: a, POST: b }` object, also when a helper is handed it
+ * (`createRouteHandler({ GET: a })`, whose keys must all be methods), or [] when the value serves every method.
+ */
+function methodsOf(code, e) {
+  if (e.value.startsWith('{')) return entries(code, e.start).filter((x) => VERBS.has(x.key));
+  if (!WRAPPED.test(e.value)) return [];
+  const inner = entries(code, code.indexOf('{', e.start));
+  return inner.length && inner.every((x) => VERBS.has(x.key)) ? inner : [];
+}
+
+/** The routes in the object literal whose `{` is at `open`: each `"/path"` key, per method. */
+function objectRoutes(code, open, at, handlerOf) {
   const routes = [];
-  for (const m of code.matchAll(/\broutes\s*:\s*\{/g)) {
-    for (const e of entries(code, m.index + m[0].length - 1)) {
-      if (!e.key.startsWith('/')) continue;
-      const line = at(e.at);
-      const methods = e.value.startsWith('{') ? entries(code, e.start).filter((x) => VERBS.has(x.key)) : [];
-      const targets = methods.length ? methods : [{ key: 'ANY', value: e.value }];
-      for (const t of targets) {
-        if (/^(?:false|null|undefined)$/.test(t.value)) continue; // left to the server's fetch()
-        // a static response (`new Response("ok")`, `Bun.file(…)`) serves the route too, with no handler to name
-        const handler = handlerOf(t.value)?.handler;
-        routes.push({ method: t.key, path: e.key, var: null, line, framework: 'table', ...(handler ? { handler } : {}) });
-      }
+  for (const e of entries(code, open)) {
+    if (!e.key.startsWith('/')) continue;
+    const line = at(e.at);
+    const methods = methodsOf(code, e);
+    const targets = methods.length ? methods : [{ key: 'ANY', value: e.value }];
+    for (const t of targets) {
+      if (/^(?:false|null|undefined)$/.test(t.value)) continue; // left to the server's fetch()
+      // a static response (`new Response("ok")`, `Bun.file(…)`) serves the route too, with no handler to name
+      const handler = handlerOf(t.value)?.handler;
+      routes.push({ method: t.key, path: e.key, var: null, line, framework: 'table', ...(handler ? { handler } : {}) });
     }
   }
   return routes;
+}
+
+/** The names spread into the object literal whose `{` is at `open`: `{ ...appRoutes, ...api }` → [appRoutes, api]. */
+function spreadsOf(code, open) {
+  const out = [];
+  const close = balancedEnd(code, open) - 1;
+  for (let i = open + 1; i < close;) {
+    const end = valueEnd(code, i, close);
+    const s = /^\s*\.\.\.\s*([A-Za-z_$][\w$]*)\s*$/.exec(code.slice(i, end));
+    if (s) out.push(s[1]);
+    i = end + 1;
+  }
+  return out;
+}
+
+/** Where each `routes:` object of Bun.serve opens, also inside one wrapping call (`routes: secureRoutes({ … })`). */
+function bunRouteObjects(code) {
+  if (!BUN_SERVE.test(code)) return [];
+  return [...code.matchAll(/\broutes\s*:\s*(?:[A-Za-z_$][\w$.]*\s*\(\s*)?\{/g)].map((m) => m.index + m[0].length - 1);
+}
+
+/** `routes: { "/api/x": { GET: a, POST: b }, "/y": handler }` in a file that starts Bun.serve. */
+function bunRoutes(code, at, handlerOf) {
+  return bunRouteObjects(code).flatMap((open) => objectRoutes(code, open, at, handlerOf));
+}
+
+/**
+ * The names a file's Bun.serve spreads into its routes (`routes: { ...appRoutes, ...apiRoutes }`). They name
+ * route maps kept elsewhere, in this file or another; resolveRoutes reads them where they are defined.
+ */
+export function bunRouteSpreads(code) {
+  return [...new Set(bunRouteObjects(code).flatMap((open) => spreadsOf(code, open)))];
+}
+
+/**
+ * Objects every key of which is a path, `const appRoutes = { "/": home, "/todos": createRouteHandler({ … }) }`,
+ * by name: { appRoutes: [route records] }. Just data on their own: they are endpoints only once a Bun.serve
+ * spreads them into its routes (bunRouteSpreads), which is what keeps a website's map of its own links out.
+ */
+export function routeMaps(code, at, handlerOf) {
+  const maps = {};
+  const def = /(?:^|[\s;])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;{]{0,200})?=\s*\{/g;
+  for (const m of code.matchAll(def)) {
+    const open = m.index + m[0].length - 1;
+    const keys = entries(code, open);
+    if (!keys.length || !keys.every((e) => e.key.startsWith('/'))) continue;
+    const routes = objectRoutes(code, open, at, handlerOf);
+    if (routes.length) maps[m[1]] = routes;
+  }
+  return maps;
 }
 
 /**
