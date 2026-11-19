@@ -10,6 +10,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit, readJsonFile } from './lib/common.mjs';
+import { autoFileDescription, autoRouteDescription } from './lib/auto-descriptions.mjs';
+import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
+import { buildHealth, withDismissed, dismissalFor } from './lib/health.mjs';
 import { compileGlob, globProblem, parseArgs, fmtNum, mapDir, keepOutOfGit, toPosix, unattendedMode, printJson, readJsonFile, notMapped } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey, jargonIn } from './lib/names.mjs';
 import { buildHealth, withDismissed, dismissalFor, maskSecrets } from './lib/health.mjs';
@@ -22,6 +26,7 @@ import { detectAgent } from './lib/agent.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(HERE, '..');
 const args = parseArgs(process.argv.slice(2));
+const lite = !!args.lite;
 // what --json prints when the build can't get as far as its report: one error, in the usual shape
 const stopped = (msg) => ({ schema: 'floorplan/build-result@1', ok: false, errors: [msg], warnings: [], report: `✗ ${msg}` });
 // --json promises one JSON object on stdout whatever happens. If the build stops on something nobody planned for
@@ -53,6 +58,12 @@ const warnings = [];
 const err = (msg) => errors.push(msg);
 const warn = (msg) => warnings.push(msg);
 
+const fail = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
+if (!fs.existsSync(scanFile)) fail(`No scan at ${scanFile}. Run: node ${path.join(SKILL_DIR, 'scripts', 'scan.mjs')} "${root}"`);
+if (!fs.existsSync(archFile)) fail(`No architecture file at ${archFile}. Write it first (see references/schema.md).`);
+const scan = readJsonFile(scanFile);
+let arch;
+try { arch = readJsonFile(archFile); } catch (e) { fail(`architecture.json is not valid JSON: ${e.message}`); }
 const fail = async (msg) => {
   if (args.json) await printJson(stopped(msg), 1);
   console.error(`✗ ${msg}`); process.exit(1);
@@ -497,6 +508,8 @@ if (warnings.length) {
 }
 report.push('');
 report.push(`ASSIGNMENT  ${included.length} files (${include.join('+')}), ${unassigned.length} unassigned (${pct.toFixed(1)}%)`);
+if (excludedCategories.size || ignoredCount) report.push(`EXCLUDED  ${[...excludedCategories].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${v} ${k}`).join(' · ')}${ignoredCount ? `${excludedCategories.size ? ' · ' : ''}${ignoredCount} ignored by architecture` : ''} — add categories to architecture.json include or adjust ignore to map them`);
+if (scan.skipped?.length) report.push(`NOT SCANNED  ${scan.skipped.length} directory(s) skipped during discovery (see scan.mjs output)`);
 for (const n of nodes.filter((n) => n?.id && !n.parent)) {
   const s = stats.get(n.id);
   report.push(`  ${n.id.padEnd(28)} ${String(s.files).padStart(5)} files ${scan.blueprint ? '' : `${fmtNum(s.loc).padStart(6)} loc  `}[${n.kind}]`);
@@ -512,13 +525,19 @@ const byKind = {};
 for (const l of links.values()) byKind[l.k] = (byKind[l.k] || 0) + 1;
 if (leftOut.line) report.push(leftOut.line);
 report.push(`LINKS  ${[...links.values()].length} (${Object.entries(byKind).map(([k, v]) => `${k} ${v}`).join(', ')})`);
+const linkedFiles = new Set([...links.values()].flatMap((l) => [l.a, l.b]).filter((id) => id.startsWith('f:')).map((id) => id.slice(2)));
+const unlinkedCount = included.filter((f) => !linkedFiles.has(f.path)).length;
+if (unlinkedCount) report.push(`UNLINKED  ${unlinkedCount} file(s) without detected static connections; this does not prove they are unused`);
+const possibleDynamic = included.filter((f) => f.possibleDynamicCalls).length;
+if (possibleDynamic) report.push(`DYNAMIC URL HINTS  ${possibleDynamic} file(s) contain HTTP calls built from expressions; inspect them before adding manual edges`);
 const describedFiles = included.filter((f) => fileDesc.get(f.path)?.d || f.desc).length;
 const describedRoutes = routesIn.filter((r) => routeDesc.get(routeKey(r))?.d || r.desc).length;
 const noSummary = nodes.filter((n) => n?.id && !isStr(n.summary)).map((n) => n.id);
 const reviewCount = [...fileDesc.values(), ...routeDesc.values()].filter((d) => d.review).length;
 report.push(`DESCRIPTIONS  files ${describedFiles}/${included.length} · routes ${describedRoutes}/${routesIn.length} · modules ${nodes.length - noSummary.length}/${nodes.length}${reviewCount ? ` · ${reviewCount} need review (code changed)` : ''}`);
 if (noSummary.length) report.push(`  modules without a summary: ${noSummary.slice(0, 12).join(', ')}${noSummary.length > 12 ? '…' : ''}`);
-if (describedFiles < included.length || describedRoutes < routesIn.length || reviewCount) report.push(`  Run describe.mjs to get worksheets for the ${included.length - describedFiles} file(s) and ${routesIn.length - describedRoutes} route(s) still missing descriptions.`);
+if (lite && (describedFiles < included.length || describedRoutes < routesIn.length)) report.push('  Lite mode: missing descriptions use generated placeholders; improve them when needed.');
+else if (describedFiles < included.length || describedRoutes < routesIn.length || reviewCount) report.push(`  Run describe.mjs to get worksheets for the ${included.length - describedFiles} file(s) and ${routesIn.length - describedRoutes} route(s) still missing descriptions.`);
 
 // --json: the same facts as the report, as data a program can rely on (documented in docs/unattended.md)
 const relPath = (f) => toPosix(path.relative(root, f));
@@ -582,7 +601,9 @@ const graph = {
     const d = fileDesc.get(f.path);
     return {
       p: f.path, n: owner.get(f.path), r: f.repo, l: f.lang || f.category, loc: f.loc,
-      name: d?.name || f.name || fallbackFileName(f.path), d: d?.d || f.desc || f.doc || '', ...(d?.d || f.desc ? {} : { auto: true }),
+      name: d?.name || f.name || (lite ? path.posix.basename(f.path) : fallbackFileName(f.path)),
+      d: d?.d || f.desc || (lite ? autoFileDescription(f) : f.doc || ''), ...(d?.d || f.desc ? {} : { auto: true }),
+      ...(f.possibleDynamicCalls ? { possibleDynamicCalls: f.possibleDynamicCalls } : {}),
       ...(f.doc ? { doc: f.doc } : {}),
       ...(f.tooLarge ? { tooLarge: true } : {}),
       ...(d?.review ? { review: d.review } : {}),
@@ -593,7 +614,7 @@ const graph = {
   }),
   routes: routesIn.map((r) => {
     const d = routeDesc.get(routeKey(r));
-    return { f: r.file, m: r.method, p: r.path, l: r.line, h: r.handler || null, name: d?.name || r.name || fallbackRouteName(r), d: d?.d || r.desc || r.doc || '', ...(d?.d || r.desc ? {} : { auto: true }), ...(d?.review ? { review: d.review } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(r.access ? { access: r.access } : {}), ...(r.who ? { who: r.who } : {}), ...(r.publicBecause ? { publicBecause: r.publicBecause } : {}) };
+    return { f: r.file, m: r.method, p: r.path, l: r.line, h: r.handler || null, name: d?.name || r.name || (lite ? `${r.method} ${r.path}` : fallbackRouteName(r)), d: d?.d || r.desc || (lite ? autoRouteDescription(r) : r.doc || ''), ...(d?.d || r.desc ? {} : { auto: true }), ...(d?.review ? { review: d.review } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(r.access ? { access: r.access } : {}), ...(r.who ? { who: r.who } : {}), ...(r.publicBecause ? { publicBecause: r.publicBecause } : {}) };
   }),
   links: [...links.values()],
   flows: outFlows,

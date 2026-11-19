@@ -97,6 +97,11 @@ const CLI = {
   claude: { name: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code' },
   codex: { name: 'Codex', docs: 'https://developers.openai.com/codex' },
 };
+// Some wrappers identify themselves in --version (e.g. a Devin CLI wrapping Claude).
+// Do not call it Claude Code when the executable identifies otherwise.
+const reportedEngine = /^([a-z][\w-]*)\s+\d/i.exec(health?.version || '')?.[1];
+const actualName = health?.engine === 'claude' && reportedEngine && !/^claude$/i.test(reportedEngine)
+  ? reportedEngine : CLI[health?.engine]?.name || health?.engine || 'the available CLI';
 console.log(health?.cli
   ? `ASK  works: questions run through ${cliLabel(health.engine, health.version)}${health.version ? ' (' + health.version + ')' : ''}`
   : `ASK  needs ${(CLI[health?.want] || CLI.claude).name}, which was not found; the map itself works (${(CLI[health?.want] || CLI.claude).docs})`);

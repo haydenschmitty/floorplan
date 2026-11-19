@@ -47,7 +47,8 @@ const inMap = (p) => {
   }
   return false;
 };
-const ignoredByDir = (p) => p.split('/').some((seg) => HARD_IGNORE_DIRS.has(seg)) || inMap(p);
+const ignoredByDir = (p) => p.split('/').some((seg) => HARD_IGNORE_DIRS.has(seg))
+  || /(^|\/)(?:prisma\/generated|generated\/prisma)\//.test(p) || inMap(p);
 
 // A repo git can't list (git missing, or refusing the checkout) would otherwise add nothing to the map
 // without a word, so each one is recorded as a problem: reported in the summary, and an error in unattended mode.
@@ -98,6 +99,9 @@ for (const { path: p, repo } of fileList) {
       // so edits inside function bodies don't mark a file's description as stale.
       f.h = hash(src);
       f.sig = hash(JSON.stringify([(f.symbols || []).map((s) => s.name).sort(), (f.routes || []).map((r) => `${r.method} ${r.path}`).sort(), f.doc || '']));
+      // Conservative hint only: variable-based call sites may escape static route matching.
+      // Store a count, never URL expressions that might contain private values.
+      f.possibleDynamicCalls = (src.match(/\b(?:fetch|axios(?:\.(?:get|post|put|patch|delete))?|httpx\.(?:get|post|put|patch|delete))\s*\(\s*(?:[A-Za-z_$][\w$.\[\]]*|`[^`\n]*\$\{)/g) || []).length;
     }
     // extension hooks: per-file health findings (lib/health.mjs) and app screens (lib/screens.mjs)
     if (src.length) {
@@ -213,6 +217,7 @@ const scan = {
     ...(f.h ? { h: f.h, sig: f.sig } : {}),
     ...(f.symbols?.length ? { symbols: f.symbols } : {}),
     ...(f.tooLarge ? { tooLarge: true } : {}),
+    ...(f.possibleDynamicCalls ? { possibleDynamicCalls: f.possibleDynamicCalls } : {}),
     ...(f.issues ? { issues: f.issues } : {}),
     ...(f.screens ? { screens: f.screens } : {}),
     ...(f.triggers ? { triggers: f.triggers } : {}),
