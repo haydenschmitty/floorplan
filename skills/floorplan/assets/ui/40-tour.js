@@ -156,12 +156,15 @@
   // a guided flow takes over the canvas: step aside
   SC.on('render', () => { if (active() && SC.state.flow) end(); });
 
-  // first visit: start on its own, unless the link points somewhere specific
+  // First visit: start on its own, unless the link points somewhere specific (any #… address, including the
+  // #tour=0 a page embedding the map can add to say "not on its own"). Where the browser won't keep anything
+  // between visits (a sandboxed frame, strict settings), it can't tell a first visit from the hundredth, so it
+  // never starts on its own there: Start here is always one press away.
   let auto = false;
   const maybeAuto = () => {
     if (auto) return;
     auto = true;
-    if (SC.store.get(SEEN, false) || location.hash.length > 1) return;
+    if (SC.store.persistent === false || SC.store.get(SEEN, false) || location.hash.length > 1) return;
     setTimeout(() => { if (!active() && !SC.state.flow && SC.state.container === 'root') start(); }, 700);
   };
   SC.on('ready', maybeAuto);

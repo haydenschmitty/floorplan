@@ -20,11 +20,35 @@ test('JavaScript: imports and Express endpoints', () => {
   assert.equal(r.routes[0].var, 'router');
 });
 
+test("JavaScript: requests through an app's own API helpers, with the method from the name or the first argument", () => {
+  const r = extract([
+    `import { apiGet, apiSend, httpPost } from '../client';`,
+    `export const list = () => apiGet<Task[], Meta>('/tasks', filters);`,
+    'export const edit = (id) => apiSend<Task>(\'PATCH\', `/tasks/${id}`, body);',
+    `export const note = () => httpPost('/notes', body);`,
+    'export const close = (id) => apiSend(\'patch\', `/tasks/${id}/close`);',
+    `session.log(requestedBy('DELETE', '/audit'));`,
+    `requestAnimationFrame(() => draw('/static/x'));`,
+  ].join('\n'), 'typescript', 'app/api/tasks.ts');
+  assert.deepEqual(r.calls.map((c) => `${c.method} ${c.path}`), ['GET /tasks', 'PATCH /tasks/${x}', 'POST /notes', 'PATCH /tasks/${x}/close', 'null /audit']);
+});
+
 test('Next.js app router: each exported method is an endpoint at the folder path', () => {
   assert.deepEqual(
     routes(`export async function GET(req) { return Response.json([]) }\nexport async function POST(req) {}\n`, 'typescript', 'web/app/api/orders/route.ts'),
     ['GET /api/orders', 'POST /api/orders'],
   );
+});
+
+test('Next.js route files are named exactly route.ts: Angular routing files are not endpoints', () => {
+  const src = `export async function GET(req) {}\nexport const ORDERS_ROUTES = [];\n`;
+  // a route handler at the root of app/ still counts
+  assert.deepEqual(routes(src, 'typescript', 'web/app/route.ts'), ['GET /']);
+  assert.deepEqual(routes(src, 'typescript', 'src/app/route.js'), ['GET /']);
+  // Angular keeps its screen routing in files like orders.route.ts and app.routes.ts under src/app/
+  assert.deepEqual(routes(src, 'typescript', 'src/app/features/orders/orders.route.ts'), []);
+  assert.deepEqual(routes(src, 'typescript', 'src/app/app.routes.ts'), []);
+  assert.deepEqual(routes(src, 'typescript', 'src/app/reports/myroute.ts'), []);
 });
 
 test('Flask: blueprint prefix, methods list and handler docstring', () => {

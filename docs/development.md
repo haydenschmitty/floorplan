@@ -30,6 +30,7 @@ The examples above assume a POSIX shell. In Windows PowerShell run commands one 
 skills/floorplan/
   SKILL.md             the workflow Claude and Codex follow
   agents/openai.yaml   how Codex lists the skill
+  workflow.json        the same steps as SKILL.md, as data, for running without an agent session
   references/          formats and style guides Claude reads while working
     schema.md                architecture.json and recent-work.json
     choosing-boundaries.md   how to carve a codebase into a good map
@@ -44,12 +45,14 @@ skills/floorplan/
     refresh.mjs    incremental update: re-scan, carry over, flag changes, rebuild
     recent.mjs     facts for marking recent work
     open.mjs       start or reuse the map's server, and open the browser
-    lib/           extraction, import resolution, route matching, Health, screens, which agent is running, helpers
+    lib/           extraction, import resolution, Nuxt auto-imports, route matching, Health, screens, which agent is running, helpers
   assets/
     viewer.html    the map (template the build fills in)
     ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
     serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
+    page-safety.mjs  the one way data and code go into a page's <script> blocks, and its Content-Security-Policy
+                   (used by build.mjs, and copied next to serve.mjs)
     query-cli.mjs  becomes floorplan/query.mjs
     logo.png, favicon.png
     vendor/        bundled layout engine (elkjs) and fonts, with their licenses
@@ -70,7 +73,7 @@ claude plugin install floorplan@floorplan
 
 A plugin installed from a local folder runs straight from it, so edits apply in the next session with no update step.
 
-To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
+To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
 
 The scripts also run on their own, which is the fastest way to work on them:
 
@@ -93,27 +96,58 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | File | What it checks |
 |---|---|
 | `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework |
+| `aspnet.test.mjs` | ASP.NET Core: controller, conventional, inherited, minimal-API (including mappers called from another file) and SignalR endpoints, `using` and `global using` links between C# files, requests matched ignoring case and .NET test-project folders skipped (both for C# only, so other frameworks match exactly and keep their endpoints), and Health (who may call each endpoint, handlers and base classes in other files, app-wide policies per project, CORS, Stripe webhooks, connection-string passwords, each with look-alikes it must leave alone), and C# files built to make pattern matching slow |
+| `tsconfig-inheritance.test.mjs` | local configuration inheritance: arrays and single bases, alias links, relative paths, overrides, legacy baseUrl and cycles |
 | `helpers-lib.test.mjs` | globs, file types, command-line flags, fallback names |
-| `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
-| `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI and Express samples in `fixtures/`) |
-| `public-by-design.test.mjs` | what Health leaves alone because it's public on purpose (feeds, addresses a project publishes, cached responses, routes with nothing private, Payload CMS, tracker tokens, files a tool opens), each with a near miss it must still report |
-| `stack-health.test.mjs` | Health's checks for Supabase row-level security, Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
-| `django.test.mjs` | Django: an app's `urls.py` included under a prefix, and the website's requests matched to it |
+| `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders: variables a script or pipeline fills in (psql variables too, with or without a space), SQL comments, "your key here" in Portuguese, Spanish, French and German, file paths, record ids, autofill words, made-up keys and publishable keys, each with a real secret it must still find |
+| `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI, Flask and Express samples in `fixtures/`): sign-in checks recognised by name, and FastAPI dependencies by what their code does (a factory's result, a `Depends()` kept in a variable, a list kept in a constant, a function that raises a 401), with look-alikes that must stay open (logging decorators, schema validators, dependencies that check nothing) |
+| `fastapi-router-auth.test.mjs` | a FastAPI `APIRouter(...)` read whole however deeply its dependencies nest (`Depends(require_workspace("tours"))`), every dependency considered, `authenticate` and `authorize` counted, and look-alikes that must not count: database sessions, a check in a comment or a string, another router's check, a router whose brackets never close |
+| `fastapi-http-middleware.test.mjs` | a FastAPI `@app.middleware("http")` that turns callers away protects every route of that app, and one that only adds headers, logs or times requests protects nothing |
+| `express-global-guard.test.mjs` | which Express and Hono middleware counts as a login check for the endpoints behind it (app-wide, for a path, or on a router), with look-alikes that must not (`cors`, a header name in a string, a session, a router named `authRoutes`), and Health naming the app-wide check a clean result rests on |
+| `express-mounts.test.mjs` | Express and Hono routes: routers under any name, mounts followed through index files, factories, `require()` and namespace imports, routers nested in one file, names handed to `app.use()` that aren't routers, and a check on a mount landing on the right endpoints (samples in `fixtures/`) |
+| `public-by-design.test.mjs` | what Health leaves alone because it's public on purpose (feeds, addresses a project publishes, cached responses, routes with nothing private, Payload CMS, tracker tokens, files a tool opens, Expo Router screens, files another file names), each with a near miss it must still report |
+| `health-checked.test.mjs` | Health's "What was checked": each check says what it read or that it found nothing, louder when code runs a server but no endpoints were found, in graph.json, the build's report and `--json`, and the Health panel (its code run against a stand-in viewer) |
+| `nuxt.test.mjs` | Nuxt auto-imports: pages linked to the components and composables they use without an import, from `.nuxt/`'s name lists or Nuxt's folder conventions, names a file imports or defines itself left alone, `.nuxt/` kept off the map |
+| `stack-health.test.mjs` | Health's checks for Supabase row-level security (including dynamic SQL in a loop), Firebase rules, Stripe webhook signatures, secret keys in public variables and CORS, with look-alikes each must leave alone, and a whole sample app done wrong and done right |
+| `django.test.mjs` | Django: an app's `urls.py` included under a prefix, the website's requests matched to it, and absolute imports between apps reaching the other app rather than the importing app's own `apps.py` |
+| `jvm-imports.test.mjs` | Kotlin and Java: imports of top-level declarations not named after their file, names used from the file's own package or a `.*` import with no import line, the project's own packages never listed as outside ones, what must stay unlinked (comments, strings, private declarations, other packages, a name imported from elsewhere, test helpers), a package of thousands of files, and files built to slow the reading down |
+| `swift.test.mjs` | Swift: module imports and the top-level types, functions and values a file uses, through `Package.swift` targets (custom `path:`, nested and commented-out targets) or an Xcode app with no package, a name in the file's own module winning over an imported one, what must stay unlinked (nested and private declarations, a module nothing is used from, test helpers), and files built to slow the reading down |
+| `subpath-imports.test.mjs` | imports through package.json `"imports"` (`#lib/x`): the nearest package.json, the most specific key, arrays and conditions, falling back to tsconfig `paths`, near misses left unlinked, and odd or endlessly nested shapes that must not stop the scan |
 | `fastify.test.mjs` | Fastify: plugins registered with a prefix, nested registers, and the website's requests reaching the right plugin (sample in `fixtures/`) |
+| `fastify-route-options.test.mjs` | Fastify routes declared as objects (`app.route({ method, url, handler })`): method lists, keys inside `schema` left alone, a method or url that isn't written out skipped, routers with any name the file made, a non-router's `route()` left alone, and the website's requests reaching them |
+| `nestjs.test.mjs` | NestJS: endpoints from `@Controller` and `@Get`/`@Post`… decorators with their full path and method name, several controllers and other classes in one file, decorators outside a NestJS file left alone, the website's requests reaching the right controller, and Health reading `@UseGuards`, `@Public()` and an app-wide guard (`APP_GUARD`, `useGlobalGuards`) for Nest routes only, with look-alikes that must not count (rate limits, a guard on the next class) (sample in `fixtures/`) |
+| `route-tables.test.mjs` | endpoints listed as data: `{ method, path, handle }` objects with a plain path or a regular expression (captures as parameters, groups of words expanded, odd patterns dropped rather than widened), `Bun.serve({ routes })`, a website's list of its own requests left alone (`action`, `resolve` or `fetch` count only in a file that serves), Fastify route objects counted once, and Health still reading the Express routes beside a table (sample in `fixtures/`) |
+| `api-helpers.test.mjs` | requests made through an app's own helpers (`apiGet('/tasks')`, `apiSend('PATCH', …)`), a client's base address winning over a closer-looking address on the same server, and that base reaching the client's other files but not another app in the same folder |
+| `request-matching.test.mjs` | a request whose address has a part filled in at run time (`/api/users/${id}`) reaching the endpoint with a parameter there rather than a fixed sibling (`/api/users/stripe`), also once the caller's base address is known, and the method read from the call's options on the lines below its address (sample Next.js app written by the test) |
+| `url-builders.test.mjs` | web requests whose address a method of the same class builds (Angular services), directly or through another such method, and calls whose address wraps onto the next line; a builder's own template and a link that is never requested are left out, and a request on the line right after a builder is kept |
 | `route-table-keys.test.mjs` | route tables keyed by `"METHOD /path"` in JavaScript and Python: which tables count, each entry's handler, the website's requests reaching them, and Health staying quiet about their sign-in (sample in `fixtures/`) |
+| `shopify-theme.test.mjs` | Shopify themes: what counts as a theme, Liquid tags, asset_url and JSON templates linking files by name, apps as outside packages, templates as Screens, snippets nothing renders or names, what NOT MAPPED counts, look-alikes outside a theme left alone, and Liquid files built to slow the reading down |
+| `laravel.test.mjs` | PHP and Laravel: `use` imports through composer's PSR-4 folders, routes under their groups and the route files around them, endpoints placed in the controller method that answers them, Wayfinder calls and Inertia pages linked to their endpoints, and Health reading route, group, controller and form-request checks (Laravel + Inertia sample in `fixtures/`) |
+| `supabase-functions.test.mjs` | Supabase Edge Functions: each folder under `supabase/functions/` an endpoint at `/functions/v1/<name>` (`Deno.serve`, the standard library's `serve()`, `export default { fetch }`), a router inside one (Hono) moved under `/functions/v1`, `_shared/` and files other than `index` left alone, the website's `supabase.functions.invoke()` calls and `/functions/v1/` requests reaching them, and Health judging each by its own code |
+| `php-pages.test.mjs` | plain PHP sites: each script under the document root (`public/`, `public_html/`, `www/`, `htdocs/`) an endpoint at its own address, `index.php` at its folder's, while scripts other scripts include, `_` and dot folders, and a framework's front controller (an `index.php` loading Composer's autoloader) are not |
 | `firebase.test.mjs` | Firebase Cloud Functions: callables and onRequest functions as endpoints, the website's calls to them, Screens, Health, background functions (React + Firebase sample in `fixtures/`) |
+| `serverless.test.mjs` | Serverless Framework: endpoints from `http` and `httpApi` events in `serverless.yml` and the files it includes with `${file(...)}`, short and long forms, each placed in its handler's file (through a re-export, or into the function a wrapper hands the request to), the website's requests reaching them, Health reading authorizers, API keys and checks handed to a wrapper (not a handler whose own name sounds like one), each address of a handler judged on its own, background functions in the summary, and YAML with CloudFormation tags, variables, anchors, junk, stray brackets and very long lines read quickly without failing, and sample configs in test folders and configs too big to read left out (sample in `fixtures/`) |
 | `blueprint.test.mjs` | a map planned from a PRD before any code exists: plan.json errors, endpoints and calls, Screens, the design review, refreshing and switching to the real code (sample PRD in `fixtures/`) |
 | `blueprint-change.test.mjs` | changing a blueprint from the map: the agent's updated plan is checked, saved and highlighted, retried once when it fails the checks, and undone (stand-in CLI in `fixtures/fake-cli/`) |
+| `byte-order-mark.test.mjs` | JSON files that start with a byte order mark (as Windows PowerShell writes them) build, refresh, describe, plan and export like any other, while one that isn't JSON after it is still a named error |
+| `not-mapped.test.mjs` | the scan and the build say which kinds of file aren't on the map and how to add them, following `include` and counting `ignore`, and say nothing when everything is mapped |
 | `large-files.test.mjs` | files over the scan's size limit stay on the map with their line count, and the scan, Health and the map say they weren't read |
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
+| `worksheets.test.mjs` | the description worksheets quote each endpoint's code and very short files whole, within their caps, with secrets masked and `.env`-style files never quoted, and list the files that import, request or name each file |
+| `plain-language.test.mjs` | the build's warnings, never errors, about developer words in part labels and summaries on a map for everyone (product names and developer maps left alone, screen words such as "hook" and "component" flagged only where they mean screens, the word list kept in step with the writing guide, the `--json` shape), and about parts with many files in folders of their own |
+| `hostile-content.test.mjs` | mapping code you didn't write: hostile text in every model-written and scan-derived field leaves a page whose data parses and round-trips exactly (built, served, exported, Export button); secrets written into descriptions are masked with a warning naming the file and field, while prose, commit hashes and UUIDs stay; every page's Content-Security-Policy matches its scripts' hashes; invalid patterns are named build errors; config files and files built to slow pattern matching don't stall the scan; invisible and reordering characters are shown as markers |
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
+| `editor-links.test.mjs` | **Open in editor**: VS Code by default, an editor named or linked in `architecture.json` or on the map's server, paths encoded so they can't break the link, and every setting that isn't an editor's own scheme (scripts, data, web and `file:` links, quotes) refused by the build and the server and ignored by the page |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
-| `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
+| `agents.test.mjs` | telling Claude Code from Codex, what a map built by each records and writes, and the name open.mjs gives the program that answers questions (another program answering to the `claude` command is named as itself) |
+| `unattended.test.mjs` | running without an agent session: a small driver follows `workflow.json` through a first map and a refresh with canned answers, using only `--json` and exit codes; the optional plain-language step (reworded, left alone, rejected for changing more than wording, or failed, with the map completing every time); nothing written outside `floorplan/`, a map that names no agent, git failures that fail loudly, the workflow file's names and schemas, `maskSecrets` as a stable export, and no change without unattended mode |
+| `read-only-install.test.mjs` | a skill whose files are read-only builds a map twice, and the files it puts next to the map stay writable, including over read-only ones an earlier version left (skips itself where read-only doesn't stop the user writing) |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |
+| `sandboxed.test.mjs` | a map whose browser refuses storage, the clipboard or new windows (a sandboxed frame, strict settings): settings kept in memory for the visit, no tour on its own, `#tour=0`, "Copied" only when it was, the address shown when a window is blocked, and nothing changed where storage works (the page's own code run against a pretend browser, not a real frame) |
 
 Sample projects are written to a temp folder by `helpers.mjs` (`shopApp()`) or copied from `tests/fixtures/`. Anything secret-looking is assembled at runtime, so no real-looking key is ever committed.
 
@@ -125,7 +159,8 @@ Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order
 - the graph and lookups;
 - navigation (`go`, `open`, `reveal`, `showBoard`, `playFlow`);
 - `addHeaderButton` and `addPanelSection('overview' | 'item', fn)`;
-- `modal`, `toast`, `store`;
+- `modal`, `toast`, `store` (settings for this browser; `store.persistent` is false when the browser won't keep them past this visit, and they're held in memory instead);
+- `copy(text)`, which resolves true only when the text was really copied and otherwise shows it to copy by hand, and `openWindow(url)`, which shows the address when the browser blocks a new window. Use these rather than `navigator.clipboard` or `window.open`, so the map behaves in a sandboxed frame too;
 - events (`on('ready' | 'render' | 'panel' | 'technical')`);
 - `exported`, set in an exported copy: leave out anything there that needs Claude, Codex or the map's server.
 
@@ -144,6 +179,7 @@ An engine must be read-only in a way its CLI enforces, not only because the prom
 - **No dependencies.** The scripts must run anywhere Node 18+ does, with nothing to install.
 - **Plain language first.** Anything the map shows people should make sense to an app's owner, not just its engineers.
 - **Never store or print secret values.** Health findings record where a secret is and a masked hint, never the value.
+- **One description of the process.** `workflow.json` describes the same steps as SKILL.md, for running Floorplan without an agent session ([unattended.md](unattended.md)). When you change one, change the other, and point at `references/` rather than repeating them.
 - **Keep examples generic.** Code comments, docs and prompts must not describe any real private project.
 
 ## Maintaining

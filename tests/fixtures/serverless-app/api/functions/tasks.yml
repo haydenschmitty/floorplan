@@ -1,0 +1,37 @@
+# Task endpoints. Signed-in users only, except deleting (an oversight the sample keeps on purpose).
+listTasks:
+  handler: src/tasks.list
+  events:
+    - http:
+        path: tasks
+        method: get
+        cors: true
+        authorizer: ${self:custom.authorizer}
+createTask:
+  handler: src/tasks.create
+  events:
+    - http:
+        path: /tasks
+        method: post
+        authorizer:
+          name: jwtAuthorizer
+          type: request
+deleteTask:
+  handler: src/tasks.remove
+  events:
+    - http: DELETE tasks/{id}
+importTasks:
+  handler: src/tasks.importAll
+  events:
+    - http:
+        path: tasks/import
+        method: post
+        private: true
+    # the same handler at a second address, with no check: an oversight Health must still see
+    - http: POST admin/tasks/import
+shareTask:
+  handler: src/share.handler
+  events:
+    - httpApi:
+        path: /tasks/{id}/share
+        method: '*'

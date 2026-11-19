@@ -16,8 +16,9 @@ Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-
 | `flows` | array | no | guided walkthroughs through the board |
 | `tour` | array | no | the "Start here" tour shown on first open: 3–8 stops `{ "node": "<node id or file path>", "title": "…", "note": "…" }`, in plain language, in the order a newcomer should see them. The first flow is appended automatically |
 | `audience` | `"everyone"` \| `"developers"` | no | who names and descriptions are written for. Default `"everyone"`: plain language a non-technical owner understands (what it does for the business, in everyday words). `"developers"`: technical style for engineers |
-| `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs` |
+| `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs`. The scan and the build list what's left out, by category, on their `NOT MAPPED` line |
 | `ignore` | string[] | no | globs for files to leave off the board entirely (generated code, vendored libs, fixtures) |
+| `editor` | string | no | the editor **Open in editor** opens. Default VS Code. A name (`vscode`, `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed`, `idea`, `phpstorm`) or a link with `{path}`, `{line}` and `{column}` in an editor's own scheme, like `"zed://file/{path}:{line}"`. Set it only when the user says which editor they use |
 
 ## nodes
 
@@ -55,6 +56,7 @@ Kinds, briefly:
 - A whole folder name in brackets, like `[id]`, `[...slug]` or `[[...slug]]` (Next.js, SvelteKit), matches that folder literally: `app/orders/[id]/**`. Elsewhere, `[abc]` matches one of those characters.
 - A pattern with no wildcard also matches as a directory: `backend/app` equals `backend/app/**`.
 - Paths are relative to the codebase root. In a multi-repo root they start with the repo folder.
+- A pattern must be valid (every `[` and `{` closed, ranges like `[a-z]` in order) and modest: at most 300 characters, 12 wildcards and 8 `{…}` groups, and at most 500 patterns in one list. Anything else is a build error naming the field, e.g. `nodes[3] ("web").paths[0] "[evil" is not a valid pattern: it has a "[" with no "]" to close it`.
 
 ### How files get assigned
 Every included file goes to exactly one node:

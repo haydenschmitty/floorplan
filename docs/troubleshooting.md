@@ -24,6 +24,9 @@ If it says Codex isn't signed in, open the Codex app (or run `codex login`) and 
 ### Codex: the map didn't open, or Ask stopped working after Codex opened it
 Codex runs commands in a sandbox, and the map's server needs to keep running and reach the network. Allow the server to run outside the sandbox when Codex asks, or run `node floorplan/serve.mjs` yourself from the project folder.
 
+### A question fails with "Prompt is too long"
+With Claude Code, update the map (`claude plugin update floorplan@floorplan`, then rebuild): questions now run without your MCP servers, whose tool descriptions were filling the context. With Codex, the MCP servers you set up for Codex still load, so turn off the ones you don't need (`enabled = false` under that server in `~/.codex/config.toml`).
+
 ### `node` isn't recognized
 Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so Claude Code or Codex picks it up.
 
@@ -58,6 +61,13 @@ Floorplan finds most web requests and imports by reading the code, but not all o
 
 ### A file is in the wrong part, or under "Unassigned"
 Ask Claude to move it, or edit the `paths` patterns in `floorplan/architecture.json` and ask for an update.
+
+### A repo is missing from the map, or the scan lists PROBLEMS
+The scan lists each repo git couldn't list files for, with the likely fix. The usual causes:
+- **git isn't installed**, or isn't on the PATH of whatever runs Floorplan;
+- **"dubious ownership"**: git refuses a checkout owned by a different user, which is common in containers and shared folders. Mark it safe with `git config --global --add safe.directory <folder>`, then update the floorplan.
+
+If you run Floorplan from CI or a script, [unattended mode](unattended.md) turns these into errors, so a map with a repo missing can't slip through.
 
 ### "floorplan/ already exists here and isn't a map"
 Your project has its own folder called `floorplan`, which Floorplan won't write into. Rename your folder, or ask Claude to build the map somewhere else; the scan and build scripts accept `--out <folder>`.

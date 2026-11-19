@@ -55,19 +55,27 @@ Drag the panel's left edge to resize it.
 A count of important issues, and a plain-language list of problems the scan found:
 - passwords and keys written into the code, or into a committed `.env` file;
 - secret keys in settings the browser gets, like an OpenAI key in a `VITE_` or `NEXT_PUBLIC_` variable;
-- Supabase tables with row-level security switched off, and database rules that let anyone change a table;
+- Supabase tables with row-level security switched off, and database rules that let anyone change a table (row-level security switched on in a loop over a list of tables counts for those tables; when a migration switches it on for tables it doesn't name, the tables it may cover are reported as "can't tell" instead);
 - Firebase rules that let anyone read or change your data or files, including "test mode" rules and when they run out;
 - Stripe webhooks that act on payments without checking Stripe's signature, so anyone could fake one;
 - servers that let any website call them, flagged as worth fixing when login cookies go along too;
-- endpoints that let anyone change or read data without signing in;
+- endpoints that let anyone change or read data without signing in, ASP.NET Core apps included;
 - files nothing uses;
 - files over about 1,000 lines, which AI struggles to edit safely.
+
+Below the count, **What was checked** says what each check had to look at: how many endpoints, Supabase tables, Firebase rules files, Stripe webhooks and files it read, or that it found none. A check with nothing to look at can't find a problem, so a short list isn't always a clean bill of health. The line stands out when it matters, for example when the code looks like it runs a server (a `createServer` call, `Deno.serve`, a Supabase Edge Function, PHP that reads `$_POST` or declares `#[Route]`s) but no endpoints were found, which usually means they're set up in a way Floorplan doesn't recognise yet.
 
 Each issue has **Show on map**, which highlights the affected files and endpoints with notes, and **Fix with Claude** (or **Fix with Codex**, for a map made in Codex), which copies a ready-made prompt naming the exact files and lines and the safe fix. It's a quick automatic check, not a security audit. On a blueprint this button is **Review** instead (see [Blueprints](#blueprints)).
 
 Health leaves password hashes and encrypted values alone (bcrypt, argon2, dotenvx, sops, Ansible Vault and similar), and goes by the value, so a backup with one value left unencrypted is still flagged. It can only recognise encryption that marks itself, and it can't read a `.env` file that git ignores. It also doesn't judge sign-in on endpoints in a route table (`"GET /api/orders": listOrders`) or on Django endpoints, because the check isn't where it can read it for each route, so no report there doesn't mean those endpoints are protected.
 
-It also leaves alone what's public on purpose, as long as it only reads: feeds and files for crawlers and AI tools (`rss.xml`, `llms.txt` and similar), addresses your project lists in its `llms.txt` or allows in its `robots.txt`, responses marked `Cache-Control: public`, and Next.js `GET` routes that read no database, session or server secret, even through what they import. Endpoints that change data are always checked. Payload CMS's own API routes count as checked, because Payload applies its access rules, so check those rules yourself. A token passed to a browser tracker's script is left alone too, since every visitor already has it.
+It also leaves alone what's public on purpose, as long as it only reads: feeds and files for crawlers and AI tools (`rss.xml`, `llms.txt` and similar), addresses your project lists in its `llms.txt` or allows in its `robots.txt`, responses marked `Cache-Control: public`, and Next.js `GET` routes that read no database, session or server secret, even through what they import. Endpoints that change data are always checked. Payload CMS's own API routes count as checked, because Payload applies its access rules, so check those rules yourself. A token passed to a browser tracker's script is left alone too, since every visitor already has it, and so are publishable keys made to go in web pages (`pk_…` from Stripe, Clerk and others, Supabase's `sb_publishable_…`); their secret partners (`sk_…`, `sb_secret_…`) are still flagged.
+
+For passwords and keys, Health goes by what's written, not just the name: a variable a script or pipeline fills in (`"$DB_PASSWORD"`, `${{ secrets.TOKEN }}`, `$(dbPassword)`, a psql `:'app_password'`), the browser's autofill words (`new-password`), placeholders such as `your-key-here` or `troque-esta-chave` (in English, Portuguese, Spanish, French and German), SQL comments and made-up keys with a run of the alphabet in them are left alone, while a password written in next to them is still flagged. For files nothing uses, it leaves alone Expo Router screens (every file in the `app/` folder of an app that uses `expo-router`) and files whose name another file mentions, such as `users.service` in a NestJS module.
+
+A login check that runs before every request, like Express's `app.use(requireAuth)` or Hono's `app.use('/api/*', auth)` for everything under a path, counts for the endpoints behind it, and so does a NestJS guard for the whole app (`{ provide: APP_GUARD, useClass: JwtAuthGuard }` or `app.useGlobalGuards(new JwtAuthGuard())`) for that app's controllers, except routes marked `@Public()`. Only middleware whose name says what it checks counts: `cors()`, `helmet()`, a session being loaded or a word in its options (a header named `X-Refreshed-Token`) doesn't. When such a check is all that protects some endpoints, the Health panel names it and where it is, so you can see what a clean result rests on.
+
+In ASP.NET Core, `[Authorize]` and `.RequireAuthorization()` count wherever they are: on the action or endpoint, its controller or route group, or a base controller. `[AllowAnonymous]` and `.AllowAnonymous()` mark an endpoint public on purpose, so it isn't reported. An app-wide fallback policy, an `AuthorizeFilter` on every controller or `MapControllers().RequireAuthorization()` counts only for the endpoints of its own project (the folder of its `.csproj`), so in a repo with several services one service's policy doesn't hide another's open endpoints.
 
 If an issue is wrong, press **Not a problem** and add a reason if you like. It moves to the bottom of the list and out of the count, and stays that way when the map is rebuilt. Editing elsewhere in the file won't bring it back, but it does show again if the same check finds something new in that file or the issue changes severity. **Show again** undoes it. Exported copies keep the issue set apart but leave your reason out.
 
@@ -90,7 +98,7 @@ You choose what goes in:
 Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan".
 
 ### Start here
-Replays the one-minute tour that runs the first time you open a map.
+Replays the one-minute tour that runs the first time you open a map. The tour doesn't start on its own when the address points somewhere on the map, or when the browser won't let the map remember anything (see [Embedding the map](#embedding-the-map-and-locked-down-browsers)); this button always starts it.
 
 ### Flows
 Guided walkthroughs of the app's main jobs, like "Checkout" or "Sign up". A flow moves across the board step by step, with a narration at each stop. Use **←** / **→** or the flow bar's buttons to step through, and **Esc** to stop.
@@ -130,4 +138,78 @@ Everything above describes a map of existing code, which is what most maps are. 
 | a line | Ask about this connection · Show details |
 | the background | Ask about this view · Up one level · Back to overview · Fit to screen · Search |
 
-**Open in editor** opens the file in VS Code (or another editor that handles `vscode://` links) at the right line.
+**Open in editor** opens the file at the right line, in VS Code unless you choose another editor.
+
+### Choosing the editor
+
+**Open in editor**, **Open handler** and the right-click **Open in editor** all use the same setting. Set it in `floorplan/architecture.json` (or ask Claude or Codex to: "open files from the map in Cursor"):
+
+```json
+{ "editor": "cursor" }
+```
+
+or for one run of the map's server, for every map it shows, which wins over `architecture.json`:
+
+```bash
+node floorplan/serve.mjs --editor zed
+```
+
+`open.mjs` passes `--editor` on (and restarts a running server that uses a different one), and `FLOORPLAN_EDITOR=cursor` (in PowerShell, `$env:FLOORPLAN_EDITOR = "cursor"`) sets it for every server you start.
+
+The setting is an editor's name or a link of your own:
+
+| Name | Opens |
+|---|---|
+| `vscode` (the default) | `vscode://file/{path}:{line}` |
+| `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed` | the same link in that editor's scheme, e.g. `cursor://file/{path}:{line}` |
+| `idea`, `phpstorm` | `idea://open?file={path}&line={line}` (and `phpstorm://…`), where the IDE registers its links (macOS, or with JetBrains Toolbox) |
+
+A link of your own uses `{path}` (the file's full path, required), `{line}` and `{column}` (always 1, since the map knows lines only), for example `"zed://file/{path}:{line}:{column}"` or `"pycharm://open?file={path}&line={line}"`. It must use an editor's own scheme: `vscode`, `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed`, `idea`, `phpstorm`, `pycharm`, `webstorm`, `goland`, `rubymine`, `clion`, `rider`, `txmt`, `mvim` or `subl`. Web addresses, `file:`, `javascript:` and `data:` links aren't allowed, so nothing written into `architecture.json` can turn the button into something else; the build names a setting it can't use, and the map's server won't start with one. Open an issue to add an editor's scheme. Exported copies have no editor links.
+
+## Links to a place on the map
+
+The address in the browser follows you around the map, so you can bookmark or share a link to any view. The part after `#` says where:
+
+| Address ends with | Opens |
+|---|---|
+| *(nothing)* | the overview |
+| `#v=<view>` | inside a card, for example `#v=n%3Aapi` |
+| `#v=<view>&s=<item>` | inside a card, with one item selected and its details in the panel |
+| `#s=<item>` | the overview, with one card selected |
+
+The easiest way to get one is to go there on the map and copy the address. **Back** and **Forward** in the browser move between the places you've been. An address that names something the map no longer has opens the overview instead.
+
+## Embedding the map and locked-down browsers
+
+A map is one HTML file, so you can show it inside another page with an `<iframe>`, including a sandboxed one such as `<iframe sandbox="allow-scripts" src="floorplan/index.html">`. A sandboxed frame, a private window or strict browser settings can stop the map from saving anything, using the clipboard or opening new windows. The map still works:
+
+- **Settings** (panel width, panel open or closed, connection filters, technical detail, recent-work highlights, the folded description, Health issues marked "Not a problem") hold while the page is open, and start fresh next time.
+- **The tour** doesn't start on its own, because the map can't tell a first visit from the hundredth. **Start here** starts it.
+- **Copy buttons** say "Copied" only when the text really was copied. If the browser blocks copying, the text is selected for you to copy yourself.
+- **Links that open a new window** show the address to copy when the browser blocks the window.
+
+To keep the tour from starting on its own wherever the map is shown, add `tour=0` to the address, alone or with a link to a place:
+
+```
+floorplan/index.html#tour=0
+floorplan/index.html#tour=0&v=n%3Aapi
+```
+
+`tour=0` stays in the address as people move around the map. **Start here** still works.
+
+### Handing "Ask about this" to the page around the map
+
+An exported copy has no Ask bar. If the page you embed it in has its own way to ask questions, it can take over **Ask about this**: add `ask=host` to the address.
+
+```
+map.html#ask=host
+map.html#ask=host&tour=0&v=n%3Aapi
+```
+
+Then right-clicking a card, a line or the background shows **Ask about this**, and choosing it sends the page around the map a message:
+
+```js
+{ type: 'floorplan:ask', items: [{ id: 'f:api/app/auth.py', name: 'Sign-in check' }] }
+```
+
+`items` holds the card, both ends of a line, or the part being viewed (empty at the top level). Ids are the map's own (`n:` part, `f:` file, `r:` endpoint), the same ones `#v=` and `#s=` take. Nothing else is sent, and only when someone chooses it. The page listens with `window.addEventListener('message', …)`; check that `event.source` is the map's frame, since the message is posted to whatever page holds the map. Without `ask=host`, or when the map isn't inside another page, an exported copy sends nothing and shows no Ask items, as before.

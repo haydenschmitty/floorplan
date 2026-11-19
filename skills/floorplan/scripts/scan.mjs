@@ -3,19 +3,26 @@
 // symbols and HTTP routes/calls, resolve them, and write floorplan/.cache/scan.json.
 // Prints a compact summary meant to be read by Claude (the JSON itself can be large).
 //
-// usage: node scan.mjs [root] [--out <file>] [--include-worktrees] [--max-file-kb 2048]
+// usage: node scan.mjs [root] [--out <file>] [--include-worktrees] [--max-file-kb 2048] [--json] [--unattended]
+//
+// --json prints one JSON object (floorplan/scan-result@1) instead of the summary; the summary is in it as
+// "summary". In unattended mode a repo git can't list, or finding no files at all, is an error (exit 1).
 
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { discover, gitFiles, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit } from './lib/common.mjs';
-import { extract, callableCallsVia } from './lib/extract.mjs';
+import { discover, listGitFiles, explainGitError, gitInfo, classify, themeRoots, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit, unattendedMode, printJson, skippedConfigs, MAX_CONFIG_BYTES, readJsonFile, notMapped } from './lib/common.mjs';
+import { extract, callableCallsVia, phpPages } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
-import { createResolver } from './lib/resolve.mjs';
-import { resolveRoutes, matchCalls } from './lib/routes.mjs';
+import { createResolver, applyGlobalUsings } from './lib/resolve.mjs';
+import { resolveRoutes, matchCalls, matchWayfinder, inertiaLinks } from './lib/routes.mjs';
+import { nuxtAutoImports } from './lib/nuxt.mjs';
+import { serverlessRoutes } from './lib/serverless.mjs';
+import { edgeFunctionRoutes } from './lib/supabase-functions.mjs';
 
 const args = parseArgs(process.argv.slice(2));
+const unattended = unattendedMode(args);
 const root = path.resolve(args._[0] || '.');
 const outDir = args.out ? path.dirname(path.dirname(path.resolve(args.out))) : mapDir(root);
 const outFile = path.resolve(args.out || path.join(outDir, '.cache', 'scan.json'));
@@ -43,8 +50,12 @@ const inMap = (p) => {
 const ignoredByDir = (p) => p.split('/').some((seg) => HARD_IGNORE_DIRS.has(seg))
   || /(^|\/)(?:prisma\/generated|generated\/prisma)\//.test(p) || inMap(p);
 
+// A repo git can't list (git missing, or refusing the checkout) would otherwise add nothing to the map
+// without a word, so each one is recorded as a problem: reported in the summary, and an error in unattended mode.
+const problems = [];
 for (const r of found.repos) {
-  const listed = gitFiles(r.abs);
+  const { files: listed, error } = listGitFiles(r.abs);
+  if (listed == null) problems.push({ code: 'git_failed', repo: r.path, message: `${r.path === '.' ? path.basename(root) : r.path} adds no files to the map: ${explainGitError(error, r.abs)}`, error });
   const info = gitInfo(r.abs);
   const prefix = r.path === '.' ? '' : r.path + '/';
   let count = 0;
@@ -55,18 +66,27 @@ for (const r of found.repos) {
     fileList.push({ path: p, repo: r.path });
     count++;
   }
-  repos.push({ path: r.path, name: path.basename(r.abs), ...info, files: count, ...(r.worktreeOf ? { worktreeOf: toPosix(r.worktreeOf) } : {}) });
+  repos.push({ path: r.path, name: path.basename(r.abs), ...info, files: count, ...(listed == null ? { listed: false } : {}), ...(r.worktreeOf ? { worktreeOf: toPosix(r.worktreeOf) } : {}) });
 }
-for (const p of found.loose) if (!seen.has(p) && !ignoredByDir(p)) { seen.add(p); fileList.push({ path: p, repo: null }); }
+for (const p of found.loose) if (!seen.has(p) && !inMap(p)) { seen.add(p); fileList.push({ path: p, repo: null }); }
+if (!fileList.length) problems.push({ code: 'no_files', message: `No files found under ${toPosix(root)}${found.repos.length ? '' : ' (no git repos, and no loose files)'}, so the map would be empty. Check the path${problems.length ? ' and the git problems above' : ''}.` });
+// unattended: stop before writing anything, so a broken scan never stands in for a real one
+if (unattended && problems.length) {
+  const errors = problems.map((p) => p.message);
+  if (args.json) await printJson({ schema: 'floorplan/scan-result@1', ok: false, root: toPosix(root), errors, problems, warnings: [] }, 1);
+  for (const e of errors) console.error(`✗ ${e}`);
+  process.exit(1);
+}
 
 // ---------- 2. classify, read, extract ----------
 const files = [];
+const themes = themeRoots(fileList.map((f) => f.path));
 for (const { path: p, repo } of fileList) {
   const abs = path.join(root, p);
   let st;
   try { st = fs.statSync(abs); } catch { continue; }
   if (!st.isFile()) continue;
-  const { category, lang } = classify(p, st.size);
+  const { category, lang } = classify(p, st.size, { themes });
   const f = { path: p, repo, category, lang, bytes: st.size, loc: 0 };
   if ((category === 'code' || category === 'config' || category === 'docs') && st.size <= maxBytes) {
     let src;
@@ -111,6 +131,7 @@ function countLines(abs) {
 }
 
 // ---------- 3. resolve imports ----------
+applyGlobalUsings(files);
 const resolve = createResolver(root, files);
 const edges = [];
 const externals = new Map(); // `${eco}:${name}` -> { eco, name, count, files:Set }
@@ -134,9 +155,13 @@ for (const f of files) {
       e.count++;
       e.files.add(f.path);
       extEdges.push({ from: f.path, pkg: key });
-    } else if (res.unresolved) unresolved++;
+    } else if (res.wayfinder) imp.wayfinder = res.wayfinder; // a generated Laravel route helper: matched to endpoints below
+    else if (res.unresolved) unresolved++;
   }
 }
+// Nuxt's auto-imports: components and composables a file uses with no import line (lib/nuxt.mjs)
+const nuxt = nuxtAutoImports(root, files);
+for (const e of nuxt.edges) edges.push(e);
 // merge duplicate edges (same from/to)
 const edgeMap = new Map();
 for (const e of edges) {
@@ -158,12 +183,27 @@ if (wrappers.size) for (const f of files) {
 }
 
 // ---------- 4. routes and HTTP calls ----------
+// plain PHP sites: each script under the document root is a page with its own address (needs the imports above)
+phpPages(files);
 const routes = resolveRoutes(files);
+// Serverless Framework: endpoints declared in serverless.yml, placed in the file that answers them (lib/serverless.mjs)
+const serverless = serverlessRoutes(files, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
+routes.push(...serverless.routes);
+// Supabase Edge Functions: each one's address under /functions/v1 (lib/supabase-functions.mjs)
+const edge = edgeFunctionRoutes(files, routes, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
 const http = matchCalls(files, routes);
+// Laravel: Wayfinder's named routes and controller actions, and the Inertia page each endpoint opens
+const wayfinderLinks = matchWayfinder(files, routes, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
+const inertia = inertiaLinks(files, routes);
+http.push(...wayfinderLinks, ...inertia.http);
+const fileAt = new Map(files.map((f) => [f.path, f]));
+for (const { file, hint } of inertia.hints) { const f = fileAt.get(file); if (f) f.screens = [...(f.screens || []), hint]; }
 const hosts = [];
 for (const f of files) for (const h of f.hosts || []) hosts.push({ from: f.path, host: h.host, line: h.line });
 
 // ---------- 5. write scan.json ----------
+// config files too big to be real ones (a tsconfig.json padded to megabytes) are noted, not read
+for (const c of skippedConfigs) found.skipped.push({ path: toPosix(path.relative(root, c.path)), reason: `config file over ${MAX_CONFIG_BYTES / 1024 / 1024} MB, not read (${Math.round(c.bytes / 1024)} KB)` });
 const scan = {
   version: 1,
   generatedAt: new Date().toISOString(),
@@ -206,18 +246,30 @@ const line = (s = '') => out.push(s);
 line(`Floorplan scan of ${scan.rootName}  (${((Date.now() - t0) / 1000).toFixed(1)}s) -> ${toPosix(path.relative(root, outFile))}`);
 line();
 line(`REPOS (${repos.length})`);
-for (const r of repos) line(`  ${r.path.padEnd(40)} ${String(r.files).padStart(6)} files  ${r.branch || '-'}@${(r.head || '').slice(0, 8)}${r.worktreeOf ? '  (worktree)' : ''}`);
+for (const r of repos) line(`  ${r.path.padEnd(40)} ${String(r.files).padStart(6)} files  ${r.branch || '-'}@${(r.head || '').slice(0, 8)}${r.worktreeOf ? '  (worktree)' : ''}${r.listed === false ? '  ! git could not list its files' : ''}`);
 const looseCount = scan.files.filter((f) => f.repo === null).length;
 if (looseCount) line(`  (outside any repo)${''.padEnd(22)} ${String(looseCount).padStart(6)} files`);
 const wts = found.skipped.filter((s) => s.reason.includes('worktree'));
 if (wts.length) line(`  skipped ${wts.length} duplicate worktree(s), e.g. ${wts.slice(0, 3).map((s) => s.path).join(', ')}`);
 const dumps = found.skipped.filter((s) => s.reason.includes('data dump'));
 if (dumps.length) line(`  skipped ${dumps.length} large non-git dir(s), e.g. ${dumps.slice(0, 2).map((s) => s.path).join(', ')}`);
+const bigConfigs = found.skipped.filter((s) => s.reason.startsWith('config file over'));
+if (bigConfigs.length) line(`  didn't read ${bigConfigs.length} config file(s) over ${MAX_CONFIG_BYTES / 1024 / 1024} MB (import aliases in them aren't followed): ${bigConfigs.slice(0, 3).map((s) => s.path).join(', ')}`);
 line();
+if (problems.length) {
+  line(`! PROBLEMS (${problems.length}): the map will be missing files until these are fixed`);
+  for (const p of problems) line(`  ! ${p.message}`);
+  line();
+}
 
 const byCat = {};
 for (const f of scan.files) byCat[f.category] = (byCat[f.category] || 0) + 1;
 line(`FILES  ${Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
+// the kinds the map will show: architecture.json's "include" once it's written, code alone until then
+let include = ['code'];
+try { const a = readJsonFile(path.join(outDir, 'architecture.json')); if (Array.isArray(a?.include) && a.include.every((k) => typeof k === 'string')) include = a.include; } catch {}
+const leftOut = notMapped(scan.files, include);
+if (leftOut.line) line(leftOut.line);
 const byLang = {};
 for (const f of code) { byLang[f.lang] ??= { files: 0, loc: 0 }; byLang[f.lang].files++; byLang[f.lang].loc += f.loc; }
 line(`CODE   ${Object.entries(byLang).sort((a, b) => b[1].loc - a[1].loc).slice(0, 10).map(([k, v]) => `${k} ${v.files} files/${fmtNum(v.loc)} loc`).join(' · ')}`);
@@ -274,6 +326,12 @@ for (const e of scan.edges) {
 line(`IMPORT EDGES  ${scan.edges.length} file->file resolved, ${unresolved} unresolved. Heaviest directory->directory:`);
 for (const [k, v] of [...dirEdges.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25)) line(`  ${String(v).padStart(5)}  ${k}`);
 line();
+for (const a of nuxt.apps) {
+  line(`NUXT  ${a.dir}: ${a.files} file(s) linked to the components and composables they use without importing them (${a.links} links), ${a.source === '.nuxt'
+    ? 'from .nuxt/components.d.ts and .nuxt/imports.d.ts'
+    : `${a.source === 'mixed' ? 'partly ' : ''}from Nuxt's folder conventions (components/, composables/, utils/), since .nuxt/ has no ${a.source === 'mixed' ? 'complete ' : ''}name lists until the app has been built or started once`}`);
+  line();
+}
 
 line(`HTTP  ${routes.length} route definitions, ${http.length} call->route matches (cross-file links not visible to imports)`);
 const httpDir = new Map();
@@ -283,6 +341,22 @@ for (const h of http) {
 }
 for (const [k, v] of [...httpDir.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)) line(`  ${String(v).padStart(5)}  ${k}`);
 line();
+
+const laravel = routes.filter((r) => r.framework === 'laravel');
+if (laravel.length) {
+  const routeFiles = new Set(laravel.map((r) => r.defFile || r.file));
+  line(`LARAVEL  ${laravel.length} endpoints from ${routeFiles.size} route file(s), ${laravel.filter((r) => r.defFile).length} answered by controller methods (their endpoints sit in the controller's file)`);
+  line(`  ${wayfinderLinks.length} Wayfinder call(s) matched to endpoints · ${inertia.hints.length} Inertia page(s) linked to the endpoint that opens them`);
+  const loaded = new Set();
+  for (const f of files) {
+    if (!f.mounts?.length) continue;
+    const specs = new Set(f.mounts.map((m) => m.spec));
+    for (const i of f.imports || []) if (specs.has(i.spec)) for (const p of i.files || []) loaded.add(p);
+  }
+  const loose = [...routeFiles].filter((p) => !loaded.has(p) && !/(^|\/)bootstrap\/app\.php$|(^|\/)Providers\//.test(p));
+  if (loose.length) line(`  route files nothing loads (their addresses may be missing a prefix): ${loose.slice(0, 6).join(', ')}${loose.length > 6 ? ' …' : ''}`);
+  line();
+}
 
 // Firebase Cloud Functions: endpoints are already in the HTTP line; background ones need a place on the map
 const fbRoutes = files.flatMap((f) => (f.routes || []).filter((r) => r.framework === 'firebase'));
@@ -294,6 +368,25 @@ if (fbRoutes.length || triggers.length) {
     line('  background (schedules and triggers; place them in a worker node):');
     for (const t of triggers.slice(0, 20)) line(`    ${t.name}  ${t.on}${t.what ? ` "${t.what}"` : ''}  ${t.file}:${t.line}`);
     if (triggers.length > 20) line(`    … ${triggers.length - 20} more`);
+  }
+  line();
+}
+
+// Serverless Framework: how many endpoints its configs declare, and the background functions beside them
+if (edge.functions.length) {
+  const n = edge.functions.reduce((a, x) => a + x.routes, 0);
+  line(`SUPABASE EDGE FUNCTIONS  ${edge.functions.length} function(s), ${n} endpoint(s) under /functions/v1: ${edge.functions.slice(0, 8).map((x) => x.name).join(', ')}${edge.functions.length > 8 ? ' …' : ''}`);
+  line();
+}
+
+if (serverless.configs.length) {
+  const signedIn = serverless.routes.filter((r) => r.auth).length;
+  line(`SERVERLESS  ${serverless.routes.length} endpoints from ${serverless.configs.length} config file(s) (${serverless.configs.slice(0, 4).join(', ')}${serverless.configs.length > 4 ? ' …' : ''}), ${signedIn} behind an authorizer or API key, ${serverless.triggers.length} background`);
+  if (serverless.unresolved.length) line(`  ${serverless.unresolved.length} function(s) whose handler file wasn't found, so their endpoints aren't on the map: ${serverless.unresolved.slice(0, 5).map((u) => `${u.name} (${u.handler})`).join(', ')}${serverless.unresolved.length > 5 ? ' …' : ''}`);
+  if (serverless.triggers.length) {
+    line('  background (schedules, queues, streams, buckets; place them in a worker node):');
+    for (const t of serverless.triggers.slice(0, 20)) line(`    ${t.name}  ${t.on}${t.what ? ` "${t.what}"` : ''}  ${t.file}:${t.line}`);
+    if (serverless.triggers.length > 20) line(`    … ${serverless.triggers.length - 20} more`);
   }
   line();
 }
@@ -318,4 +411,37 @@ if (unread.length) {
   line();
 }
 line('Next: read references/schema.md, explore entrypoints, then write floorplan/architecture.json and run build.mjs.');
-console.log(out.join('\n'));
+if (!args.json) console.log(out.join('\n'));
+else {
+  await printJson({
+    schema: 'floorplan/scan-result@1',
+    ok: true,
+    root: toPosix(root),
+    rootName: scan.rootName,
+    scanFile: toPosix(path.relative(root, outFile)),
+    seconds: Number(((Date.now() - t0) / 1000).toFixed(1)),
+    repos: repos.map((r) => ({ path: r.path, name: r.name, branch: r.branch, head: r.head, files: r.files, listed: r.listed !== false, ...(r.worktreeOf ? { worktreeOf: r.worktreeOf } : {}) })),
+    skipped: found.skipped,
+    counts: {
+      files: scan.files.length,
+      outsideRepos: looseCount,
+      byCategory: byCat,
+      notMapped: leftOut.byCategory,
+      code: { files: code.length, loc: code.reduce((s, f) => s + f.loc, 0) },
+      byLanguage: byLang,
+      routes: routes.length,
+      httpMatches: http.length,
+      importEdges: scan.edges.length,
+      autoImportLinks: nuxt.edges.length,
+      wayfinderLinks: wayfinderLinks.length,
+      inertiaPages: inertia.hints.length,
+      unresolvedImports: unresolved,
+      externalPackages: scan.externals.length,
+      notRead: unread.length,
+    },
+    errors: [],
+    warnings: problems.map((p) => p.message),
+    problems,
+    summary: out.join('\n'),
+  });
+}

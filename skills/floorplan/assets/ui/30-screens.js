@@ -8,7 +8,7 @@
   // pages that only bounce you elsewhere have nothing behind them worth a board
   const screens = (G.screens || []).filter((s) => s && s.url && Array.isArray(s.behind) && s.behind.length && !(s.behind.length < 2 && /redirect/i.test(`${s.name} ${s.description}`)));
   if (!screens.length) return;
-  const { h } = SC;
+  const { h, hk } = SC;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -65,7 +65,7 @@
       const rows = list.filter(hit);
       if (!rows.length) continue;
       if (byApp.size > 1) html += `<div class="sc-g">${h(appName(app))}</div>`;
-      for (const s of rows) html += `<button class="sc-r" data-sc="${h(s.id)}"><b>${h(s.name)}</b><span>${h(s.url)}</span></button>`;
+      for (const s of rows) html += `<button class="sc-r" data-sc="${hk(s.id)}"><b>${h(s.name)}</b><span>${h(s.url)}</span></button>`;
       shown += rows.length;
     }
     if (!shown) html = `<div class="sc-none">No screen matches “${h(q)}”.</div>`;
@@ -119,7 +119,7 @@
   window.addEventListener('resize', () => { if (isOpen()) place(); });
 
   // ---------- details panel ----------
-  const row = (s, label) => `<a class="row" data-sc="${h(s.id)}"><span class="dot" style="background:var(--n-ui)"></span><span class="rt"><div class="rn">${h(label || s.name)}</div><div class="rp">${h(s.url)}</div></span></a>`;
+  const row = (s, label) => `<a class="row" data-sc="${hk(s.id)}"><span class="dot" style="background:var(--n-ui)"></span><span class="rt"><div class="rn">${h(label || s.name)}</div><div class="rp">${h(s.url)}</div></span></a>`;
   const bindRows = (el) => el?.querySelectorAll('[data-sc]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); showScreen(screens.find((s) => s.id === a.dataset.sc)); }));
   SC.addPanelSection('item', (id) => {
     if (typeof id !== 'string') return null;
