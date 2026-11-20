@@ -372,6 +372,7 @@ function extractJs(src, filePath) {
     if (!ROUTER_NAME.test(m[1]) && !routerVars.has(m[1])) continue;
     routes.push({ method: m[2].toUpperCase(), path: m[3], var: m[1], line: at(m.index) });
   }
+
   // Mounts and middleware: app.use('/api', requireAuth, orders), app.route('/api', api), app.use('/billing',
   // createBillingRoutes()), app.use('/api/*', auth), app.use(requireAuth), app.use(router). Each records the
   // receiver (`on`), so routers nested in one file compose; resolveRoutes tells a router from middleware.
@@ -454,6 +455,7 @@ function extractJs(src, filePath) {
     const methods = all(/export\s+(?:async\s+)?(?:function|const)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g, code).map((m) => m[1]);
     for (const method of methods.length ? methods : ['ANY']) routes.push({ method, path: p, var: null, line: 1, framework: 'next' });
   }
+
   // Endpoints listed as data: `[{ method: 'GET', path: /^\/api\/items$/, handle: listItems }]` and Bun.serve({ routes })
   // (route-tables.mjs). A route object Fastify's reading above already took isn't counted again.
   const dataAt = routes.length;
@@ -824,6 +826,63 @@ function nestRoutes(code, at) {
 
 // ---------- Go ----------
 
+// The `}` closing the brace at `open`, skipping Go strings (double-quoted with escapes, backtick
+// raw strings that can span lines, rune literals), or -1 when it never closes within the cap.
+// Comments are already blanked by stripCStyle, so only strings can hide a brace.
+function goBraceClose(code, open, cap = 100000) {
+  let depth = 0;
+  const end = Math.min(code.length, open + cap);
+  for (let i = open; i < end; i++) {
+    const c = code[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c;
+      i++;
+      while (i < end && code[i] !== q && (q === '`' || code[i] !== '\n')) i += code[i] === '\\' && q !== '`' ? 2 : 1;
+      continue;
+    }
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+// The `)` closing the paren at `open`, with the same string skipping, or -1.
+function goParenClose(code, open, cap = 4000) {
+  let depth = 0;
+  const end = Math.min(code.length, open + cap);
+  for (let i = open; i < end; i++) {
+    const c = code[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c;
+      i++;
+      while (i < end && code[i] !== q && (q === '`' || code[i] !== '\n')) i += code[i] === '\\' && q !== '`' ? 2 : 1;
+      continue;
+    }
+    if (c === '(') depth++;
+    else if (c === ')') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+// A receiver chain after its first name: `.With(auth)`, `.Group("/api")`. A call's arguments are
+// simple (no nested call, at most 200 characters, one line): a chain with a call inside a call is
+// left alone, and a route method never counts as part of the chain, so `r.GET("/a").POST("/b")`
+// still reads as two routes on `r`.
+const GO_METHODS = 'HandleFunc|Handle|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Get|Post|Put|Patch|Delete|Head|Options';
+const GO_CHAIN = `(?:\\.(?!${GO_METHODS.split('|').join('\\b|')}\\b)[A-Za-z_$][\\w$]*\\s*(?:\\([^()\\n]{0,200}\\))?){0,4}`;
+const GO_VERB = '(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\s+';
+// A ServeMux pattern can name a host before its path: "GET shop.example.com/orders", "example.com:8080/".
+// It must look like a domain name (a dot, maybe a port), so a name like "devices/+/status" isn't one.
+const GO_HOST = '[\\w-]+(?:\\.[\\w-]+)+(?::\\d+)?';
+const GO_GROUP_IN_CHAIN = /\.Group\(\s*"([^"]*)"/g;
+
+/** The Group prefixes of a receiver chain (`r.Group("/api").Get(…)`), in order. */
+function goChainGroups(chain) {
+  const out = [];
+  for (const m of chain.matchAll(GO_GROUP_IN_CHAIN)) out.push(m[1]);
+  return out;
+}
+
 function extractGo(src) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
@@ -842,14 +901,73 @@ function extractGo(src) {
   const symbols = [];
   for (const m of all(/^func\s+(?:\([^)\n]{0,300}\)\s*)?([A-Z]\w*)/gm, code)) symbols.push({ name: m[1], kind: 'function', line: at(m.index) });
   for (const m of all(/^type\s+([A-Z]\w*)\s+(struct|interface)?/gm, code)) symbols.push({ name: m[1], kind: m[2] || 'type', line: at(m.index) });
-  const routes = [];
-  for (const m of all(/\.(HandleFunc|Handle|GET|POST|PUT|PATCH|DELETE|Get|Post|Put|Patch|Delete)\(\s*"(\/[^"]*)"/g, code)) {
-    const method = /^handle/i.test(m[1]) ? 'ANY' : m[1].toUpperCase();
-    const p = m[2].replace(/^(GET|POST|PUT|PATCH|DELETE)\s+/, '');
-    routes.push({ method, path: p, var: null, line: at(m.index) });
+
+  // A group's prefix, and a subrouter's: `api := r.Group("/api")` (Gin, Echo, Fiber and chi),
+  // nested groups included (`v1 := api.Group("/v1")` is /api/v1), and chi's inline subrouter
+  // `r.Route("/api", func(r chi.Router) { … })`, also `r.With(auth).Route(…)` and one Route
+  // inside another. A route keeps the variable it was declared on, so resolveRoutes puts the
+  // group's prefix in front of it; a route inside a Route callback has the callback's prefix
+  // written into its path, because the callback's parameter shadows the router it was called on.
+  const routers = {};
+  const scopes = []; // { param, prefix, var, start, end } — a Route callback's body
+  const events = [];
+  const groupRe = new RegExp(`(?:^|[^\\w$.])\\s*(?:var\\s+)?([A-Za-z_$][\\w$]*)\\s*:?=\\s*([A-Za-z_$][\\w$]*)${GO_CHAIN}\\.Group\\(\\s*"([^"]*)"`, 'gd');
+  for (const m of all(groupRe, code)) {
+    const gStart = m[0].lastIndexOf('.Group(');
+    const rootEnd = m[0].indexOf(m[2]) + m[2].length;
+    // the name's own position, not the match's: the match starts at the character before it,
+    // which can be the `{` that opens the Route callback the group sits in
+    events.push({ kind: 'group', index: m.indices[1][0], name: m[1], root: m[2], chain: m[0].slice(rootEnd, gStart), literal: m[3] });
   }
-  const { calls, hosts } = extractCalls(code, at, { skip: /\.(HandleFunc|Handle|GET|POST)\(/ });
-  return { imports, symbols, routes, mounts: [], calls, hosts };
+  const routeRe = new RegExp(`([A-Za-z_$][\\w$]*)${GO_CHAIN}\\.Route\\(\\s*"([^"]*)"\\s*,\\s*func\\s*\\(\\s*([A-Za-z_$][\\w$]*)\\s+(?:chi\\.)?Router\\s*\\)\\s*\\{`, 'g');
+  for (const m of all(routeRe, code)) events.push({ kind: 'scope', index: m.index, root: m[1], chain: m[0].slice(m[0].indexOf(m[1]) + m[1].length, m[0].lastIndexOf('.Route(')), literal: m[2], param: m[3], open: m.index + m[0].length - 1 });
+  events.sort((a, b) => a.index - b.index);
+  const enclosing = (index, param) => {
+    let found = null;
+    for (const s of scopes) if (s.param === param && s.start <= index && index < s.end && (!found || s.start > found.start)) found = s;
+    return found;
+  };
+  for (const e of events) {
+    const inner = enclosing(e.index, e.root);
+    // a Route callback's own prefix is only its Route literals (and the enclosing callback's):
+    // the group its receiver belongs to reaches its routes through the scope's `var`, not here
+    const base = e.kind === 'group' ? (inner ? inner.prefix : (routers[e.root] || '')) : (inner ? inner.prefix : '');
+    const prefix = joinUri(base, ...goChainGroups(e.chain), e.literal);
+    if (e.kind === 'group') { routers[e.name] = prefix ? '/' + prefix : ''; continue; }
+    const end = goBraceClose(code, e.open);
+    if (end < 0) continue; // an unclosed callback: its routes read as if it were not there
+    scopes.push({ param: e.param, prefix, var: routers[e.root] ? e.root : (inner ? inner.var : null), start: e.open + 1, end });
+  }
+
+  const routes = [];
+  const methodRe = new RegExp(`([A-Za-z_$][\\w$]*)${GO_CHAIN}\\.(${GO_METHODS})\\(\\s*"(${GO_VERB})?(${GO_HOST})?(\\/[^"]*)"`, 'g');
+  const chainedRe = new RegExp(`^\\s*\\.\\s*(${GO_METHODS})\\(\\s*"(${GO_VERB})?(${GO_HOST})?(\\/[^"]*)"`);
+  for (const m of all(methodRe, code)) {
+    const chainText = m[0].slice(m[0].indexOf(m[1]) + m[1].length, m[0].lastIndexOf('.' + m[2] + '('));
+    let method = m[2], verb = m[3], host = m[4], path = m[5], index = m.index;
+    let paren = m.index + m[0].lastIndexOf('.' + m[2] + '(') + m[2].length + 1;
+    for (;;) {
+      // a trailing {$} only says the path ends there: "GET /{$}" is GET /, and nothing below it
+      path = path.replace(/\{\$\}$/, '');
+      const scope = enclosing(index, m[1]);
+      const groups = goChainGroups(chainText);
+      let p, v;
+      if (scope) { p = '/' + joinUri(scope.prefix, ...groups, path); v = scope.var; }
+      else if (groups.length) { p = '/' + joinUri(routers[m[1]] || '', ...groups, path); v = null; }
+      else { p = path; v = routers[m[1]] ? m[1] : null; }
+      // only ServeMux (Handle, HandleFunc) reads a host; for Gin, Echo or chi "a.b/c" isn't a path
+      if (!host || /^handle/i.test(method)) routes.push({ method: (verb || '').trim() || (/^handle/i.test(method) ? 'ANY' : method.toUpperCase()), path: p, var: v, line: at(index) });
+      // a chained call on the same statement: `r.GET("/a", h).POST("/b", h2)` is two routes on one router
+      const close = goParenClose(code, paren);
+      if (close < 0) break;
+      const c = chainedRe.exec(code.slice(close + 1, close + 401));
+      if (!c) break;
+      method = c[1]; verb = c[2]; host = c[3]; path = c[4]; index = close + 1 + c.index;
+      paren = close + 1 + c.index + c[0].indexOf('(');
+    }
+  }
+  const { calls, hosts } = extractCalls(code, at, { skip: /\.(HandleFunc|Handle|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Get|Post|Put|Patch|Delete|Head|Options)\(/ });
+  return { imports, symbols, routes, mounts: [], calls, hosts, routers };
 }
 
 // ---------- Swift ----------
