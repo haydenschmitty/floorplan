@@ -1,8 +1,9 @@
 // Go router groups: a route on a group keeps the group's prefix (Gin, Echo, Fiber and chi's
 // `Group`), chi's inline subrouter (`r.Route("/api", func(r chi.Router) { … })`, also
 // `r.With(auth).Route(…)` and one Route inside another) prefixes the routes inside it, and Go
-// 1.22's `mux.HandleFunc("GET /orders/{id}", …)` reads its method from the pattern. Routes beside
-// a group, and on a router the callback doesn't hand over, keep no prefix.
+// 1.22's `mux.HandleFunc("GET /orders/{id}", …)` reads its method from the pattern (a host and a
+// trailing `{$}` are left out of the path). Routes beside a group, and on a router the callback
+// doesn't hand over, keep no prefix.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { lib, makeProject, run, readGraph, routeKeys, cleanup } from './helpers.mjs';
@@ -139,6 +140,41 @@ test('Go 1.22: the method is part of the pattern, and a plain pattern stays ANY'
     `  mux.HandleFunc("/health", health)`,
   ]);
   assert.deepEqual(routesOf(r), ['ANY /health', 'GET /orders/{id}', 'POST /orders']);
+});
+
+test('Go 1.22: a host in the pattern is dropped from the path, and a trailing {$} too', () => {
+  const r = go([
+    `  mux := http.NewServeMux()`,
+    `  mux.HandleFunc("GET shop.example.com/api/orders", listOrders)`,
+    `  mux.Handle("api.example.com:8080/stats", stats)`,
+    `  mux.HandleFunc("example.com/", site)`,
+    `  mux.HandleFunc("GET /{$}", home)`,
+    `  mux.HandleFunc("POST\tshop.example.com/api/orders/{$}", createOrder)`,
+    `  mux.HandleFunc("GET /files/{path...}", files)`,
+  ]);
+  assert.deepEqual(r.routes.map((x) => `${x.method} ${x.path} :${x.line}`), [
+    'GET /api/orders :5', 'ANY /stats :6', 'ANY / :7', 'GET / :8', 'POST /api/orders/ :9', 'GET /files/{path...} :10',
+  ]);
+});
+
+test('look-alikes left alone: a host-like name on another router, and names that are no pattern', () => {
+  const r = go([
+    `  r := chi.NewRouter()`,
+    `  r.Get("/orders", listOrders)`,
+    `  r.Get("cdn.example.com/logo.png", logo)`,
+    `  bus.Handle("devices/+/status", onStatus)`,
+    `  bus.Handle("orders.created", onOrder)`,
+    `  bus.HandleFunc("GET orders", nope)`,
+  ]);
+  assert.deepEqual(routesOf(r), ['GET /orders']);
+});
+
+test('Go 1.22: the website reaches an endpoint whose pattern names a host', async () => {
+  const { matchCalls } = await lib('routes.mjs');
+  const api = go([`  mux.HandleFunc("GET shop.example.com/api/orders/{id}", getOrder)`]);
+  const web = extract('export const load = (id) => fetch(`/api/orders/${id}`);\n', 'javascript', 'web/src/orders.js');
+  const hits = matchCalls([{ path: 'web/src/orders.js', calls: web.calls }], api.routes.map((x) => ({ ...x, file: 'cmd/main.go' })));
+  assert.deepEqual(hits.map((h) => `${h.from} -> ${h.to} ${h.method} ${h.path}`), ['web/src/orders.js -> cmd/main.go GET /api/orders/{id}']);
 });
 
 test('look-alikes left alone: a group with a prefix built at run time, and Method()', () => {

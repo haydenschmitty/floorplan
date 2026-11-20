@@ -871,6 +871,9 @@ function goParenClose(code, open, cap = 4000) {
 const GO_METHODS = 'HandleFunc|Handle|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Get|Post|Put|Patch|Delete|Head|Options';
 const GO_CHAIN = `(?:\\.(?!${GO_METHODS.split('|').join('\\b|')}\\b)[A-Za-z_$][\\w$]*\\s*(?:\\([^()\\n]{0,200}\\))?){0,4}`;
 const GO_VERB = '(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\s+';
+// A ServeMux pattern can name a host before its path: "GET shop.example.com/orders", "example.com:8080/".
+// It must look like a domain name (a dot, maybe a port), so a name like "devices/+/status" isn't one.
+const GO_HOST = '[\\w-]+(?:\\.[\\w-]+)+(?::\\d+)?';
 const GO_GROUP_IN_CHAIN = /\.Group\(\s*"([^"]*)"/g;
 
 /** The Group prefixes of a receiver chain (`r.Group("/api").Get(…)`), in order. */
@@ -937,26 +940,29 @@ function extractGo(src) {
   }
 
   const routes = [];
-  const methodRe = new RegExp(`([A-Za-z_$][\\w$]*)${GO_CHAIN}\\.(${GO_METHODS})\\(\\s*"(${GO_VERB})?(\\/[^"]*)"`, 'g');
-  const chainedRe = new RegExp(`^\\s*\\.\\s*(${GO_METHODS})\\(\\s*"(${GO_VERB})?(\\/[^"]*)"`);
+  const methodRe = new RegExp(`([A-Za-z_$][\\w$]*)${GO_CHAIN}\\.(${GO_METHODS})\\(\\s*"(${GO_VERB})?(${GO_HOST})?(\\/[^"]*)"`, 'g');
+  const chainedRe = new RegExp(`^\\s*\\.\\s*(${GO_METHODS})\\(\\s*"(${GO_VERB})?(${GO_HOST})?(\\/[^"]*)"`);
   for (const m of all(methodRe, code)) {
     const chainText = m[0].slice(m[0].indexOf(m[1]) + m[1].length, m[0].lastIndexOf('.' + m[2] + '('));
-    let method = m[2], verb = m[3], path = m[4], index = m.index;
+    let method = m[2], verb = m[3], host = m[4], path = m[5], index = m.index;
     let paren = m.index + m[0].lastIndexOf('.' + m[2] + '(') + m[2].length + 1;
     for (;;) {
+      // a trailing {$} only says the path ends there: "GET /{$}" is GET /, and nothing below it
+      path = path.replace(/\{\$\}$/, '');
       const scope = enclosing(index, m[1]);
       const groups = goChainGroups(chainText);
       let p, v;
       if (scope) { p = '/' + joinUri(scope.prefix, ...groups, path); v = scope.var; }
       else if (groups.length) { p = '/' + joinUri(routers[m[1]] || '', ...groups, path); v = null; }
       else { p = path; v = routers[m[1]] ? m[1] : null; }
-      routes.push({ method: (verb || '').trim() || (/^handle/i.test(method) ? 'ANY' : method.toUpperCase()), path: p, var: v, line: at(index) });
+      // only ServeMux (Handle, HandleFunc) reads a host; for Gin, Echo or chi "a.b/c" isn't a path
+      if (!host || /^handle/i.test(method)) routes.push({ method: (verb || '').trim() || (/^handle/i.test(method) ? 'ANY' : method.toUpperCase()), path: p, var: v, line: at(index) });
       // a chained call on the same statement: `r.GET("/a", h).POST("/b", h2)` is two routes on one router
       const close = goParenClose(code, paren);
       if (close < 0) break;
       const c = chainedRe.exec(code.slice(close + 1, close + 401));
       if (!c) break;
-      method = c[1]; verb = c[2]; path = c[3]; index = close + 1 + c.index;
+      method = c[1]; verb = c[2]; host = c[3]; path = c[4]; index = close + 1 + c.index;
       paren = close + 1 + c.index + c[0].indexOf('(');
     }
   }
