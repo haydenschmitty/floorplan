@@ -195,7 +195,7 @@ L.push(`  files   +${created.length} new · −${deleted.length} deleted · ${re
 L.push(`  routes  +${newRoutes.size} new · −${goneRoutes.length - routeMoves.size} removed · ${routeMoves.size} re-pathed (descriptions carried over)`);
 L.push(`  descriptions: ${carried + routeCarried} carried over, ${pruned + routePruned} removed, ${flagged} flagged for review`);
 if (!before.values().next().value?.h) L.push('  (the previous map predates content fingerprints, so edits since then could not be detected; future refreshes will)');
-for (const p of scanResult?.problems || []) L.push(`  ! ${p.message}`);
+for (const warning of scanResult?.warnings || []) L.push(`  ! ${warning}`);
 const byDir = new Map();
 for (const p of created) { const d = p.split('/').slice(0, -1).join('/'); byDir.set(d, (byDir.get(d) || 0) + 1); }
 if (byDir.size) {

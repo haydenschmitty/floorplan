@@ -31,7 +31,7 @@ The first command adds this repository as a plugin source. The second installs F
 
 1. **Open your project.** In the Claude desktop app's Code tab, choose your project's folder in the row under the prompt box before sending your first message. In the Codex app, open the project's folder. In a terminal, run `claude` or `codex` from the project folder.
 
-   If your app is split across several repos (say `web/` and `api/` side by side), open the folder that contains them all. Floorplan maps them together and connects the requests between them.
+   If your app is split across several repos (say `web/` and `api/` side by side), open the folder that contains them all. Floorplan maps them together and connects the requests between them. A **symlinked repository folder** is a directory entry that points somewhere else on disk, such as `api -> ../shared/api`; Floorplan deliberately does not follow those links. The scan tells the agent which symlinked Git repositories it skipped, because following them can create cycles or map the same repository twice. To map them together, use a common folder with real repository directories.
 
 2. **Ask for it:**
 

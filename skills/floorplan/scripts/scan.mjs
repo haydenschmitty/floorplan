@@ -246,6 +246,11 @@ const looseCount = scan.files.filter((f) => f.repo === null).length;
 if (looseCount) line(`  (outside any repo)${''.padEnd(22)} ${String(looseCount).padStart(6)} files`);
 const wts = found.skipped.filter((s) => s.reason.includes('worktree'));
 if (wts.length) line(`  skipped ${wts.length} duplicate worktree(s), e.g. ${wts.slice(0, 3).map((s) => s.path).join(', ')}`);
+const linkedRepos = found.skipped.filter((s) => s.reason.includes('symlinked git repository'));
+if (linkedRepos.length) {
+  line(`! LINKED REPOSITORIES (${linkedRepos.length}) were not scanned: ${linkedRepos.slice(0, 6).map((s) => s.path).join(', ')}${linkedRepos.length > 6 ? ' …' : ''}`);
+  line('  Floorplan does not follow symlinks, to avoid cycles and duplicate repositories. To map these apps together, run it from a common folder that contains real repository directories.');
+}
 const dumps = found.skipped.filter((s) => s.reason.includes('data dump'));
 if (dumps.length) line(`  skipped ${dumps.length} large non-git dir(s), e.g. ${dumps.slice(0, 2).map((s) => s.path).join(', ')}`);
 const bigConfigs = found.skipped.filter((s) => s.reason.startsWith('config file over'));
@@ -435,7 +440,7 @@ else {
       notRead: unread.length,
     },
     errors: [],
-    warnings: problems.map((p) => p.message),
+    warnings: [...problems.map((p) => p.message), ...linkedRepos.map((s) => `${s.path}: ${s.reason}; use a common folder with real repository directories to map it together`)],
     problems,
     summary: out.join('\n'),
   });

@@ -27,6 +27,8 @@ Arguments: $ARGUMENTS
 
 **In Codex** (or any agent that left the two lines above unfilled): `${CLAUDE_SKILL_DIR}` in every command here means this skill's folder, the one holding this SKILL.md, so use its path. Run `node <that folder>/scripts/status.mjs` from the codebase root yourself to see whether a map exists, and take the path and `--refresh` from the user's request. The scripts notice they're running under Codex, so the map's Ask bar and "Fix with" prompts use Codex.
 
+**In Pi:** Pi supplies this skill's directory when it loads the skill. In every command below, replace `${CLAUDE_SKILL_DIR}` with that directory and run the resulting script from the codebase root. The Pi extension's `/floorplan [path] [--refresh]` command loads this skill; ordinary requests such as “make a floorplan” can load it automatically too. The map's built-in Ask bar still uses the Claude Code CLI or Codex; use the Pi conversation itself to ask questions when neither is installed.
+
 ## Nothing built yet? Draw a blueprint
 
 If the user wants to plan something they haven't built ("here's my PRD", "I want to build an app that…", a long description of a system), make a **blueprint**: the same map, planned from their document instead of scanned from code. Use this path when there's no code for the system yet, even if the folder holds other things. If the code exists, make a normal map.
