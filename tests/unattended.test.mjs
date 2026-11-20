@@ -603,6 +603,29 @@ test('a refresh whose scan fails exits non-zero in unattended mode, with NEXT fi
   } finally { cleanup(p); }
 });
 
+test('refresh preserves the map and descriptions when Git cannot list one repository', () => {
+  const p = shopApp();
+  try {
+    const map = path.join(p, 'floorplan');
+    const description = path.join(map, 'descriptions', 'shop-web.json');
+    fs.mkdirSync(path.dirname(description), { recursive: true });
+    writeJson(description, { files: { 'shop-web/src/App.jsx': { name: 'Shop page', description: 'Shows products.' } } });
+    run('scan.mjs', p); run('build.mjs', p, '--no-claude-md');
+    const saved = [description, path.join(map, 'graph.json'), path.join(map, '.cache', 'scan.json')];
+    const contents = saved.map((name) => fs.readFileSync(name, 'utf8'));
+    breakRepo(path.join(p, 'shop-web'));
+
+    const plain = exec('refresh.mjs', p);
+    assert.equal(plain.code, 1);
+    assert.match(plain.out, /shop-web adds no files to the map/);
+    const result = exec('refresh.mjs', p, ['--json']);
+    assert.equal(result.code, 1);
+    assert.equal(result.json.ok, false);
+    assert.deepEqual(result.json.next.map((n) => n.code), ['fix_scan']);
+    assert.deepEqual(saved.map((name) => fs.readFileSync(name, 'utf8')), contents);
+  } finally { cleanup(p); }
+});
+
 // ---------- exit codes: unattended mode is reliable, everyone else sees no change ----------
 test('refresh exit codes: unattended mode fails on no map and on a failed build; default mode still exits 0', () => {
   const p = shopApp();
