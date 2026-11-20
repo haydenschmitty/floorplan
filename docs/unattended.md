@@ -112,7 +112,7 @@ The NEXT codes are stable, so a program can act on them:
 | `review_structure` | a large change; check the summaries and flows | |
 | `recent_work` | always last: mark recent work | |
 | `first_map` | there's no map yet; make one | |
-| `fix_scan` | the scan stopped (unattended mode only); see `errors` | |
+| `fix_scan` | the scan stopped before changing the map; see `errors` | |
 | `fix_plan`, `blueprint` | blueprints only (see [How it works](how-it-works.md#blueprints)) | |
 
 ### recent.mjs: `floorplan/recent-result@1`
@@ -132,7 +132,7 @@ The NEXT codes are stable, so a program can act on them:
 | `scan.mjs` | 1 only on a crash; git problems are reported, not failed | also 1 when git can't list a repo, or no files are found |
 | `build.mjs` | 1 on errors, or no scan or architecture.json | the same |
 | `describe.mjs` | 1 without a map; 0 when there's nothing to describe | the same |
-| `refresh.mjs` | 0, even with no map or a failed build (the NEXT list says what to do) | 1 when there's no map, the scan fails or the build fails |
+| `refresh.mjs` | 1 when the scan fails. A missing map or failed code-map build still exits 0 (the NEXT list says what to do) | 1 when there's no map, the scan fails or the build fails |
 | `recent.mjs` | 1 without a map | the same |
 | `status.mjs` | always 0 | the same |
 

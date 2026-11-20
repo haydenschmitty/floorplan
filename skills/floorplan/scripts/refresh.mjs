@@ -7,8 +7,9 @@
 // usage: node refresh.mjs [root] [--from-code] [--json] [--unattended]
 //
 // --json prints one JSON object (floorplan/refresh-result@1): the change counts, the build's own --json
-// result, and NEXT as items with stable codes. In unattended mode (FLOORPLAN_UNATTENDED=1 or --unattended)
-// it exits 1 when there's no map, the scan fails, or the build fails; otherwise those exit 0 as before.
+// result, and NEXT as items with stable codes. A failed scan exits 1 without
+// changing the map. In unattended mode (FLOORPLAN_UNATTENDED=1 or --unattended)
+// a missing map or failed code-map build also exits 1.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -64,9 +65,10 @@ if (old.meta?.blueprint && !args['from-code']) {
 // ---------- 1. re-scan (no tokens) ----------
 let scanResult = null;
 try {
-  scanResult = JSON.parse(execFileSync(node, [path.join(HERE, 'scan.mjs'), root, '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
+  // Refresh treats missing files as deletions. A partial scan cannot safely replace the
+  // previous inventory, so use the scanner's strict mode even in an interactive session.
+  scanResult = JSON.parse(execFileSync(node, [path.join(HERE, 'scan.mjs'), root, '--json', '--unattended'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
 } catch (e) {
-  // only unattended mode fails a scan on purpose (a repo git can't list, or no files at all)
   let failed = null;
   try { failed = JSON.parse(String(e.stdout || '')); } catch {}
   if (!failed) throw e;
