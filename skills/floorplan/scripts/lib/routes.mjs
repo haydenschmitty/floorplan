@@ -109,7 +109,11 @@ function mountTarget(f, mount, byPath) {
       if (imp.names?.includes(orig)) return { file: imp.files.length === 1 ? imp.files[0] : imp.files[imp.names.indexOf(orig)] || imp.files[0], v: orig };
     }
   }
-  return { file: f.path, v: head }; // defined in the same file
+  // A router made in this file (`APIRouter()`, `Blueprint()`), or one its routes are declared on. Any other name,
+  // like what a factory returned or a router from an installed package, is not this file: taking it for this
+  // file put its prefix on every router the file includes (the Python side of #71).
+  const own = Object.hasOwn(f.routers || {}, head) || (f.routes || []).some((r) => r.var === head);
+  return own ? { file: f.path, v: head } : null;
 }
 
 export function resolveRoutes(files) {
