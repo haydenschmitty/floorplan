@@ -54,9 +54,10 @@ let status = s?.pid && alive(s.pid) ? await api(s, '/api/status') : null;
 let restarted = false;
 const hadTabs = status?.tabs > 0;
 
-// a newer serve.mjs came with this build, or a different --editor was asked for: restart so the map gets it;
-// open tabs reconnect and reload
-if (status && (status.hash !== hash || (editor?.template && status.editor !== editor.template))) {
+// A newer server or an explicit change to its editor or Ask engine needs a restart.
+// Open tabs reconnect and reload.
+const engineChanged = status && ['claude', 'codex'].includes(args.engine) && status.forcedEngine !== args.engine;
+if (status && (status.hash !== hash || (editor?.template && status.editor !== editor.template) || engineChanged)) {
   try { process.kill(s.pid); } catch {}
   for (let i = 0; i < 20 && alive(s.pid); i++) await sleep(150);
   status = null;

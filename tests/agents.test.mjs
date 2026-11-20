@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { lib, shopApp, run, readGraph, readJson, cleanup } from './helpers.mjs';
 
 const { detectAgent, cliLabel } = await lib('agent.mjs');
@@ -84,4 +85,29 @@ test("open.mjs names the program that answers questions, even when another one a
   assert.equal(cliLabel('codex', 'othertool v1.2.0'), 'othertool, found as the codex command');
   // text that isn't a program and its version leaves the usual name
   assert.equal(cliLabel('claude', 'unknown'), 'the Claude Code CLI');
+});
+
+test('reopening a map with a different explicit Ask engine uses that engine', () => {
+  const root = shopApp();
+  const map = path.join(root, 'floorplan');
+  const state = path.join(map, '.cache', 'server.json');
+  const cli = path.join(root, 'test-cli.mjs');
+  const open = (...args) => run('open.mjs', root, '--no-open', '--claude', cli, '--codex', cli, ...args);
+  try {
+    fs.writeFileSync(cli, "console.log('1.0.0');\n");
+    run('scan.mjs', root);
+    run('build.mjs', root, '--agent', 'claude');
+    const port = 20000 + Math.floor(Math.random() * 20000);
+    assert.match(open('--port', String(port), '--engine', 'claude'), /ASK.*Claude Code CLI/);
+    const first = readJson(state);
+    assert.match(open('--engine', 'codex'), /ASK.*Codex/);
+    const second = readJson(state);
+    assert.notEqual(second.pid, first.pid);
+    assert.equal(second.url, first.url);
+    assert.match(open('--engine', 'codex'), /ASK.*Codex/);
+    assert.equal(readJson(state).pid, second.pid);
+  } finally {
+    if (fs.existsSync(state)) execFileSync(process.execPath, [path.join(map, 'serve.mjs'), '--stop']);
+    cleanup(root);
+  }
 });
