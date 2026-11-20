@@ -2,6 +2,7 @@
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
 import { forwardIndexOf, importStatements, callArgs } from './common.mjs';
 import { dataRoutes } from './route-tables.mjs';
+import { nextProxyHints } from './next-proxy.mjs';
 
 import path from 'node:path';
 
@@ -96,6 +97,7 @@ const HELPER_VERB = /\b(?:api|http|fetch|request)(Get|Post|Put|Patch|Delete)\w*\
 const HELPER_ARG_VERB = /\b(?:api|http|fetch|request)[A-Z]\w*\s*(?:<[^()]*>)?\s*\(\s*["'`](GET|POST|PUT|PATCH|DELETE|get|post|put|patch|delete)["'`]\s*,/;
 const NAV_CONTEXT = /\b(router\.(push|replace|prefetch)|navigate|redirect|href|revalidatePath|pathname|Link|to=|location\.)\b|window\.location/;
 const STR_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
+const HTTP_RECEIVER = /(?<![\w$.])([A-Za-z_$][\w$]*)\.(?:get|post|put|patch|delete|head|options)\s*(?:<[^>]*>)?\s*\(\s*$/i;
 const IGNORED_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$|\.(test|example|invalid|local|localhost|internal)(:\d+)?$|(^|\.)example\.(com|org|net)$/;
 const FILE_EXT_TAIL = /\.(png|jpe?g|gif|svg|ico|webp|css|js|mjs|ts|tsx|json|html?|txt|md|pdf|csv|xml|woff2?|ttf|map)$/i;
 
@@ -174,7 +176,20 @@ function methodBelow(lines, i) {
   return null;
 }
 
-function extractCalls(src, at, { skip } = {}) {
+function literalReceiver(src, lines, i, lineStart, before, literal, method) {
+  const wrapped = !before.trim();
+  if (!wrapped && !lines[i].startsWith(before)) return null;
+  const lead = wrapped ? lines[i - 1] || '' : before;
+  const match = HTTP_RECEIVER.exec(lead);
+  if (!match) return null;
+  const callStart = lineStart - (wrapped ? lead.length + 1 : 0);
+  // The receiver only proves its base URL when the call has no configuration override.
+  const args = callArgs(src, callStart + lead.trimEnd().length);
+  const maxArgs = /^(POST|PUT|PATCH)$/.test(method) ? 2 : 1;
+  return args?.[0]?.trim() === literal && args.length <= maxArgs ? match[1] : null;
+}
+
+function extractCalls(src, at, { skip, trackReceiver } = {}) {
   const calls = [];
   const hosts = [];
   const lines = src.split('\n');
@@ -197,7 +212,11 @@ function extractCalls(src, at, { skip } = {}) {
       if (!n) continue;
       const lineNo = at(lineStart);
       if (n.host && !IGNORED_HOST.test(n.host) &&!n.host.includes('${') && !n.host.includes('{')) hosts.push({ host: n.host, line: lineNo });
-      if (n.path && !n.host) calls.push({ path: n.path, method, line: lineNo });
+      if (n.path && !n.host) {
+        const receiver = trackReceiver && m[2] === n.path && !n.path.startsWith('//')
+          && literalReceiver(src, lines, i, lineStart, line.slice(0, m.index), m[0], method);
+        calls.push({ path: n.path, method, line: lineNo, ...(receiver ? { receiver } : {}) });
+      }
     }
   }
   return { calls, hosts };
@@ -471,7 +490,7 @@ function extractJs(src, filePath) {
   const routeOnVar = routerVars.size && routes.some((r) => r.var && !ROUTER_NAME.test(r.var))
     ? new RegExp(`(?<![\\w$])(?:${[...routerVars].slice(0, 200).map((v) => v.replace(/\$/g, '\\$')).join('|')})\\.(?:get|post|put|patch|delete|all|options|head)\\(\\s*["'\`]\\/`)
     : null;
-  const { calls, hosts } = extractCalls(code, at, { skip: routeOnVar ? { test: (line) => serverLine.test(line) || routeOnVar.test(line) } : serverLine });
+  const { calls, hosts } = extractCalls(code, at, { trackReceiver: true, skip: routeOnVar ? { test: (line) => serverLine.test(line) || routeOnVar.test(line) } : serverLine });
   // a route object's own `url: '/api/x'` reads like a request (because of `url`), and so can a route listed as
   // data (`"/api/carts": {` in Bun.serve, `fetch: …` beside its path), but each is the route
   if (objectRoutes.length) for (let i = calls.length - 1; i >= 0; i--) {
@@ -491,7 +510,7 @@ function extractJs(src, filePath) {
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
   calls.push(...callables.calls);
   if (/\.functions\s*\.\s*invoke\b/.test(code)) calls.push(...edgeInvokeCalls(code, at));
-  return { imports, symbols, routes, mounts, calls, hosts, ...(routerVars.size ? { routerVars: [...routerVars] } : {}), ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
+  return { imports, symbols, routes, mounts, calls, hosts, ...nextProxyHints(code, imports, filePath), ...(routerVars.size ? { routerVars: [...routerVars] } : {}), ...(triggers.length ? { triggers } : {}), ...(callables.wrappers.length ? { callableWrappers: callables.wrappers } : {}) };
 }
 
 // ---------- Supabase Edge Functions ----------

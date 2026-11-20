@@ -43,9 +43,13 @@
   function showScreen(s) {
     closeMenu();
     const items = s.behind.filter((b) => SC.exists(b.id));
-    // a short walkthrough: the screen → its first request → the server code → where it ends up
+    // A short walkthrough from the screen to the first request and its server.
     const firstOf = (kind) => items.find((b) => b.kind === kind);
-    const steps = [firstOf('screen'), firstOf('request'), firstOf('server'), firstOf('data') || firstOf('outside')].filter(Boolean);
+    const request = firstOf('request');
+    const proxy = request?.via && items.find((b) => b.id === request.via);
+    const route = request && G.routes[Number(request.id.slice(2))];
+    const handler = route && items.find((b) => b.id === 'f:' + route.f);
+    const steps = [firstOf('screen'), request, proxy, handler || firstOf('server'), firstOf('data') || firstOf('outside')].filter(Boolean);
     SC.showBoard({ kind: 'Screen', icon: 'ui', title: s.name, question: 'Everything behind ' + s.url, items, steps: steps.length >= 3 ? steps : [] });
   }
 

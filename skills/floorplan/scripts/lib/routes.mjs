@@ -1,6 +1,7 @@
 // Turn per-file route definitions + mounts into full paths, then match HTTP call literals to them.
 // This is what links a frontend repo to a backend repo when no import connects them.
 import { csRoutePath, csAccess, csAttrNames } from './extract.mjs';
+import { NEXT_CATCH_ALL } from './next-proxy.mjs';
 
 export const routeSegments = (p) => p.split('/').filter(Boolean).map((s) =>
   /^(<[^>]*>|\{[^}]*\}|:\w+|\[\.{0,3}[^\]]*\]|\*{1,2}|\$\{[^}]*\})$/.test(s) || /\$\{|\{[^}]*\}/.test(s) ? '*' : s);
@@ -42,7 +43,7 @@ function exportOf(byPath, file, name, depth = 0) {
     const local = sym.default ? sym.name : name;
     if (sym.kind === 'function' || sym.kind === 'class') return { file, v: '*', kind: 'function' };
     if (t.routerVars?.includes(local)) return { file, v: local, kind: 'router' };
-    return { file, v: '*', kind: 'other' };
+    return { file, v: '*', kind: 'other', local };
   }
   const passed = (t.imports || []).filter((i) => i.reexport && i.files?.length);
   for (const imp of passed) if (imp.exported && Object.hasOwn(imp.exported, name)) return exportOf(byPath, imp.files[0], imp.exported[name], depth + 1);
@@ -459,7 +460,10 @@ export function matchCalls(files, routes) {
     if (new Set(keep.map((h) => h.r.file)).size > 3) continue;
     for (const { r } of keep) out.push({ from: f.path, to: r.file, method: r.method, path: r.path, call: call.path, line: call.line, routeLine: r.line });
   }
-  return dedupe(out, (e) => `${e.from}|${e.to}|${e.method}|${e.path}`);
+  matchNextProxies(files, routes, out);
+  const key = (e) => `${e.from}|${e.to}|${e.method}|${e.path}`;
+  const proxied = new Set(out.filter((e) => e.via).map(key));
+  return dedupe(out, (e) => proxied.has(key(e)) ? `${key(e)}|${e.line}|${e.via?.file ?? ''}` : key(e));
 }
 const dir = (p) => p.split('/').slice(0, -1).join('/');
 // a folder holding one of these is an app or package of its own
@@ -482,6 +486,82 @@ function clientScope(files) {
     }
     return memo.get(key);
   };
+}
+
+function acceptsPath(target, method, parts) {
+  if (target.route.method !== method && target.route.method !== 'ANY') return false;
+  const { segments, rest, route } = target;
+  const optionalRest = rest && route.path.includes('[[...');
+  if (rest ? parts.length < segments.length + Number(!optionalRest) : parts.length !== segments.length) return false;
+  return segments.every((part, i) => part === '*' || part === (route.caseInsensitive ? parts[i]?.toLowerCase() : parts[i]));
+}
+
+/** Add the intermediate Next.js route when the local Axios prefix and forwarding code agree. */
+function matchNextProxies(files, routes, http) {
+  if (!files.some((file) => file.nextProxy)) return;
+  const scope = clientScope(files);
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const binding = (file, local) => {
+    const imp = file.imports?.find((item) => item.files?.length === 1 && Object.hasOwn(item.locals || {}, local));
+    const target = imp && exportOf(byPath, imp.files[0], imp.locals[local]);
+    return target?.local ? { file: byPath.get(target.file), local: target.local } : { file, local };
+  };
+  const clientBase = (file, local) => {
+    const client = binding(file, local);
+    const base = client.file.axiosClients?.get(client.local);
+    if (!base?.config) return base;
+    const config = binding(client.file, base.config);
+    return config.file.axiosEnvConfigs?.has(config.local) ? { env: true } : null;
+  };
+  const localRoutes = new Map(), endpoints = [];
+  for (const route of routes) {
+    const file = byPath.get(route.file);
+    if (!file) continue;
+    const app = scope(file);
+    const rest = NEXT_CATCH_ALL.exec(route.path);
+    const pattern = rest?.[1] ?? route.path;
+    const endpoint = { route, app, rest, segments: routeSegments(route.caseInsensitive ? pattern.toLowerCase() : pattern) };
+    if (!localRoutes.has(app)) localRoutes.set(app, []);
+    localRoutes.get(app).push(endpoint);
+    endpoints.push(endpoint);
+  }
+  const proxies = new Map();
+  for (const file of files) {
+    const proxy = file.nextProxy;
+    if (!proxy || !clientBase(file, proxy.client)?.env) continue;
+    const app = scope(file);
+    const route = localRoutes.get(app)?.find(({ route, rest }) =>
+      route.file === file.path && route.method === 'ANY' && rest?.[1] === proxy.prefix);
+    if (!route) continue;
+    const key = app + '|' + proxy.prefix;
+    if (!proxies.has(key)) proxies.set(key, []);
+    proxies.get(key).push(route);
+  }
+  if (!proxies.size) return;
+  for (const link of http) {
+    // The destination is set at runtime. Infer forwarding only for a unique literal route in the workspace.
+    if (link.call !== link.path || !/^\/(?:[\w.~-]+\/)*[\w.~-]+$/.test(link.path)) continue;
+    const caller = byPath.get(link.from);
+    const call = caller.calls?.find((c) => c.line === link.line && c.path === link.call && c.method === link.method && c.receiver);
+    if (!call) continue;
+    const prefix = clientBase(caller, call.receiver)?.path;
+    if (!prefix) continue;
+    const app = scope(caller);
+    const matches = proxies.get(app + '|' + prefix);
+    if (matches?.length !== 1) continue;
+    const proxy = matches[0];
+    const inbound = prefix + link.path;
+    const segments = routeSegments(inbound);
+    const shadowed = localRoutes.get(app).some((target) => target !== proxy
+      && (!target.rest || target.segments.length >= proxy.segments.length)
+      && acceptsPath(target, link.method, segments));
+    if (shadowed) continue;
+    const destination = routeSegments(link.path);
+    const targets = endpoints.filter((target) => target.app !== app && acceptsPath(target, link.method, destination));
+    if (targets.length === 1 && targets[0].route.file === link.to && targets[0].route.path === link.path) {
+      link.via = { file: proxy.route.file, path: inbound, route: proxy.route.path };
+    }
+  }
 }
 
 // ---------- Laravel: Wayfinder calls and Inertia pages ----------
