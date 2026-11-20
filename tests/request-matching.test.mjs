@@ -94,3 +94,52 @@ test("the method in a call's options, on the lines below its address, is the req
   assert.deepEqual(calls('await fetch("/api/users")\nconst opts = { method: "POST" }\n'), ['null /api/users']);
   assert.deepEqual(calls('await fetch("/api/users", {\n  method: "cors",\n})\n'), ['null /api/users']);
 });
+
+test('a screen follows its access hooks to a proxied request and its handler', (t) => {
+  const page = 'web/src/pages/inventory/index.tsx';
+  const caller = 'web/src/inventory.ts';
+  const proxy = 'web/src/pages/api/relay/[...path].ts';
+  const server = 'api/src/server.ts';
+  const root = makeProject({
+    'web/package.json': JSON.stringify({ dependencies: { next: '^14.0.0' } }),
+    [page]: `import { useAccess } from '../../components/ui/layout/useAccess';
+      import { useRouter } from 'next/router';
+      export default function Inventory() { return useAccess() ? <p>Inventory</p> : null; }`,
+    'web/src/components/ui/layout/useAccess.ts': `import { useGate } from '../../../hooks/useGate';
+      export const useAccess = () => useGate();`,
+    'web/src/hooks/useGate/index.ts': `export * from './useGate';`,
+    'web/src/hooks/useGate/useGate.ts': `import { useAvailability } from '../useAvailability';
+      export const useGate = () => useAvailability();`,
+    'web/src/hooks/useAvailability/index.ts': `export * from './useAvailability';`,
+    'web/src/hooks/useAvailability/useAvailability.ts': `import { getAvailability } from '../../inventory';
+      export const useAvailability = () => getAvailability();`,
+    [caller]: `export const getAvailability = () => fetch('/inventory/availability');
+      export const getCapacity = () => fetch('/inventory/capacity');`,
+    [proxy]: 'export default function handler(req, res) { return forward(req); }',
+    [server]: `import express from 'express';
+      const app = express();
+      app.get('/inventory/availability', (req, res) => res.json(true));
+      app.get('/inventory/capacity', (req, res) => res.json(100));`,
+  }, { repos: ['web', 'api'], arch: {
+    project: { name: 'Inventory', summary: 'A site with inventory.' },
+    nodes: [
+      { id: 'web', label: 'Website', kind: 'ui', paths: ['web/**'] },
+      { id: 'api', label: 'Server', kind: 'service', paths: ['api/**'] },
+    ],
+    edges: [
+      { from: caller, to: proxy, kind: 'http', label: 'GET /api/relay/inventory/availability' },
+      { from: proxy, to: server, kind: 'http', label: 'GET /inventory/availability' },
+    ],
+  } });
+  t.after(() => cleanup(root));
+  scanAndBuild(root);
+  const graph = readGraph(root);
+  const screen = graph.screens.find((s) => s.url === '/inventory');
+  assert.ok(screen, 'the inventory screen is detected');
+  const requests = screen.behind.filter((b) => b.kind === 'request');
+  assert.deepEqual(requests.map((b) => graph.routes[Number(b.id.slice(2))].p), ['/inventory/availability']);
+  assert.equal(requests[0].via, 'f:' + proxy);
+  assert.match(requests[0].note, /GET \/api\/relay\/inventory\/availability/);
+  assert.ok(screen.behind.some((b) => b.id === 'f:' + proxy && b.kind === 'proxy'));
+  assert.ok(screen.behind.some((b) => b.id === 'f:' + server && b.kind === 'server'));
+});

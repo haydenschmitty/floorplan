@@ -352,6 +352,7 @@ function maskNested(s) {
 // ======================= build side =======================
 
 const UI_KIT = /(^|\/)(components\/(ui|common|shared|primitives|base|icons?|layout)|ui|primitives)\//i;
+const HOOK_FILE = /(?:^|\/)use[A-Z][\w]*(?:\/index)?\.[jt]sx?$/;
 const UTILITY = /(^|\/)(utils?|helpers?|constants?|types?|typings|styles?|theme|icons?|config|i18n|locales?)(\/|\.[a-z]+$)|\.d\.ts$|(^|\/)(index|globals?)\.(css|scss)$/i;
 const TESTY = /(^|\/)(tests?|__tests__|spec|e2e|cypress|playwright|__mocks__|fixtures|stories)(\/|$)|\.(test|spec|stories)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.(py|go)$/i;
 const DATA_PATH = /(^|\/)(models?|schemas?|entities|entity|db|database|repositor(y|ies)|dao|tables?|prisma|orm)(\/|\.[a-z]+$|_)/i;
@@ -562,8 +563,9 @@ export function buildScreens({ graph, scan, root }) {
       if (m) m.md = md;
       if (!m) continue;
       seen.set(it.p, m);
-      const noisy = it.p !== page && noiseFront(it.p);
-      if (noisy || m.depth >= 3) continue; // shared building blocks: we only read their calls
+      // Access and data hooks can be declared in the UI kit and reached through re-exports.
+      const hook = HOOK_FILE.test(it.p);
+      if (hook ? m.depth >= 8 : (it.p !== page && noiseFront(it.p)) || m.depth >= 3) continue;
       const text = textOf(it.p, rangesFor(it.p, m.focus));
       for (const u of usedImports(it.p, text, frontOk)) {
         if (u.to === page) continue;
@@ -578,7 +580,8 @@ export function buildScreens({ graph, scan, root }) {
       const ranges = rangesFor(p, v.focus);
       for (const l of out.get('f:' + p) || []) {
         if (l.k !== 'http' || !l.calls) continue;
-        for (const [ri, line] of l.calls) {
+        for (const [endpoint, line, forwardedRoute] of l.calls) {
+          const ri = forwardedRoute ?? endpoint;
           if (ri == null || !routes[ri] || !inRanges(line, ranges)) continue;
           let rank = v.depth + 0.5;
           const sym = v.focus ? symbolAt(p, line) : null;
@@ -586,8 +589,9 @@ export function buildScreens({ graph, scan, root }) {
           if (mem && v.members && !v.members.has(mem) && [...v.members].some((x) => x.startsWith(sym.name + '.'))) continue;
           if (mem && v.md?.has(mem)) rank = v.md.get(mem);
           const prev = reqs.get(ri);
-          if (!prev) reqs.set(ri, { order: order++, from: p, rank });
-          else prev.rank = Math.min(prev.rank, rank);
+          const via = forwardedRoute == null ? null : l.b;
+          if (!prev) reqs.set(ri, { order: order++, from: p, rank, via });
+          else if (rank < prev.rank) { prev.rank = rank; prev.from = p; prev.via = via; }
         }
       }
     }
@@ -666,7 +670,31 @@ export function buildScreens({ graph, scan, root }) {
     const name = (p) => files.get(p)?.name || stemName(p);
     const items = [{ id: 'f:' + page, note: 'The screen itself', kind: 'screen' }];
     for (const c of comps.slice(0, caps.comp)) items.push({ id: 'f:' + c.p, note: frontNote(c.p, c.v.depth, name(c.v.parent || page)), kind: 'part' });
-    for (const ri of shownReqs) items.push({ id: 'r:' + ri, note: routeNote(routes[ri]), kind: 'request' });
+    const addedProxies = new Set();
+    for (const ri of shownReqs) {
+      const r = routes[ri];
+      const target = `${r.m} ${r.p}`;
+      const request = reqs.get(ri);
+      const forwards = (out.get('f:' + request.from) || [])
+        .filter((l) => l.k === 'http' && l.b.startsWith('f:') && l.b !== 'f:' + r.f
+          && (request.via ? l.b === request.via : !l.inferred))
+        .filter((l) => (out.get(l.b) || []).some((next) =>
+          next.k === 'http' && next.b === 'f:' + r.f && (request.via || !next.inferred) && next.labels?.includes(target)))
+        .flatMap((l) => (l.labels || [])
+          .filter((label) => label.startsWith(r.m + ' /') && label.endsWith(r.p))
+          .map((label) => ({ id: l.b, label })));
+      // Show a proxy only when both of its HTTP hops agree on this request.
+      const proxy = forwards.length === 1 ? forwards[0] : null;
+      if (!proxy) {
+        items.push({ id: 'r:' + ri, note: routeNote(r), kind: 'request' });
+        continue;
+      }
+      items.push({ id: 'r:' + ri, note: `The browser sends ${proxy.label}. The proxy forwards ${target}.`, kind: 'request', via: proxy.id });
+      if (!addedProxies.has(proxy.id)) {
+        items.push({ id: proxy.id, note: 'Receives the browser request and forwards it to the server.', kind: 'proxy' });
+        addedProxies.add(proxy.id);
+      }
+    }
     for (const [p, s] of servers.slice(0, caps.server)) {
       const rn = s.routes.map((ri) => routes[ri]?.name).filter(Boolean);
       const first = rn[0] ? `“${rn[0]}”` : 'these requests';

@@ -259,7 +259,14 @@ const addLink = (a, b, k, extra = {}) => {
   if (extra.label) { l.labels = l.labels || []; if (!l.labels.includes(extra.label) && l.labels.length < 40) l.labels.push(extra.label); }
   if (extra.inferred) l.inferred = true;
   if (extra.desc) l.desc = extra.desc;
-  if (extra.route !== undefined) { l.calls = l.calls || []; if (l.calls.length < 80) l.calls.push([extra.route, extra.callLine || 0]); }
+  if (extra.route !== undefined) {
+    l.calls ||= [];
+    if (l.calls.length < 80) {
+      const call = [extra.route, extra.callLine || 0];
+      if (extra.forwardedRoute !== undefined) call.push(extra.forwardedRoute);
+      l.calls.push(call);
+    }
+  }
 };
 
 // ---------- routes ----------
@@ -268,7 +275,17 @@ const routesIn = scan.routes.filter((r) => includedSet.has(r.file));
 routesIn.forEach((r, i) => routeIdx.set(`${r.file}|${r.method}|${r.path}`, i));
 
 for (const e of scan.edges) if (includedSet.has(e.from) && includedSet.has(e.to)) addLink(`f:${e.from}`, `f:${e.to}`, 'import', { w: e.count || 1, names: e.names });
-for (const h of scan.http) if (includedSet.has(h.from) && includedSet.has(h.to)) addLink(`f:${h.from}`, `f:${h.to}`, 'http', { label: `${h.method} ${h.path}`, inferred: true, route: routeIdx.get(`${h.to}|${h.method}|${h.path}`), callLine: h.line });
+for (const h of scan.http) {
+  if (!includedSet.has(h.from) || !includedSet.has(h.to)) continue;
+  const route = routeIdx.get(`${h.to}|${h.method}|${h.path}`);
+  const via = h.via && includedSet.has(h.via.file) ? h.via : null;
+  addLink(`f:${h.from}`, `f:${via?.file ?? h.to}`, 'http', {
+    label: `${h.method} ${via?.path ?? h.path}`, inferred: true, callLine: h.line,
+    route: via ? routeIdx.get(`${via.file}|ANY|${via.route}`) : route,
+    forwardedRoute: via ? route : undefined,
+  });
+  if (via) addLink(`f:${via.file}`, `f:${h.to}`, 'http', { label: `${h.method} ${h.path}`, inferred: true, route });
+}
 
 // externals: packages / hosts claimed by nodes
 const extIds = scan.externals.map((e) => e.id);
