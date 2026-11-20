@@ -126,12 +126,14 @@ export const EDITOR_PRESETS = {
   vscodium: 'vscodium://file/{path}:{line}',
   cursor: 'cursor://file/{path}:{line}',
   windsurf: 'windsurf://file/{path}:{line}',
+  antigravity: 'antigravity://file/{path}:{line}',
+  'antigravity-ide': 'antigravity-ide://file/{path}:{line}',
   zed: 'zed://file/{path}:{line}',
   // JetBrains IDEs answer these where they register their link (IntelliJ IDEA and PhpStorm on macOS, or with Toolbox)
   idea: 'idea://open?file={path}&line={line}',
   phpstorm: 'phpstorm://open?file={path}&line={line}',
 };
-export const EDITOR_SCHEMES = ['vscode', 'vscode-insiders', 'vscodium', 'cursor', 'windsurf', 'zed', 'idea', 'phpstorm', 'pycharm', 'webstorm', 'goland', 'rubymine', 'clion', 'rider', 'txmt', 'mvim', 'subl'];
+export const EDITOR_SCHEMES = ['vscode', 'vscode-insiders', 'vscodium', 'cursor', 'windsurf', 'antigravity', 'antigravity-ide', 'zed', 'idea', 'phpstorm', 'pycharm', 'webstorm', 'goland', 'rubymine', 'clion', 'rider', 'txmt', 'mvim', 'subl'];
 export const EDITOR_DEFAULT = EDITOR_PRESETS.vscode;
 // characters that could end an attribute or a link: quotes, angle brackets, the backtick and the backslash
 const LINK_BREAKERS = ['"', "'", '<', '>', '`', String.fromCharCode(92)];

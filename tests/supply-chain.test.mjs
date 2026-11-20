@@ -45,6 +45,7 @@ test('the plugin is only a skill: no hooks, MCP servers or commands that run on 
   // documentationUrl, privacyPolicyUrl and supportUrl are only links, shown on the Claude plugin directory listing
   assert.deepEqual(Object.keys(json('.claude-plugin/plugin.json')).sort(), ['author', 'description', 'documentationUrl', 'homepage', 'keywords', 'license', 'name', 'privacyPolicyUrl', 'repository', 'supportUrl', 'version'], `Claude Code manifest: nothing beyond the skill. ${UPDATE}`);
   assert.deepEqual(Object.keys(json('.codex-plugin/plugin.json')).sort(), ['author', 'description', 'homepage', 'interface', 'keywords', 'license', 'name', 'repository', 'requires_local_executor', 'skills', 'version'], `Codex manifest: nothing beyond the skill. ${UPDATE}`);
+  assert.deepEqual(Object.keys(json('.antigravity-plugin/plugin.json')).sort(), ['author', 'category', 'description', 'displayName', 'homepage', 'keywords', 'license', 'logo', 'name', 'repository', 'suggestedPrompts', 'version'], `Antigravity manifest: nothing beyond the skill. ${UPDATE}`);
   assert.equal(json('.codex-plugin/plugin.json').skills, './skills/');
   // both marketplaces install from this repo itself, never from somewhere else
   assert.deepEqual(json('.claude-plugin/marketplace.json').plugins.map((p) => p.source), ['./']);

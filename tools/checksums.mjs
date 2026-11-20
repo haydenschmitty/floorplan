@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // what the plugin runs from: the skill, the plugin manifests and the marketplaces that point at them
-const PARTS = ['skills', '.claude-plugin', '.codex-plugin', '.agents', 'package.json'];
+const PARTS = ['skills', '.claude-plugin', '.codex-plugin', '.antigravity-plugin', '.agents', 'package.json'];
 const li = process.argv.indexOf('--list');
 const OUT = li > 0 ? path.resolve(process.argv[li + 1]) : path.join(REPO, 'CHECKSUMS.txt');
 

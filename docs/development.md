@@ -12,15 +12,18 @@
   icon.png
 .agents/plugins/
   marketplace.json     this repo as a Codex marketplace
+.antigravity-plugin/
+  plugin.json          the same plugin for Antigravity (same skill, same version)
 skills/floorplan/
-  SKILL.md             the workflow Claude and Codex follow
+  SKILL.md             the workflow Claude, Codex and Antigravity follow
   agents/openai.yaml   how Codex lists the skill
   workflow.json        the same steps as SKILL.md, as data, for running without an agent session
-  references/          formats and style guides Claude reads while working
+  references/          formats and style guides the agent reads while working
     schema.md                architecture.json and recent-work.json
     choosing-boundaries.md   how to carve a codebase into a good map
     writing-descriptions.md  plain-language names and descriptions
     blueprint.md             plan.json, for a map planned from a PRD
+    framework-notes.md       framework-specific endpoint and theme matching notes
   scripts/             Node.js, no dependencies; Claude runs these
     status.mjs     is there a map, and how stale is it (runs when the skill loads)
     scan.mjs       repos, files, imports, endpoints, requests → .cache/scan.json
@@ -35,7 +38,7 @@ skills/floorplan/
     viewer.html    the map (template the build fills in)
     ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
-    serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
+    serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code, Codex or Antigravity
     page-safety.mjs  the one way data and code go into a page's <script> blocks, and its Content-Security-Policy
                    (used by build.mjs, and copied next to serve.mjs)
     query-cli.mjs  becomes floorplan/query.mjs
@@ -58,7 +61,7 @@ claude plugin install floorplan@floorplan
 
 A plugin installed from a local folder runs straight from it, so edits apply in the next session with no update step.
 
-To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
+To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. To try it in Antigravity, see [Floorplan in Antigravity](antigravity.md#install). `--agent claude|codex|antigravity|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex|antigravity` on serve.mjs let you try any agent's map from anywhere.
 
 The scripts also run on their own, which is the fastest way to work on them:
 
@@ -125,11 +128,11 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `editor-links.test.mjs` | **Open in editor**: VS Code by default, an editor named or linked in `architecture.json` or on the map's server, paths encoded so they can't break the link, and every setting that isn't an editor's own scheme (scripts, data, web and `file:` links, quotes) refused by the build and the server and ignored by the page |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
-| `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
-| `agents.test.mjs` | telling Claude Code from Codex, what a map built by each records and writes, and the name open.mjs gives the program that answers questions (another program answering to the `claude` command is named as itself) |
+| `ask.test.mjs` | asking through Claude Code, Codex or Antigravity: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
+| `agents.test.mjs` | telling Claude Code, Codex and Antigravity apart, what a map built by each records and writes, and the name open.mjs gives the program that answers questions (another program answering to the `claude` command is named as itself) |
 | `unattended.test.mjs` | running without an agent session: a small driver follows `workflow.json` through a first map and a refresh with canned answers, using only `--json` and exit codes; the optional plain-language step (reworded, left alone, rejected for changing more than wording, or failed, with the map completing every time); nothing written outside `floorplan/`, a map that names no agent, git failures that fail loudly, the workflow file's names and schemas, `maskSecrets` as a stable export, and no change without unattended mode |
 | `read-only-install.test.mjs` | a skill whose files are read-only builds a map twice, and the files it puts next to the map stay writable, including over read-only ones an earlier version left (skips itself where read-only doesn't stop the user writing) |
-| `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
+| `release.test.mjs` | the version agrees across all three plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |
 | `sandboxed.test.mjs` | a map whose browser refuses storage, the clipboard or new windows (a sandboxed frame, strict settings): settings kept in memory for the visit, no tour on its own, `#tour=0`, "Copied" only when it was, the address shown when a window is blocked, and nothing changed where storage works (the page's own code run against a pretend browser, not a real frame) |
@@ -147,7 +150,7 @@ Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order
 - `modal`, `toast`, `store` (settings for this browser; `store.persistent` is false when the browser won't keep them past this visit, and they're held in memory instead);
 - `copy(text)`, which resolves true only when the text was really copied and otherwise shows it to copy by hand, and `openWindow(url)`, which shows the address when the browser blocks a new window. Use these rather than `navigator.clipboard` or `window.open`, so the map behaves in a sandboxed frame too;
 - events (`on('ready' | 'render' | 'panel' | 'technical')`);
-- `exported`, set in an exported copy: leave out anything there that needs Claude, Codex or the map's server.
+- `exported`, set in an exported copy: leave out anything there that needs Claude, Codex, Antigravity or the map's server.
 
 `20-health.js` and `25-recent.js` are good examples.
 
@@ -201,7 +204,7 @@ An engine must be read-only in a way its CLI enforces, not only because the prom
    npm test
    claude plugin validate . --profile directory
    ```
-2. Bump `version` in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`, and the version badge in `README.md`.
+2. Bump `version` in `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` and `.antigravity-plugin/plugin.json`, and the version badge in `README.md`.
 3. Rename `## Unreleased` in `CHANGELOG.md` to `## X.Y.Z (YYYY-MM-DD)`.
 4. Write the release's fingerprints, after the version bump:
    ```bash

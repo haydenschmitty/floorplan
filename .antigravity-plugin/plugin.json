@@ -1,0 +1,29 @@
+{
+  "name": "floorplan",
+  "displayName": "Floorplan",
+  "version": "0.11.0",
+  "description": "See how your app actually fits together: an interactive map of your codebase where every part, file and web request has a plain-English name and description, with a health check, screens, guided flows, questions answered on the map, and highlights of what was just worked on.",
+  "author": {
+    "name": "Hayden Smith",
+    "url": "https://github.com/haydenschmitty"
+  },
+  "homepage": "https://github.com/haydenschmitty/floorplan",
+  "repository": "https://github.com/haydenschmitty/floorplan",
+  "license": "MIT",
+  "category": "Developer Tools",
+  "logo": "skills/floorplan/assets/logo.png",
+  "suggestedPrompts": [
+    "Draw a floorplan of this codebase",
+    "Update the floorplan with what we just changed",
+    "Show me how the frontend talks to the backend"
+  ],
+  "keywords": [
+    "codebase",
+    "architecture",
+    "map",
+    "visualization",
+    "onboarding",
+    "diagram",
+    "documentation"
+  ]
+}

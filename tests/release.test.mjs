@@ -29,6 +29,14 @@ test('the Codex plugin matches the Claude Code plugin and points at the same ski
   for (const k of ['composerIcon', 'logo']) assert.ok(fs.existsSync(path.join(REPO, codex.interface[k])), `${k}: ${codex.interface[k]}`);
 });
 
+test('the Antigravity plugin matches the Claude Code plugin and points at a valid logo', () => {
+  const agy = readJson(path.join(REPO, '.antigravity-plugin', 'plugin.json'));
+  assert.equal(agy.name, plugin.name);
+  assert.equal(agy.version, plugin.version, '.antigravity-plugin/plugin.json version');
+  assert.ok(fs.existsSync(path.join(REPO, agy.logo)), `logo: ${agy.logo}`);
+  assert.ok(fs.existsSync(path.join(REPO, 'skills', plugin.name, 'SKILL.md')));
+});
+
 test('the Codex marketplace lists this plugin, from this repo', () => {
   const codexMarket = readJson(path.join(REPO, '.agents', 'plugins', 'marketplace.json'));
   const entry = codexMarket.plugins.find((p) => p.name === plugin.name);

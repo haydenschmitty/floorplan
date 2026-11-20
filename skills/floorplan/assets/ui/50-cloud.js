@@ -69,7 +69,7 @@
     view(`<div class="ce">Floorplan Cloud</div><h3>Where should we email you?</h3>
       <input type="email" placeholder="you@example.com" autocomplete="email" spellcheck="false" maxlength="254">
       <div class="cm"></div>
-      <div class="ca"><button class="btn primary" data-send>Notify me</button>${S.cli && S.engine !== 'codex' ? '<button class="btn soft" data-claude>Use my Claude email</button>' : ''}</div>
+      <div class="ca"><button class="btn primary" data-send>Notify me</button>${S.cli && S.engine === 'claude' ? '<button class="btn soft" data-claude>Use my Claude email</button>' : ''}</div>
       <div class="cf">Only this email and your answer (${answer.use === 'team' ? 'with my team' : 'just me'}) are sent, to a private Google Sheet kept by Floorplan's maker. It's used only to tell you when Floorplan Cloud launches. <a href="${PRIVACY}" target="_blank" rel="noopener">Details</a></div>`,
     (el) => {
       const input = el.querySelector('input'), msg = el.querySelector('.cm'), send = el.querySelector('[data-send]');

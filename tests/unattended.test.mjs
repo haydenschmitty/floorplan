@@ -515,6 +515,7 @@ test('a map made in unattended mode records agent "none", and its page names no 
     // and maps made by Claude Code or Codex are labelled as before
     assert.equal(agentLabels(html, { agent: 'claude' }).name, 'Claude');
     assert.equal(agentLabels(html, { agent: 'codex' }).name, 'Codex');
+    assert.equal(agentLabels(html, { agent: 'antigravity' }).name, 'Antigravity');
   } finally { cleanup(p); }
 });
 
@@ -523,6 +524,7 @@ test('FLOORPLAN_AGENT=none works on its own, and unattended mode implies it unle
   assert.equal(detectAgent({}, { FLOORPLAN_AGENT: 'none' }), 'none');
   assert.equal(detectAgent({}, { FLOORPLAN_UNATTENDED: '1' }), 'none');
   assert.equal(detectAgent({}, { FLOORPLAN_UNATTENDED: '1', CODEX_THREAD_ID: 'x' }), 'none');
+  assert.equal(detectAgent({}, { FLOORPLAN_UNATTENDED: '1', ANTIGRAVITY_AGENT: '1' }), 'none');
   assert.equal(detectAgent({ agent: 'codex' }, { FLOORPLAN_UNATTENDED: '1' }), 'codex');
   assert.equal(detectAgent({}, { FLOORPLAN_UNATTENDED: '0' }), 'claude', 'only a yes switches it on');
   const p = shopApp();

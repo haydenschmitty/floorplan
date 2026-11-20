@@ -9,10 +9,11 @@
 
 **See how your app actually fits together.**
 
-Claude or Codex reads your codebase and draws an interactive map of it. Every part, file and web request gets a plain-English name, and every connection between them is shown.
+Claude, Codex, or Antigravity reads your codebase and draws an interactive map of it. Every part, file and web request gets a plain-English name, and every connection between them is shown.
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
+[![Antigravity plugin](https://img.shields.io/badge/Antigravity-plugin-4285F4?style=flat-square)](docs/antigravity.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/haydenschmitty/floorplan/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/haydenschmitty/floorplan/actions/workflows/test.yml)
 [![Version](https://img.shields.io/badge/version-0.11.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
@@ -51,7 +52,7 @@ All three turn code into something you can see, and all three are worth knowing.
 | **Made for** | People who build with AI and don't read the code | Anyone explaining a system, a process or an idea | Developers getting to know a large codebase |
 | **What you get** | A zoomable map of your whole app: parts, files and endpoints, the screens, the requests between frontend and backend (even across repos), and outside services | A polished diagram in one of 10 types (architecture, sequence, ERD…) or a one-page explainer, from a repo or just a description | A knowledge graph of every file, function and class, with layers, a business-domain view and guided tours |
 | **Only here** | **Health check** (keys in code, open Supabase tables and Firebase rules, fakeable Stripe webhooks, endpoints anyone can use), **Recent work** (what your AI just changed, and why), blueprints from a PRD | 10 diagram types, image and video exports, diagrams of things that aren't code | Diff impact, a dashboard that adapts to your role, knowledge-base graphs |
-| **Runs in** | Claude Code, Codex | Claude Code, Codex, Cursor, OpenCode and more | Claude Code, Codex, Cursor, Copilot, Gemini CLI and more |
+| **Runs in** | Claude Code, Codex, Antigravity | Claude Code, Codex, Cursor, OpenCode and more | Claude Code, Codex, Cursor, Copilot, Gemini CLI and more |
 
 **Pick Floorplan** to understand and check an app you own. **Pick Archify** to draw a diagram for a doc, a talk or a decision. **Pick Understand Anything** to study a large codebase function by function.
 
@@ -163,7 +164,7 @@ Want to click around yourself? Open the [live demo](https://haydenschmitty.githu
 
 ## Install
 
-You need [Node.js 18+](https://nodejs.org) and either Claude Code or Codex. Floorplan runs on the plan you already have, with no API keys.
+You need [Node.js 18+](https://nodejs.org) and Claude Code, Codex, or Antigravity. Floorplan runs on the plan you already have, with no API keys.
 
 ### Claude Code
 
@@ -192,6 +193,16 @@ codex plugin add floorplan@floorplan
 ```
 
 Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask bar runs on your own Codex sign-in, with no API key. More in [Floorplan in Codex](docs/codex.md).
+
+### Antigravity
+
+From a terminal, install the plugin directory with `agy`:
+
+```bash
+agy plugin install /path/to/floorplan
+```
+
+Start a session in your project folder and ask for a floorplan in plain words ("Draw a floorplan of this codebase"). The map's Ask bar runs through `agy`, and **Open in editor** supports `--editor antigravity` and `--editor antigravity-ide`. More in [Floorplan in Antigravity](docs/antigravity.md).
 
 ## Quick start
 
