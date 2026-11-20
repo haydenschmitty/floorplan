@@ -272,7 +272,16 @@ export function discover(root, { includeWorktrees = false, maxLooseFiles = 5000 
     if (entries.filter((e) => e.isFile()).length > 500) { skipped.push({ path: rel(root, dir), reason: 'over 500 files outside git (data dump?)' }); return; }
     for (const e of entries) {
       const abs = path.join(dir, e.name);
-      if (e.isSymbolicLink()) continue;
+      if (e.isSymbolicLink()) {
+        // Never follow links: a linked tree can cycle back into this root or duplicate another repo.
+        // Still name linked repositories so the agent knows why an expected app is absent from its map.
+        try {
+          if (fs.statSync(abs).isDirectory() && fs.existsSync(path.join(abs, '.git'))) {
+            skipped.push({ path: rel(root, abs), reason: 'symlinked git repository (not scanned)' });
+          }
+        } catch {}
+        continue;
+      }
       if (e.isDirectory()) {
         if (WALK_IGNORE_DIRS.has(e.name) || (e.name.startsWith('.') && e.name !== '.github')) {
           if (!['.git', 'node_modules', '__pycache__'].includes(e.name)) skipped.push({ path: rel(root, abs), reason: 'ignored directory' });
