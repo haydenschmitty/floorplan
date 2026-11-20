@@ -17,7 +17,7 @@ async function serve(env) {
   const log = path.join(root, `fake-${servers.length}.log`);
   const port = 20000 + Math.floor(Math.random() * 20000);
   const server = spawn(process.execPath, [path.join(root, 'floorplan', 'serve.mjs'), '--port', String(port), '--no-open'], {
-    cwd: root, env: { ...process.env, FLOORPLAN_NO_PROMPTS: '1', FLOORPLAN_ENGINE: '', FAKE_LOG: log, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: { ...process.env, FLOORPLAN_NO_PROMPTS: '1', FLOORPLAN_ENGINE: '', FLOORPLAN_ANTIGRAVITY: path.join(root, 'no-such-cli'), FAKE_LOG: log, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   servers.push(server);
   const base = await new Promise((resolve, reject) => {
@@ -160,4 +160,35 @@ test('on Windows, a Claude Code npm install with only bin/claude.exe is found an
   const s = await serve({ FLOORPLAN_CLAUDE: path.join(npm, 'claude'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli') });
   assert.equal(s.page.engine, 'claude');
   assert.equal(s.page.version, process.version);
+});
+
+test('with Antigravity CLI installed, questions run through agy, stream progress, and follow-ups resume via --conversation', async () => {
+  const s = await serve({
+    FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'),
+    FLOORPLAN_CODEX: path.join(root, 'no-such-cli'),
+    FLOORPLAN_ANTIGRAVITY: path.join(FAKE, 'fake-agy.mjs'),
+  });
+  assert.equal(s.page.engine, 'antigravity');
+  assert.equal(s.page.cli, true);
+
+  const events = await ask(s, 'How do refunds work?');
+  assert.deepEqual(pick(events, 'progress').map((p) => p.text), ['Searching the map for "refund"', 'Reading shop-api/routes/orders.js']);
+  const [answer] = pick(events, 'answer');
+  assert.equal(answer.title, 'Refunds');
+  assert.deepEqual(answer.items.map((i) => i.id), ['f:shop-api/routes/orders.js']);
+  assert.equal(answer.session, 'agy-test-conv');
+
+  await ask(s, 'Who can ask for one?', answer.session);
+  const [first, second] = s.calls();
+  assert.ok(first.args.includes('--sandbox'));
+  assert.ok(first.args.includes('--disable-slash-commands'));
+  assert.equal(first.args[first.args.indexOf('--output-format') + 1], 'stream-json');
+  assert.ok(first.args.includes('--json-schema'));
+  assert.match(first.prompt, /How do refunds work\?/);
+  assert.match(first.prompt, /node floorplan\/query\.mjs/);
+  assert.equal(second.args[second.args.indexOf('--conversation') + 1], 'agy-test-conv');
+  assert.equal(second.prompt, 'Who can ask for one?');
+
+  const [failure] = pick(await ask(s, 'SIGNED-OUT question'), 'failure');
+  assert.equal(failure.code, 'not_logged_in');
 });

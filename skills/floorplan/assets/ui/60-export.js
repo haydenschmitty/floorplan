@@ -56,7 +56,7 @@
       SC.toast(`Downloaded ${name}`);
     } catch (e) {
       err.hidden = false;
-      err.textContent = e.message === 'Failed to fetch' ? 'Couldn’t reach the map’s server. Ask Claude or Codex to open the floorplan again, then try again.' : e.message;
+      err.textContent = e.message === 'Failed to fetch' ? 'Couldn’t reach the map’s server. Ask Claude Code, Codex or Antigravity to open the floorplan again, then try again.' : e.message;
     }
   }
 
@@ -64,7 +64,7 @@
     if (!S) {
       SC.modal({
         title: 'Export a copy',
-        html: `<p>Exporting needs the map’s server. Ask Claude or Codex to “export the floorplan”, or run this in the project folder:</p><pre>${h(CMD)}</pre>`,
+        html: `<p>Exporting needs the map’s server. Ask Claude Code, Codex or Antigravity to “export the floorplan”, or run this in the project folder:</p><pre>${h(CMD)}</pre>`,
         actions: [{ label: 'Copy command', primary: true, icon: 'copy', onClick: () => { SC.copy(CMD).then((ok) => { if (ok) SC.toast('Copied'); }); } }],
       });
       return;

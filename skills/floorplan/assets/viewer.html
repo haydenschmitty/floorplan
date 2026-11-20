@@ -626,8 +626,11 @@ const AGENT_ID = window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.wan
 const AGENT = AGENT_ID === 'codex'
   ? { id: 'codex', name: 'Codex', app: 'Codex', cli: 'Codex', docs: 'https://developers.openai.com/codex',
       signIn: 'Open the Codex app (or run <code>codex login</code> in a terminal) to sign in, then ask again.' }
+  : AGENT_ID === 'antigravity'
+  ? { id: 'antigravity', name: 'Antigravity', app: 'Antigravity', cli: 'Antigravity CLI', docs: 'https://antigravity.google',
+      signIn: 'Sign in to Antigravity (or run <code>agy</code> in a terminal), then ask again.' }
   : AGENT_ID === 'none'
-  ? { id: 'none', name: 'AI', app: 'your AI coding agent', cli: 'the Claude Code CLI or Codex', docs: 'https://github.com/haydenschmitty/floorplan#install',
+  ? { id: 'none', name: 'AI', app: 'your AI coding agent', cli: 'the Claude Code CLI, Codex or Antigravity CLI', docs: 'https://github.com/haydenschmitty/floorplan#install',
       signIn: 'Sign in to it in a terminal, then ask again.' }
   : { id: 'claude', name: 'Claude', app: 'Claude Code', cli: 'the Claude Code CLI', docs: 'https://docs.claude.com/en/docs/claude-code/overview',
       signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
@@ -1598,7 +1601,7 @@ function renderLegend(view) {
 // "editor", else VS Code. {path} is the file's full path, {line} its line and {column} 1. Both were checked when they
 // were set (editorTemplate in page-safety.mjs); they're checked again here, against the same list of schemes, so text
 // in the page can never make this a script, data or web link.
-const EDITOR_SCHEMES = ['vscode', 'vscode-insiders', 'vscodium', 'cursor', 'windsurf', 'zed', 'idea', 'phpstorm', 'pycharm', 'webstorm', 'goland', 'rubymine', 'clion', 'rider', 'txmt', 'mvim', 'subl'];
+const EDITOR_SCHEMES = ['vscode', 'vscode-insiders', 'vscodium', 'cursor', 'windsurf', 'antigravity', 'antigravity-ide', 'zed', 'idea', 'phpstorm', 'pycharm', 'webstorm', 'goland', 'rubymine', 'clion', 'rider', 'txmt', 'mvim', 'subl'];
 const LINK_BREAKERS = ['"', "'", '<', '>', '`', String.fromCharCode(92)];
 const editorLink = (t) => typeof t === 'string' && t.length <= 300 && t.includes('{path}')
   && EDITOR_SCHEMES.includes((/^([a-z][a-z0-9+.-]*):/i.exec(t)?.[1] || '').toLowerCase())
@@ -1756,7 +1759,7 @@ function itemPanel(item, viaConnector) {
   } else if (i.type === 'file' || i.type === 'module') {
     const f = i.f, fid = 'f:' + f.p, url = editorUrl(f.p);
     if (f.note) html += `<div class="callout">${h(f.note)}</div>`;
-    if (f.tooLarge) html += `<div class="callout">Too big for Floorplan to read, so what it uses, its endpoints and any secrets in it weren’t checked. Ask Claude or Codex to update the floorplan with a bigger file limit to include it.</div>`;
+    if (f.tooLarge) html += `<div class="callout">Too big for Floorplan to read, so what it uses, its endpoints and any secrets in it weren’t checked. Ask Claude Code, Codex or Antigravity to update the floorplan with a bigger file limit to include it.</div>`;
     html += pathBox(f.p);
     if (url) actions.push(`<a class="btn soft" href="${hk(url)}">${iconI('open')}Open in editor</a>`);
     if (actions.length) html += `<div class="actions">${actions.join('')}</div>`;
@@ -2307,7 +2310,7 @@ if (EXPORTED) {
   const tag = document.createElement('span');
   tag.className = 'xtag';
   tag.textContent = isNaN(at) ? 'Exported copy' : `Exported ${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
-  tag.title = 'A copy of this map to look around in. Asking questions needs Floorplan with Claude Code or Codex, in the codebase itself.';
+  tag.title = 'A copy of this map to look around in. Asking questions needs Floorplan with Claude Code, Codex or Antigravity, in the codebase itself.';
   $('#proj-name').after(tag);
   // whoever receives a copy can find where it came from
   const made = document.createElement('a');

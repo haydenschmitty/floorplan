@@ -49,7 +49,9 @@ test('editor settings: named editors and link templates in an editor\'s scheme a
   assert.equal(editorTemplate('cursor').template, 'cursor://file/{path}:{line}');
   assert.equal(editorTemplate(' Zed ').template, EDITOR_PRESETS.zed);
   assert.equal(editorTemplate('idea').template, 'idea://open?file={path}&line={line}');
-  for (const name of ['vscode', 'vscode-insiders', 'vscodium', 'windsurf', 'phpstorm']) assert.ok(editorTemplate(name).template, name);
+  for (const name of ['vscode', 'vscode-insiders', 'vscodium', 'windsurf', 'antigravity', 'antigravity-ide', 'phpstorm']) assert.ok(editorTemplate(name).template, name);
+  assert.equal(editorTemplate('antigravity').template, 'antigravity://file/{path}:{line}');
+  assert.equal(editorTemplate('antigravity-ide').template, 'antigravity-ide://file/{path}:{line}');
   assert.equal(editorTemplate('zed://file/{path}:{line}:{column}').template, 'zed://file/{path}:{line}:{column}');
   assert.equal(editorTemplate('CURSOR://file/{path}').template, 'CURSOR://file/{path}');
   // near miss: "file://" inside an editor's own link is fine, it's the editor that reads it
@@ -150,7 +152,7 @@ test('the page and page-safety.mjs allow the same editor schemes', () => {
 function serve(root, args = [], env = {}) {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const s = spawn(process.execPath, [path.join(root, 'floorplan', 'serve.mjs'), '--port', String(port), '--no-open', ...args], {
-    cwd: root, env: { ...process.env, FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_NO_PROMPTS: '1', FLOORPLAN_EDITOR: '', ...env }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: { ...process.env, FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_ANTIGRAVITY: path.join(root, 'no-such-cli'), FLOORPLAN_NO_PROMPTS: '1', FLOORPLAN_EDITOR: '', ...env }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   servers.push(s);
   return new Promise((resolve, reject) => {
