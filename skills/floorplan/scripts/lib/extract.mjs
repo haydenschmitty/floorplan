@@ -754,7 +754,8 @@ function extractPy(src) {
 
   const routes = [];
   const routers = {};
-  for (const m of all(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:\w+\.)?(Blueprint|APIRouter|Router)\(([^)]{0,2000})\)/gm, code)) {
+  // with or without a type annotation, under a module name or two: `api: APIRouter = fastapi.routing.APIRouter()`
+  for (const m of all(/^[ \t]*([A-Za-z_]\w*)\s*(?::[^=\n]{1,200}?)?=\s*(?:\w+\.){0,4}(Blueprint|APIRouter|Router)\(([^)]{0,2000})\)/gm, code)) {
     routers[m[1]] = /(?:url_)?prefix\s*=\s*["']([^"']*)["']/.exec(m[3])?.[1] || '';
   }
   for (const m of all(/^[ \t]*@([A-Za-z_]\w*)\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[rf]?["']([^"']*)["']([^\n]*)/gm, code)) {
