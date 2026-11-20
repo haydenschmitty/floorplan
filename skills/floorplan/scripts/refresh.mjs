@@ -4,7 +4,10 @@
 // (renames carried over, deleted entries removed, entries whose exports/routes changed flagged
 // with "review"), rebuilds, and reports exactly what is left for Claude to look at.
 //
-// usage: node refresh.mjs [root] [--from-code] [--json] [--unattended]
+// usage: node refresh.mjs [root] [--from-code] [--max-file-kb 2048] [--json] [--unattended]
+//
+// --max-file-kb is handed to the re-scan: give the same limit the map was scanned with, or files over the
+// default limit are no longer read.
 //
 // --json prints one JSON object (floorplan/refresh-result@1): the change counts, the build's own --json
 // result, and NEXT as items with stable codes. In unattended mode (FLOORPLAN_UNATTENDED=1 or --unattended)
@@ -64,7 +67,9 @@ if (old.meta?.blueprint && !args['from-code']) {
 // ---------- 1. re-scan (no tokens) ----------
 let scanResult = null;
 try {
-  scanResult = JSON.parse(execFileSync(node, [path.join(HERE, 'scan.mjs'), root, '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
+  // the size limit the map was scanned with, or files over the default one stop being read on every refresh
+  const sizeLimit = args['max-file-kb'] ? ['--max-file-kb', String(args['max-file-kb'])] : [];
+  scanResult = JSON.parse(execFileSync(node, [path.join(HERE, 'scan.mjs'), root, ...sizeLimit, '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
 } catch (e) {
   // only unattended mode fails a scan on purpose (a repo git can't list, or no files at all)
   let failed = null;

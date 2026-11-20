@@ -43,6 +43,14 @@ test('Health lists it as a large file and says it was not checked', () => {
   assert.match(big.notes['f:app/rules.py'], /^1,500 lines: too big for Floorplan to read/);
 });
 
+test('a refresh scans with the limit it is given, not the default', () => {
+  // A refresh that dropped --max-file-kb scanned at the 2 MB default, so a file a map was built to read with a
+  // bigger limit lost its imports and endpoints again. Here the limit is smaller, so the default would read it.
+  run('refresh.mjs', root, '--max-file-kb', '8');
+  assert.equal(readJson(path.join(root, 'floorplan', '.cache', 'scan.json')).files.find((x) => x.path === 'app/rules.py').tooLarge, true);
+  assert.equal(readGraph(root).files.find((x) => x.p === 'app/rules.py').tooLarge, true);
+});
+
 test('the default limit reads a file over the old 512 KB limit', () => {
   const r = makeProject({ 'app/main.py': 'x = 1\n'.repeat(110000) });
   try {
