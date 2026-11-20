@@ -2,17 +2,19 @@
 
 Prefer to watch? The [walkthrough video](https://youtu.be/NTUUzC7L_NQ) covers installing Floorplan and touring a finished map.
 
-Floorplan works in **Claude Code** and in **Codex**. Making and using a map is the same in both; only installing differs. This guide shows Claude Code, and [Floorplan in Codex](codex.md) has the Codex steps.
+Floorplan works in **Claude Code**, in **Codex** and in **OpenCode**. Making and using a map is the same in all three; only installing differs. This guide shows Claude Code, [Floorplan in Codex](codex.md) has the Codex steps and [Floorplan in OpenCode](opencode.md) the OpenCode steps.
 
 ## What you need
 
-- **Claude Code** (the Code tab in the Claude desktop app, or the Claude Code CLI in a terminal), or **Codex** (the app or the CLI, signed in with ChatGPT).
+- **Claude Code** (the Code tab in the Claude desktop app, or the Claude Code CLI in a terminal), **Codex** (the app or the CLI, signed in with ChatGPT), or **OpenCode** (with a provider connected).
 - **[Node.js](https://nodejs.org) 18 or newer.** Floorplan's scripts run on it. Check with `node --version`.
-- **With Claude Code, recommended: the [Claude Code CLI](https://code.claude.com/docs/en/overview)**, even if you mainly use the desktop app. With it, the map's Ask bar can read your actual code when answering questions. Codex needs nothing extra: its app includes what the Ask bar uses.
+- **With Claude Code, recommended: the [Claude Code CLI](https://code.claude.com/docs/en/overview)**, even if you mainly use the desktop app. With it, the map's Ask bar can read your actual code when answering questions. Codex and OpenCode need nothing extra: their CLIs include what the Ask bar uses.
 
 ## Install
 
 **In Codex**, open **Plugins → Add a marketplace**, enter `haydenschmitty/floorplan`, and install Floorplan. Details in [Floorplan in Codex](codex.md#install).
+
+**In OpenCode**, add the skill's catalog to your `opencode.json`: `"skills": ["https://raw.githubusercontent.com/haydenschmitty/floorplan/main/skills/"]`. Details in [Floorplan in OpenCode](opencode.md#install).
 
 **In Claude Code**, run these once, in any terminal:
 

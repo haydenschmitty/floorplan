@@ -106,6 +106,53 @@ test('a signed-out Codex says so, so the map can tell the person to sign in', as
   assert.equal(pick(await ask(s, 'SIGNED-OUT again'), 'answer').length, 0);
 });
 
+test('with only OpenCode installed, questions run through OpenCode, read-only and out of the session list', async () => {
+  const s = await serve({ FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_OPENCODE: path.join(FAKE, 'fake-opencode.mjs') });
+  assert.equal(s.page.engine, 'opencode');
+  assert.equal(s.page.cli, true);
+
+  const events = await ask(s, 'How do refunds work?');
+  assert.deepEqual(pick(events, 'progress').map((p) => p.text), ['Searching the map for "refund"', 'Reading shop-api/routes/orders.js']);
+  const [answer] = pick(events, 'answer');
+  assert.equal(answer.title, 'Refunds');
+  assert.deepEqual(answer.items.map((i) => i.id), ['f:shop-api/routes/orders.js']);
+  assert.match(answer.session, /^[0-9a-f]{16}$/);
+
+  const [call] = s.calls();
+  assert.equal(call.args[0], 'run');
+  assert.ok(call.args.includes('--standalone'), 'a private server, so the read-only config below is the one it uses');
+  assert.ok(call.args.includes('--archived'), 'the run stays out of the session list');
+  assert.equal(call.args[call.args.indexOf('--format') + 1], 'json');
+  // the permissions its server enforces: no edits, no web, no subagents, and shell only for map lookups
+  const rules = call.config.permissions;
+  assert.equal(rules.find((r) => r.action === 'edit').effect, 'deny');
+  assert.deepEqual(rules.filter((r) => r.action === 'shell'), [
+    { action: 'shell', resource: '*', effect: 'deny' },
+    { action: 'shell', resource: 'node floorplan/query.mjs *', effect: 'allow' },
+  ]);
+  // Node runs serve.mjs from its real path, and on macOS the temp folder /var/… is really /private/var/…
+  assert.equal(fs.realpathSync(call.pwd), fs.realpathSync(root));
+  assert.match(call.input, /How do refunds work\?/);
+  assert.match(call.input, /node floorplan\/query\.mjs/);
+});
+
+test('an OpenCode follow-up carries the conversation so far', async () => {
+  const s = await serve({ FLOORPLAN_ENGINE: 'opencode', FLOORPLAN_OPENCODE: path.join(FAKE, 'fake-opencode.mjs') });
+  const [first] = pick(await ask(s, 'How do refunds work?'), 'answer');
+  const [second] = pick(await ask(s, 'Who can ask for one?', first.session), 'answer');
+  assert.equal(second.session, first.session);
+  const calls = s.calls();
+  assert.doesNotMatch(calls[0].input, /Earlier in this conversation/);
+  assert.match(calls[1].input, /Earlier in this conversation:\nQ: How do refunds work\?\nA: Refunds go through/);
+});
+
+test('a signed-out OpenCode says so, so the map can tell the person to sign in', async () => {
+  const s = await serve({ FLOORPLAN_ENGINE: 'opencode', FLOORPLAN_OPENCODE: path.join(FAKE, 'fake-opencode.mjs') });
+  const [failure] = pick(await ask(s, 'SIGNED-OUT question'), 'failure');
+  assert.equal(failure.code, 'not_logged_in');
+  assert.equal(pick(await ask(s, 'SIGNED-OUT again'), 'answer').length, 0);
+});
+
 test('the Claude Code CLI comes first for a map Claude built, with read-only tools, and follow-ups resume', async () => {
   const s = await serve({ FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'), FLOORPLAN_CODEX: path.join(FAKE, 'fake-codex.mjs') });
   assert.equal(s.page.engine, 'claude');

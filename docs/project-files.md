@@ -14,8 +14,8 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `recent-work.json` | What was just worked on, and why. Replaced on every update | Rarely. The AI writes it |
 | `custom-flows.json` | Flows requested from the map | Only to delete one |
 | `health-dismissed.json` | Health issues you marked **Not a problem**, with your reasons | Only to undo one. **Show again** on the map does it too |
-| `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI or Codex | No |
-| `query.mjs` | Looks things up in the map from the command line; Claude and Codex use it too | No |
+| `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI, Codex or OpenCode | No |
+| `query.mjs` | Looks things up in the map from the command line; Claude, Codex and OpenCode use it too | No |
 | `page-safety.mjs` | How `serve.mjs` puts data into the page it serves and exports, and those pages' Content-Security-Policy | No |
 | `artifact.html` | A copy for opening in the Claude app, only if you asked for one | No |
 | `<project>-map.html` | An exported copy to share, only if you exported one from Claude or Codex (the map's Export button downloads it instead) | No |
@@ -31,7 +31,7 @@ Your edits to `architecture.json` and `descriptions/` are kept on every update. 
 - pin a note to a file;
 - add or change flows and the tour.
 
-Or just ask Claude or Codex ("rename 'Main server' to 'Shop API' on the floorplan").
+Or just ask Claude, Codex or OpenCode ("rename 'Main server' to 'Shop API'" on the floorplan).
 
 A blueprint is edited the same way, through `plan.json` and `architecture.json`, or from the map with the Ask bar's **Change** switch. The plan's format is in [`blueprint.md`](../skills/floorplan/references/blueprint.md).
 
@@ -48,7 +48,7 @@ To remove it, delete the section. To keep it from coming back, put `<!-- floorpl
 
 A blueprint adds no section, since there's no code to look up yet. Claude offers it once the map switches to the real code.
 
-In Codex this file isn't touched. Codex has no personal, uncommitted notes file (`AGENTS.md` is shared with your team), so Floorplan doesn't add a note there.
+In Codex and OpenCode this file isn't touched. Neither has a personal, uncommitted notes file (`AGENTS.md` is shared with your team), so Floorplan doesn't add a note there.
 
 ## Staying out of git
 

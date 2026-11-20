@@ -21,6 +21,15 @@ node floorplan/serve.mjs --codex /path/to/codex
 
 If it says Codex isn't signed in, open the Codex app (or run `codex login`) and sign in with ChatGPT. More in [Floorplan in Codex](codex.md).
 
+### OpenCode: the Ask bar says it needs OpenCode
+The map's server looks for `opencode` on your PATH and in `~/.opencode/bin`. Install it ([curl, Homebrew, npm or Bun](https://opencode.ai/docs/)), or point the server at yours:
+
+```bash
+node floorplan/serve.mjs --opencode /path/to/opencode
+```
+
+If it says nobody is signed in, connect a provider (`/connect` in the app, or `opencode auth login` in a terminal). More in [Floorplan in OpenCode](opencode.md).
+
 ### Codex: the map didn't open, or Ask stopped working after Codex opened it
 Codex runs commands in a sandbox, and the map's server needs to keep running and reach the network. Allow the server to run outside the sandbox when Codex asks, or run `node floorplan/serve.mjs` yourself from the project folder.
 
@@ -28,10 +37,10 @@ Codex runs commands in a sandbox, and the map's server needs to keep running and
 With Claude Code, update the map (`claude plugin update floorplan@floorplan`, then rebuild): questions now run without your MCP servers, whose tool descriptions were filling the context. With Codex, the MCP servers you set up for Codex still load, so turn off the ones you don't need (`enabled = false` under that server in `~/.codex/config.toml`).
 
 ### `node` isn't recognized
-Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so Claude Code or Codex picks it up.
+Install [Node.js](https://nodejs.org) 18 or newer, then start a new session so Claude Code, Codex or OpenCode picks it up.
 
-### Claude or Codex keeps asking to run `node` scripts
-In Claude Code, Floorplan pre-approves its own scripts while it's running, but it may still ask in some setups. Choose the option to always allow them for this project. Codex asks according to your approval settings; allowing Floorplan's `node` scripts for the project stops the prompts.
+### Claude, Codex or OpenCode keeps asking to run `node` scripts
+In Claude Code, Floorplan pre-approves its own scripts while it's running, but it may still ask in some setups. Choose the option to always allow them for this project. Codex and OpenCode ask according to their permission settings; allowing Floorplan's `node` scripts for the project stops the prompts.
 
 ### The skill doesn't show up
 Plugins load when a session starts, so start a new one after installing. Check that it's installed and enabled:
