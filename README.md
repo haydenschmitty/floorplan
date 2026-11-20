@@ -13,6 +13,7 @@ Claude or Codex reads your codebase and draws an interactive map of it. Every pa
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
+[![Pi extension](https://img.shields.io/badge/Pi-extension-6B5CE7?style=flat-square)](docs/pi.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/haydenschmitty/floorplan/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/haydenschmitty/floorplan/actions/workflows/test.yml)
 [![Version](https://img.shields.io/badge/version-0.11.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
@@ -193,6 +194,16 @@ codex plugin add floorplan@floorplan
 
 Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask bar runs on your own Codex sign-in, with no API key. More in [Floorplan in Codex](docs/codex.md).
 
+### Pi
+
+Install Floorplan as a project-local Pi package from the project you want to map:
+
+```bash
+pi install --local git:github.com/haydenschmitty/floorplan
+```
+
+Trust the project when Pi asks, then ask for a floorplan or run `/floorplan`. The Pi wrapper loads the same Floorplan skill and scripts used by the Claude Code and Codex integrations. See [Floorplan in Pi](docs/pi.md) for installation, usage, boundaries, and local-checkout instructions.
+
 ## Quick start
 
 1. Open your project in Claude Code or Codex. For a frontend and backend in separate repos, open the folder that holds both.
@@ -262,6 +273,7 @@ More in [Privacy and security](docs/privacy-and-security.md). Wondering whether 
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, first map, updating, planning from a PRD, removing |
 | [Floorplan in Codex](docs/codex.md) | Installing and using it in Codex |
+| [Floorplan in Pi](docs/pi.md) | Installing and using it as a project-local Pi extension |
 | [Using the map](docs/using-the-map.md) | Every button, view, shortcut and menu |
 | [How it works](docs/how-it-works.md) | The pipeline, connection matching, refreshes |
 | [What's in your project](docs/project-files.md) | Every file Floorplan creates, and how to edit it |
