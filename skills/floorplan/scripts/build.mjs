@@ -689,6 +689,7 @@ report.push(graph.recent
 // equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone,
 // and so does a map made without an agent session. Unattended mode never writes outside the map folder.
 if (agent === 'codex') report.push('AGENT  Codex: questions on the map run through Codex');
+if (agent === 'omp') report.push('AGENT  omp: questions on the map run through omp');
 if (agent === 'none') report.push("AGENT  none: made without an agent session, so the map's prompts don't name one");
 let claudeNote = null;
 if (scan.blueprint) report.push('BLUEPRINT  planned, not built yet: drawn from floorplan/plan.json');

@@ -9,6 +9,7 @@ import { isUnattended } from './common.mjs';
 const DETECT = {
   claude: () => false, // the default
   codex: (env) => !!(env.CODEX_THREAD_ID || env.CODEX_SESSION_ID),
+  omp: (env) => !!(env.OMPCODE || env.PI_SESSION_ID),
   none: () => false, // only when asked for, or in unattended mode
 };
 export const AGENTS = Object.keys(DETECT);
@@ -20,7 +21,7 @@ export function detectAgent(args = {}, env = process.env) {
   return AGENTS.find((a) => DETECT[a](env)) || 'claude';
 }
 
-const CLI_NAMES = { claude: 'the Claude Code CLI', codex: 'Codex' };
+const CLI_NAMES = { claude: 'the Claude Code CLI', codex: 'Codex', omp: 'omp' };
 /**
  * What the CLI answering the map's questions is called, for open.mjs: its usual name, or, when its --version
  * names another program (a wrapper installed under the same command, `devin 3000.11.238` answering to

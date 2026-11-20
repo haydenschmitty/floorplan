@@ -163,7 +163,9 @@ Want to click around yourself? Open the [live demo](https://haydenschmitty.githu
 
 ## Install
 
-You need [Node.js 18+](https://nodejs.org) and either Claude Code or Codex. Floorplan runs on the plan you already have, with no API keys.
+You need [Node.js 18+](https://nodejs.org) and Claude Code, Codex, or [omp](https://omp.sh). Floorplan runs on the plan you already have, with no API keys.
+
+omp reads the same `SKILL.md` this plugin ships, so `omp plugin marketplace add haydenschmitty/floorplan` then `omp plugin install floorplan@floorplan` is enough: the map's Ask bar answers through `omp -p` on the profile you already signed in.
 
 ### Claude Code
 

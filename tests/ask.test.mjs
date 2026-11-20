@@ -106,6 +106,45 @@ test('a signed-out Codex says so, so the map can tell the person to sign in', as
   assert.equal(pick(await ask(s, 'SIGNED-OUT again'), 'answer').length, 0);
 });
 
+test('with only omp installed, questions run through omp, read-only, with no session and no project context', async () => {
+  const s = await serve({ FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_OMP: path.join(FAKE, 'fake-omp.mjs') });
+  assert.equal(s.page.engine, 'omp');
+  assert.equal(s.page.cli, true);
+  assert.equal(s.page.change, false, 'omp has no schema flag, so Change is not offered');
+
+  const [answer] = pick(await ask(s, 'How do refunds work?'), 'answer');
+  assert.equal(answer.title, 'Refunds');
+  assert.deepEqual(answer.items.map((i) => i.id), ['f:shop-api/routes/orders.js']);
+  assert.match(answer.session, /^[0-9a-f]{16}$/);
+
+  const [call] = s.calls();
+  const flag = (name) => call.args[call.args.indexOf(name) + 1];
+  assert.ok(call.args.includes('-p'), 'print mode');
+  assert.ok(call.args.includes('--no-session'), 'nothing is written to the person\'s history');
+  assert.equal(flag('--tools'), 'read,grep,glob', 'read-only tools only');
+  assert.ok(call.args.includes('--no-context-files') && call.args.includes('--no-skills'), 'no project context rides along');
+  assert.equal(fs.realpathSync(flag('--cwd')), fs.realpathSync(root));
+  assert.match(call.input, /How do refunds work\?/);
+  assert.match(call.input, /node floorplan\/query\.mjs/);
+});
+
+test('an omp follow-up carries the conversation so far', async () => {
+  const s = await serve({ FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_OMP: path.join(FAKE, 'fake-omp.mjs') });
+  const [first] = pick(await ask(s, 'How do refunds work?'), 'answer');
+  const [second] = pick(await ask(s, 'Who can ask for one?', first.session), 'answer');
+  assert.equal(second.session, first.session);
+  const calls = s.calls();
+  assert.doesNotMatch(calls[0].input, /Earlier in this conversation/);
+  assert.match(calls[1].input, /Earlier in this conversation:\nQ: How do refunds work\?/);
+});
+
+test('an omp that cannot reach a model reports a failure rather than an empty answer', async () => {
+  const s = await serve({ FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_OMP: path.join(FAKE, 'fake-omp.mjs') });
+  const [failure] = pick(await ask(s, 'SIGNED-OUT question'), 'failure');
+  assert.match(failure.code, /cli_error/);
+  assert.equal(pick(await ask(s, 'SIGNED-OUT again'), 'answer').length, 0);
+});
+
 test('the Claude Code CLI comes first for a map Claude built, with read-only tools, and follow-ups resume', async () => {
   const s = await serve({ FLOORPLAN_CLAUDE: path.join(FAKE, 'fake-claude.mjs'), FLOORPLAN_CODEX: path.join(FAKE, 'fake-codex.mjs') });
   assert.equal(s.page.engine, 'claude');
