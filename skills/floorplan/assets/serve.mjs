@@ -170,6 +170,13 @@ const ENGINES = {
     find: () => resolveCli(given('codex') || [...which('codex'), ...codexApp()], ['@openai', 'codex', 'bin', 'codex.js']),
     run: codexRun,
   },
+  // oh-my-pi/omp: `omp -p` with read-only tools. It has no schema flag, so Change (which needs one) is not
+  // offered here; Ask is, and follows the Codex shape: an ephemeral run carrying the last few turns.
+  omp: {
+    name: 'omp', site: 'https://omp.sh', structured: false,
+    find: () => resolveCli(given('omp') || [...which('omp'), path.join(HOME, '.local', 'bin', 'omp')], []),
+    run: ompRun,
+  },
 };
 // --engine (or FLOORPLAN_ENGINE) decides; otherwise the agent that built the map, then the others in order
 const builtBy = (() => { try { return readJson(path.join(here, 'graph.json')).meta?.agent; } catch { return null; } })();
@@ -182,7 +189,7 @@ const canChange = !engine || ENGINES[engine].structured;
 // Started from inside a Claude Code or Codex session? Don't let the CLI think it's nested in it.
 function cliEnv() {
   const env = { ...process.env };
-  for (const k of Object.keys(env)) if (/^CLAUDE_?CODE_(SESSION|ENTRYPOINT|CHILD|MESSAGING|HOST|SDK)|^CLAUDECODE$|^CODEX_(THREAD_ID|SESSION_ID|TOOL_CALL_ID|CI$|SANDBOX)/.test(k)) delete env[k];
+  for (const k of Object.keys(env)) if (/^CLAUDE_?CODE_(SESSION|ENTRYPOINT|CHILD|MESSAGING|HOST|SDK)|^CLAUDECODE$|^CODEX_(THREAD_ID|SESSION_ID|TOOL_CALL_ID|CI$|SANDBOX)|^OMPCODE$|^PI_(SESSION_ID|SESSION_FILE|TOOL_CALL_ID|TERMINAL_OWNER_PID)$/.test(k)) delete env[k];
   return env;
 }
 let version = null;
@@ -379,6 +386,43 @@ function codexRun(body, mode) {
       }
     },
     lastError: () => error,
+  };
+}
+// omp: `omp -p --mode=json` in print mode, read-only tools only, no session written and no project context
+// loaded (the map's own index.html is megabytes, and every skill or rule would ride along with each question).
+// The stream is line-delimited JSON: message_* / turn_* / agent_end, each carrying the assistant's message.
+const ompText = (m) => (m?.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('');
+function ompRun(body, mode) {
+  const session = convos.has(body.session) ? body.session : crypto.randomBytes(8).toString('hex');
+  const turns = convos.get(session) || [];
+  const question = String(body.question || '').slice(0, 4000);
+  const earlier = turns.length ? `\n\nEarlier in this conversation:\n${turns.map((t) => `Q: ${t.q}\nA: ${t.a}`).join('\n\n')}` : '';
+  const args = [...cli.args, '-p', '--mode=json', '--no-session', '--cwd', root,
+    '--no-skills', '--no-rules', '--no-extensions', '--no-context-files',
+    '--tools', 'read,grep,glob', '--approval-mode', 'write'];
+  if (model) args.push('--model', model);
+  let last = '', error = '';
+  const answer = (out, text) => {
+    // the final assistant message wins: a turn_end carries only the last text block, which can be a preamble
+    const a = parseAnswer({ result: text || last });
+    convos.set(session, [...turns, { q: question.slice(0, 500), a: String(a.answer || '').slice(0, 1500) }].slice(-4));
+    out.answer({ ...a, session });
+  };
+  return {
+    args, input: `${mode.instructions}${earlier}\n\nThe question:\n${question}\n\nAnswer with the JSON object only, no other text.`,
+    lastError: () => error,
+    onEvent(ev, out) {
+      if (/tool_?(start|use)/.test(ev.type || '') && ev.name) out.progress(String(ev.name));
+      if (ev.type === 'message_end' && ev.message?.role === 'assistant') last = ompText(ev.message);
+      if (ev.type === 'error') error = String(ev.message || ev.error?.message || error);
+      if (ev.type === 'agent_end') {
+        const final = [...(ev.messages || [])].reverse().find((m) => m?.role === 'assistant');
+        const text = ompText(final) || last;
+        if (!text && error) return out.fail(error);
+        return answer(out, text);
+      }
+      if (ev.type === 'turn_end' && ev.message?.role === 'assistant' && !last) last = ompText(ev.message);
+    },
   };
 }
 const CLOSED = Symbol('closed'); // the browser went away mid-request

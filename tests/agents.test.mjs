@@ -8,6 +8,12 @@ import { lib, shopApp, run, readGraph, readJson, cleanup } from './helpers.mjs';
 
 const { detectAgent, cliLabel } = await lib('agent.mjs');
 
+test('omp is recognised by the variables it sets for every command it runs', () => {
+  assert.equal(detectAgent({}, { OMPCODE: '1' }), 'omp');
+  assert.equal(detectAgent({}, { PI_SESSION_ID: 'abc' }), 'omp');
+  assert.equal(cliLabel('omp'), 'omp');
+});
+
 test('Codex is recognised by the variables it sets for every command', () => {
   assert.equal(detectAgent({}, { CODEX_THREAD_ID: 'abc' }), 'codex');
   assert.equal(detectAgent({}, { CODEX_SESSION_ID: 'abc' }), 'codex');
@@ -61,6 +67,17 @@ test('a CLAUDE.local.md note that already exists is kept current, and the opt-ou
     fs.writeFileSync(notes, 'my notes\n<!-- floorplan:off -->\n');
     assert.match(run('build.mjs', root, '--agent', 'claude', '--claude-md'), /CLAUDE\.LOCAL\.MD {2}skipped \(opted out\)/);
     assert.equal(fs.readFileSync(notes, 'utf8'), 'my notes\n<!-- floorplan:off -->\n');
+  } finally { cleanup(root); }
+});
+
+test('a map built under omp records it, and leaves the project notes alone', () => {
+  const root = shopApp();
+  try {
+    run('scan.mjs', root);
+    const out = run('build.mjs', root, '--agent', 'omp');
+    assert.equal(readGraph(root).meta.agent, 'omp');
+    assert.match(out, /AGENT {2}omp/);
+    assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no CLAUDE.local.md');
   } finally { cleanup(root); }
 });
 
