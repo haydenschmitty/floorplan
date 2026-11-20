@@ -12,7 +12,9 @@
   icon.png
 .agents/plugins/
   marketplace.json     this repo as a Codex marketplace
-skills/floorplan/
+skills/
+  index.json           the same skill as an OpenCode catalog (generated, see below)
+  floorplan/
   SKILL.md             the workflow Claude and Codex follow
   agents/openai.yaml   how Codex lists the skill
   workflow.json        the same steps as SKILL.md, as data, for running without an agent session
@@ -43,6 +45,7 @@ skills/floorplan/
     vendor/        bundled layout engine (elkjs) and fonts, with their licenses
 tests/                 regression tests and the sample projects they map
 tools/checksums.mjs    writes CHECKSUMS.txt for a release, and checks an installed copy against it
+tools/skill-catalog.mjs  writes skills/index.json, the OpenCode catalog, from the skill's files
 CHECKSUMS.txt          SHA-256 of every file the plugin runs from, as of the last release
 docs/                  these guides
 ```
@@ -58,7 +61,7 @@ claude plugin install floorplan@floorplan
 
 A plugin installed from a local folder runs straight from it, so edits apply in the next session with no update step.
 
-To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
+To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. To try it in OpenCode, see [Trying a working copy](opencode.md#trying-a-working-copy): a local `skills` folder is read as it is. `--agent claude|codex|opencode|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex|opencode` on serve.mjs let you try any agent's map from anywhere.
 
 The scripts also run on their own, which is the fastest way to work on them:
 
@@ -125,8 +128,8 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `editor-links.test.mjs` | **Open in editor**: VS Code by default, an editor named or linked in `architecture.json` or on the map's server, paths encoded so they can't break the link, and every setting that isn't an editor's own scheme (scripts, data, web and `file:` links, quotes) refused by the build and the server and ignored by the page |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
-| `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
-| `agents.test.mjs` | telling Claude Code from Codex, what a map built by each records and writes, and the name open.mjs gives the program that answers questions (another program answering to the `claude` command is named as itself) |
+| `ask.test.mjs` | asking through Claude Code, Codex or OpenCode: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
+| `agents.test.mjs` | telling Claude Code, Codex and OpenCode apart, what a map built by each records and writes, and the name open.mjs gives the program that answers questions (another program answering to the `claude` command is named as itself) |
 | `unattended.test.mjs` | running without an agent session: a small driver follows `workflow.json` through a first map and a refresh with canned answers, using only `--json` and exit codes; the optional plain-language step (reworded, left alone, rejected for changing more than wording, or failed, with the map completing every time); nothing written outside `floorplan/`, a map that names no agent, git failures that fail loudly, the workflow file's names and schemas, `maskSecrets` as a stable export, and no change without unattended mode |
 | `read-only-install.test.mjs` | a skill whose files are read-only builds a map twice, and the files it puts next to the map stay writable, including over read-only ones an earlier version left (skips itself where read-only doesn't stop the user writing) |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
@@ -157,7 +160,7 @@ There are two lists, and an agent can be on one or both:
 - **The agent that built the map**, in `scripts/lib/agent.mjs`: an entry in `DETECT` that recognises it from the variables it sets for every command it runs. The map records it, so its prompts name the right agent.
 - **The agent that answers questions**, in `assets/serve.mjs`: an entry in `ENGINES` with its name, where to get it, `find` (where its CLI lives, plus a `--<name> <path>` override) and `run` (the arguments and how to read its output into progress and an answer).
 
-An engine must be read-only in a way its CLI enforces, not only because the prompt asks; if it can't be, say so plainly in the docs. Set `structured: true` only when the CLI holds answers to the schema, because changing a blueprint from the map relies on it; without it, the map doesn't offer Change. Never take the command to run from the page or from saved settings. Add a stand-in CLI to `tests/fixtures/fake-cli/` and tests like `ask.test.mjs`.
+An engine must be read-only in a way its CLI enforces, not only because the prompt asks; if it can't be, say so plainly in the docs. Set `structured: true` only when the CLI holds answers to the schema, because changing a blueprint from the map relies on it; without it, the map doesn't offer Change. Never take the command to run from the page or from saved settings. A run may carry `env` (OpenCode passes its read-only config that way) and `onClose` (for a CLI that prints no completion event, where the process ending is the signal). Add a stand-in CLI to `tests/fixtures/fake-cli/` and tests like `ask.test.mjs`.
 
 ## Guidelines
 
@@ -203,9 +206,10 @@ An engine must be read-only in a way its CLI enforces, not only because the prom
    ```
 2. Bump `version` in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`, and the version badge in `README.md`.
 3. Rename `## Unreleased` in `CHANGELOG.md` to `## X.Y.Z (YYYY-MM-DD)`.
-4. Write the release's fingerprints, after the version bump:
+4. Write the release's fingerprints and the OpenCode catalog, after the version bump (the catalog's version is what tells OpenCode to refresh its copy):
    ```bash
    node tools/checksums.mjs
+   node tools/skill-catalog.mjs
    ```
 5. Commit as `Floorplan X.Y.Z: <one-line headline>` and push `main`.
 6. Tag and push the tag. This also checks that `plugin.json` and the marketplace entry agree:

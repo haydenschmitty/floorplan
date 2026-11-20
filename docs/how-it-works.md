@@ -1,6 +1,6 @@
 # How it works
 
-Floorplan splits the work between scripts and the AI you run it in, Claude Code or Codex. The scripts do everything mechanical: finding files, parsing code, matching requests to endpoints, laying out the map. They're plain Node.js with no dependencies, and they cost no tokens. The AI does what only a reader of the code can: deciding what the parts of your app *are*, and explaining them plainly.
+Floorplan splits the work between scripts and the AI you run it in, Claude Code, Codex or OpenCode. The scripts do everything mechanical: finding files, parsing code, matching requests to endpoints, laying out the map. They're plain Node.js with no dependencies, and they cost no tokens. The AI does what only a reader of the code can: deciding what the parts of your app *are*, and explaining them plainly.
 
 ```mermaid
 flowchart TD
@@ -56,7 +56,7 @@ It's pattern matching, not a compiler, so it catches most connections but not al
 
 ## 3. The AI describes the system
 
-Claude or Codex reads the scan summary, READMEs, setup files and entry points, then writes `architecture.json`:
+Claude, Codex or OpenCode reads the scan summary, READMEs, setup files and entry points, then writes `architecture.json`:
 
 - the main parts of your app, each with a plain summary;
 - the outside services it really talks to (databases, payment providers, email);
@@ -76,7 +76,7 @@ By default everything is written for the app's owner, not an engineer: what each
 - connects the parts, using imports, matched requests and the AI's explicit connections;
 - runs the **Health** check;
 - detects **screens**: Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack, and a Shopify theme's templates (an alternate template like `product.preorder.json` as `/products/:handle?view=preorder`);
-- writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one.
+- writes `graph.json` and the self-contained `index.html`, noting which of Claude Code, Codex or OpenCode made it, so the map's Ask bar and fix prompts name the right one.
 
 The map lays itself out in your browser with [ELK](https://eclipse.dev/elk/), so the build itself is fast.
 
@@ -110,7 +110,7 @@ Everything above is how Floorplan maps existing code, its main job. A blueprint 
 
 - cards have dashed outlines and the board a **Blueprint** label;
 - Health becomes a **design review** of the plan: endpoints anyone could use to change data, endpoints with no decision on who may use them, open questions, and pieces nothing connects to;
-- every part has **Build this with Claude** (or Codex): a request to build that part as planned, listing its files, endpoints and what it relies on;
+- every part has **Build this with Claude** (or Codex or OpenCode, on a map made in them): a request to build that part as planned, listing its files, endpoints and what it relies on;
 - Ask answers from the plan and the PRD, since there's no code to read;
 - the Ask bar's **Change** switch takes requests like "also plan out refunds": the agent returns the updated plan, the map's server checks it with `plan.mjs` and `build.mjs` (sending problems back once), saves it and redraws the map with the changes highlighted, and **Undo** puts the previous plan back. Each design review item's **Resolve on the map** fills in that request for you: an open question just needs your answer. The agent stays read-only: only the server writes, and only `plan.json`, `architecture.json` and `recent-work.json`.
 
@@ -118,7 +118,7 @@ Updating a blueprint redraws it from `plan.json`. Once the code exists, `refresh
 
 ## Without an agent session
 
-The same pipeline runs without Claude Code or Codex: in CI, in a script, or from your own tooling, with any model that can read files and return JSON. `skills/floorplan/workflow.json` describes each step as data (which script to run, which job needs a model, what it's given and what it must answer), every script can report its result as JSON, and unattended mode keeps Floorplan to its own folder. See [Running Floorplan without an agent session](unattended.md).
+The same pipeline runs without Claude Code, Codex or OpenCode: in CI, in a script, or from your own tooling, with any model that can read files and return JSON. `skills/floorplan/workflow.json` describes each step as data (which script to run, which job needs a model, what it's given and what it must answer), every script can report its result as JSON, and unattended mode keeps Floorplan to its own folder. See [Running Floorplan without an agent session](unattended.md).
 
 ## Asking questions
 
@@ -126,8 +126,9 @@ The map's server answers each question with the AI on your computer, in your pro
 
 - **Claude Code:** it runs `claude -p` with read-only tools only: reading and searching files, and `floorplan/query.mjs`, which looks things up in the map. It starts without any of your MCP servers (`--strict-mcp-config` with an empty list), since answers never use them and their tool descriptions alone can make a question too long, and it’s told not to read the map’s own generated files.
 - **Codex:** it runs `codex exec` in Codex's read-only sandbox, with the same lookups. These runs aren't saved to your Codex history, so a follow-up brings the last few questions and answers along. Codex has no option that leaves out only its MCP servers, so the ones you set up for Codex are loaded too; if questions fail as too long, turn off the ones you don't need (`enabled = false` in `~/.codex/config.toml`).
+- **OpenCode:** it runs `opencode run` under a configuration that denies every write, with the same lookups. Each run is archived, so it stays out of your session list; a follow-up brings the last few questions and answers along. OpenCode has no option that leaves out only its MCP servers either, so the ones you set up for it are loaded too.
 
-It uses whichever made the map, and the other one if that isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
+It uses whichever made the map, and the others if that one isn't installed. Either way it answers with text plus the cards to show, so answers can cite real code.
 
 In the Claude app, the map asks Claude through the app instead, with the same lookups but no access to your source.
 

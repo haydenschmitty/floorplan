@@ -1,6 +1,6 @@
 # Is it safe to install?
 
-Plugins for Claude Code and Codex can run code on your computer, so it's worth asking. Some malicious plugins look harmless when you install them, then download and run something else later (a "stage two"). Floorplan is built so it can't do that, a test checks it on every change, and you can confirm all of it yourself.
+Plugins for Claude Code and Codex, and skills for OpenCode, can run code on your computer, so it's worth asking. Some malicious ones look harmless when you install them, then download and run something else later (a "stage two"). Floorplan is built so it can't do that, a test checks it on every change, and you can confirm all of it yourself.
 
 ## What Floorplan never does
 
@@ -21,15 +21,15 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **The page enforces that itself.** Every map carries a Content-Security-Policy: only the page's own scripts run (each is allowed by its SHA-256 hash, computed when the page is written), and images and fonts can only come from inside the file. An **exported copy** may contact nothing at all (`connect-src 'none'`); `floorplan/index.html` and the page the map's server serves may contact only that local server (`connect-src 'self'`), for asking questions, live reload, flows and Export. So even if text from a repository ever slipped past the map's escaping and became script, it couldn't send the map anywhere. The copy made for the Claude app (`--artifact`) has no policy of its own, because the Claude app runs its own code in that page and applies its own rules.
 - **Reporting a false alarm is yours to send.** If you tick the box under **Not a problem** in Health, the map opens a new GitHub issue in your browser with the text filled in, shown to you first. Nothing goes anywhere unless you submit it there.
 
-Asking questions on the map runs Claude Code or Codex, which talk to Anthropic or OpenAI the way they always do, on your account. Floorplan itself sends nothing.
+Asking questions on the map runs Claude Code, Codex or OpenCode, which talk to Anthropic, OpenAI or your own OpenCode providers the way they always do, on your account. Floorplan itself sends nothing.
 
 ### The programs it runs
 
 | Program | When | Why |
 |---|---|---|
 | `git` | scan | Read-only: which files are tracked, the current branch and commit, what changed since the last map |
-| `where` (Windows) or `which` | starting the map's server | Finding the Claude Code or Codex CLI |
-| `claude` or `codex` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, or `codex exec --sandbox read-only` |
+| `where` (Windows) or `which` | starting the map's server | Finding the Claude Code, Codex or OpenCode CLI |
+| `claude`, `codex` or `opencode` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, `codex exec --sandbox read-only`, or `opencode run` under a configuration that denies every write |
 | `node` | throughout | Running Floorplan's own scripts |
 | `cmd /c start`, `open` or `xdg-open` | opening the map | Opening the map's local address in your browser |
 
@@ -37,7 +37,7 @@ Each is started directly with its arguments, never as a command line for a shell
 
 ### What runs without asking
 
-In Claude Code, while the skill is in use, it pre-approves one kind of command: `node` running one of its own scripts, each named exactly (`scripts/build.mjs`, `describe.mjs`, `open.mjs`, `plan.mjs`, `recent.mjs`, `refresh.mjs`, `scan.mjs` and `status.mjs`). That list is fixed by the tests below. Anything else Claude does asks according to your permission settings, as usual. Codex asks according to your approval settings.
+In Claude Code, while the skill is in use, it pre-approves one kind of command: `node` running one of its own scripts, each named exactly (`scripts/build.mjs`, `describe.mjs`, `open.mjs`, `plan.mjs`, `recent.mjs`, `refresh.mjs`, `scan.mjs` and `status.mjs`). That list is fixed by the tests below. Anything else Claude does asks according to your permission settings, as usual. Codex and OpenCode ask according to their permission settings.
 
 ### The workflow file
 
@@ -90,8 +90,8 @@ It prints either that all files are identical, or which ones changed, are extra 
 
 ## The honest limits
 
-- Claude Code and Codex install a plugin from its repository, and an update brings whatever the newest release contains, for this plugin as for any other. Releases are made only by the maintainer, and `main` is protected: its history can't be rewritten or deleted. Outside pull requests are reviewed before they're run or merged, and the checks above run on every one of them. Before you update, you can read the changes in the [changelog](../CHANGELOG.md) and verify the new version with its checksums.
-- Floorplan works by having Claude or Codex read your code to describe it. That goes to Anthropic or OpenAI under your account, like any other task you give them. See [Privacy and security](privacy-and-security.md).
+- Claude Code and Codex install a plugin from its repository, OpenCode downloads the skill from the same repository's catalog, and an update brings whatever the newest release contains, for this plugin as for any other. Releases are made only by the maintainer, and `main` is protected: its history can't be rewritten or deleted. Outside pull requests are reviewed before they're run or merged, and the checks above run on every one of them. Before you update, you can read the changes in the [changelog](../CHANGELOG.md) and verify the new version with its checksums.
+- Floorplan works by having Claude, Codex or OpenCode read your code to describe it. That goes to Anthropic, OpenAI or your own OpenCode providers under your account, like any other task you give them. See [Privacy and security](privacy-and-security.md).
 
 ## Found something?
 

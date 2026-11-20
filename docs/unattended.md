@@ -1,6 +1,6 @@
 # Running Floorplan without an agent session
 
-Floorplan is made to run inside Claude Code or Codex, with you there. It can also run on its own: in CI, in a script, or from your own tooling, with any model that can read files and return JSON. This guide covers the three things that make that work:
+Floorplan is made to run inside Claude Code, Codex or OpenCode, with you there. It can also run on its own: in CI, in a script, or from your own tooling, with any model that can read files and return JSON. This guide covers the three things that make that work:
 
 - **Unattended mode**, which keeps Floorplan to its own folder and makes failures fail;
 - **`--json`**, which gives each script's result as data instead of a report;
@@ -19,7 +19,7 @@ export FLOORPLAN_UNATTENDED=1
 (in Windows PowerShell: `$env:FLOORPLAN_UNATTENDED = "1"`), or pass `--unattended` to a script, which sets the same thing for it and for the scripts it runs (`refresh.mjs` runs `scan.mjs` and `build.mjs`). In unattended mode:
 
 - **Nothing is written outside `floorplan/`.** No `CLAUDE.local.md`, no line in `.git/info/exclude`, no moving an old Floorplan section out of `CLAUDE.md`, and an old `show-code/` map is left where it is. Git is run with `--no-optional-locks`, so even `git status` leaves the repo's own files alone.
-- **The map names no agent.** It records `"agent": "none"`, so its Health and blueprint buttons say "Fix with AI" and "paste it into your AI coding agent" instead of naming Claude or Codex. You can also set `FLOORPLAN_AGENT=none` on its own. Naming an agent (`--agent claude`, `FLOORPLAN_AGENT=codex`) still wins. If the map's server is running, it names the CLI it found, as it always has.
+- **The map names no agent.** It records `"agent": "none"`, so its Health and blueprint buttons say "Fix with AI" and "paste it into your AI coding agent" instead of naming Claude, Codex or OpenCode. You can also set `FLOORPLAN_AGENT=none` on its own. Naming an agent (`--agent claude`, `FLOORPLAN_AGENT=codex`) still wins. If the map's server is running, it names the CLI it found, as it always has.
 - **`open.mjs` starts nothing.** Nobody is there to look, so it starts no server and opens no browser.
 - **Failures fail.** See [Exit codes](#exit-codes).
 
@@ -232,7 +232,7 @@ Two `descriptions` jobs, one per worksheet, each writing its `descriptions` file
 ## What isn't covered
 
 - **Blueprints**, maps planned from a PRD, need a person to answer questions, so the workflow file doesn't make them. A refresh of an existing blueprint still works.
-- **Asking questions on the map**, requesting flows and changing a blueprint from the map need the map's server and Claude Code or Codex, as usual.
+- **Asking questions on the map**, requesting flows and changing a blueprint from the map need the map's server and Claude Code, Codex or OpenCode, as usual.
 
 ## Keeping it working
 
