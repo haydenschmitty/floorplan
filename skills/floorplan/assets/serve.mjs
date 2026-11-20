@@ -175,9 +175,10 @@ const ENGINES = {
 const builtBy = (() => { try { return readJson(path.join(here, 'graph.json')).meta?.agent; } catch { return null; } })();
 const asked = opt('engine', process.env.FLOORPLAN_ENGINE);
 const isEngine = (k) => typeof k === 'string' && Object.hasOwn(ENGINES, k);
-const want = isEngine(asked) ? asked : isEngine(builtBy) ? builtBy : 'claude';
+const forcedEngine = isEngine(asked) ? asked : null;
+const want = forcedEngine ?? (isEngine(builtBy) ? builtBy : 'claude');
 let engine = null, cli = null;
-for (const k of isEngine(asked) ? [asked] : [want, ...Object.keys(ENGINES).filter((k) => k !== want)]) { cli = ENGINES[k].find(); if (cli) { engine = k; break; } }
+for (const k of forcedEngine ? [forcedEngine] : [want, ...Object.keys(ENGINES).filter((k) => k !== want)]) { cli = ENGINES[k].find(); if (cli) { engine = k; break; } }
 const canChange = !engine || ENGINES[engine].structured;
 // Started from inside a Claude Code or Codex session? Don't let the CLI think it's nested in it.
 function cliEnv() {
@@ -557,7 +558,7 @@ const server = http.createServer((req, res) => {
       req.on('close', () => { tabs.delete(res); lastTab = Date.now(); });
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/status') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ tabs: tabs.size, pid: process.pid, hash: selfHash, root, editor })); }
+    if (req.method === 'GET' && url.pathname === '/api/status') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ tabs: tabs.size, pid: process.pid, hash: selfHash, root, editor, forcedEngine })); }
     if (req.method === 'GET' && url.pathname === '/api/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ cli: !!cli, engine, want, version, path: cli?.path || null })); }
     // requested flows are saved next to the map; build.mjs folds them into graph.json
     if (url.pathname === '/api/flows') {
