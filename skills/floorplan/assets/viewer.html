@@ -1094,11 +1094,18 @@ async function layout(view) {
   const deg = new Map();
   const bump = (id) => deg.set(id, (deg.get(id) || 0) + 1);
   for (const e of view.edges) { bump(e.a); bump(e.b); }
+  // IDs of out-side connectors; they get LAST_SEPARATE, so an external node connected only to
+  // them can still be pinned to LAST.  An external whose outgoing edges reach another external
+  // (not a LAST_SEPARATE connector) must NOT be LAST — ELK rejects an edge between two LAST nodes.
+  const lastSep = new Set(view.connectors.filter((c) => c.side === 'out').map((c) => c.id));
+  const outOf = new Map();
+  for (const e of view.edges) { if (!outOf.has(e.a)) outOf.set(e.a, []); outOf.get(e.a).push(e.b); }
   const children = [];
   for (const item of view.visible) {
     const [w, hh] = SIZES[info(item).type] || SIZES.file;
     const ext = item.startsWith('n:') && nodes.get(item.slice(2)).kind === 'external';
-    children.push({ id: item, width: w, height: Math.max(hh + cardExtraH(item) + (answerNote(item) ? NOTE_H : 0), (deg.get(item) || 0) * 7 + 28), ...(ext ? { layoutOptions: { 'elk.layered.layering.layerConstraint': 'LAST' } } : {}) });
+    const pinLast = ext && (outOf.get(item) || []).every((t) => lastSep.has(t));
+    children.push({ id: item, width: w, height: Math.max(hh + cardExtraH(item) + (answerNote(item) ? NOTE_H : 0), (deg.get(item) || 0) * 7 + 28), ...(pinLast ? { layoutOptions: { 'elk.layered.layering.layerConstraint': 'LAST' } } : {}) });
   }
   for (const c of view.connectors) {
     children.push({ id: c.id, width: clamp(textW(info(c.entity).name, 13) + 84, 150, 320), height: Math.max(42, (deg.get(c.id) || 0) * 7 + 14),
