@@ -994,6 +994,14 @@ function extractJvm(src) {
     if (m[1] === 'Request' && m[2] === classPrefix) continue;
     routes.push({ method: m[1] === 'Request' ? 'ANY' : m[1].toUpperCase(), path: classPrefix + m[2], var: null, line: at(m.index) });
   }
+  // A method's @GetMapping with no path of its own (bare, `()`, or only other attributes such as
+  // `produces = …`) answers at the class path. Matched with strings blanked, so one in a string is skipped;
+  // the brackets are read from the code too, so a quoted path (`"/{id}"`, `{"/a", "/b"}`) still names one.
+  for (const m of all(/@(Get|Post|Put|Patch|Delete)Mapping\b(?:\s*\(([^)]{0,500})\))?(?!\s*\()/g, stripJvmStrings(code))) {
+    const args = m[2] === undefined ? '' : code.slice(m.index + m[0].length - 1 - m[2].length, m.index + m[0].length - 1).trim();
+    if (args && (!/^\w+\s*=/.test(args) || /\b(?:value|path)\s*=/.test(m[2]))) continue;
+    routes.push({ method: m[1].toUpperCase(), path: classPrefix || '/', var: null, line: at(m.index) });
+  }
   const { calls, hosts } = extractCalls(code, at, { skip: /@\w+Mapping/ });
   return { imports, symbols, routes, mounts: [], calls, hosts, pkg, ...(pkg ? { decls, mentions: jvmMentions(code) } : {}) };
 }
