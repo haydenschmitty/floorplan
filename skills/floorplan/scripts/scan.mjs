@@ -212,6 +212,7 @@ const scan = {
     ...(f.doc ? { doc: f.doc } : {}),
     ...(f.h ? { h: f.h, sig: f.sig } : {}),
     ...(f.symbols?.length ? { symbols: f.symbols } : {}),
+    ...(f.pkg && (f.lang === 'java' || f.lang === 'kotlin') ? { pkg: f.pkg, ...(f.decls?.length ? { decls: f.decls } : {}) } : {}),
     ...(f.tooLarge ? { tooLarge: true } : {}),
     ...(f.issues ? { issues: f.issues } : {}),
     ...(f.screens ? { screens: f.screens } : {}),

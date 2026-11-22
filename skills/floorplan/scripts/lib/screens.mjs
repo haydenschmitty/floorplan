@@ -6,6 +6,7 @@
 //                            { fw, url }                        the file itself is the screen (file-based routers)
 //                            { fw, url, comp, spec, files }     a router entry pointing at a component (resolved by import)
 //                            { fw, url, target }                a router config naming the screen's file path
+//                            { fw, url, cls, pkg }              an Android class name (resolved by its package)
 // buildScreens(ctx)      — called by build.mjs with { graph, scan, arch, root } after the graph is built.
 //                          Returns graph.screens: [{ id, url, file, app, fw, name, description, behind: [{ id, note, kind }] }]
 //                          kind: screen | part | request | server | data | outside (in that order, ~16 items).
@@ -13,11 +14,13 @@
 // Supported: Next.js (app + pages router), React Router (JSX <Route> and route objects, v5–v7 incl.
 // routes.ts config), Vue Router, Angular routes, TanStack Router (createFileRoute), SvelteKit, Remix
 // (flat + nested routes), Nuxt, Astro, Expo Router, Shopify theme templates; Inertia pages come from scan.mjs
-// (routes.mjs inertiaLinks), as hints on the controller that renders them.
+// (routes.mjs inertiaLinks), as hints on the controller that renders them. Android: activities in
+// AndroidManifest.xml, and fragment and activity destinations in res/navigation graphs.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { blankBlockComments, importStatements } from './common.mjs';
+import { blankBlockComments, importStatements, MAX_CONFIG_BYTES } from './common.mjs';
+import { humanize } from './names.mjs';
 
 const P = path.posix;
 const JS_LANGS = new Set(['typescript', 'javascript', 'vue', 'svelte', 'astro']);
@@ -41,7 +44,55 @@ function themeScreen(p) {
   return url ? { fw: 'shopify-theme', url: alt ? `${url}?view=${alt}` : url } : null;
 }
 
+// Android: the screen is named by its class, which the build side looks up by package
+const NAV_GRAPH = /(^|\/)res\/navigation(-[^/]+)?\/[^/]+\.xml$/;
+const CLASS_NAME = /^\.?[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
+/** An XML file's tags in one pass: comments skipped, a quoted value may hold a ">", and reading stops at a tag or comment that never closes. */
+function* xmlTags(xml) {
+  for (let i = xml.indexOf('<'); i >= 0; i = xml.indexOf('<', i)) {
+    if (xml.startsWith('<!--', i)) { const e = xml.indexOf('-->', i + 4); if (e < 0) return; i = e + 3; continue; }
+    let e = i + 1, q = null;
+    for (; e < xml.length; e++) { const c = xml[e]; if (q) { if (c === q) q = null; } else if (c === '"' || c === "'") q = c; else if (c === '>') break; }
+    if (e >= xml.length) return;
+    const body = xml.slice(i + 1, e);
+    i = e + 1;
+    const name = /^[^\s/>!?]+/.exec(body)?.[0];
+    if (name) yield { name, body };
+  }
+}
+/** A tag's attributes by name, in either quote. Every step reads at least one character and never goes back. */
+function xmlAttrs(body) {
+  const out = new Map();
+  const step = /([^\s=>"'/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'))?|\s+|[\s\S]/y;
+  while (step.lastIndex < body.length) {
+    const m = step.exec(body);
+    if (m[1] && !out.has(m[1])) out.set(m[1], m[2] ?? m[3] ?? null);
+  }
+  return out;
+}
+function androidScreens(src, p) {
+  const manifest = P.basename(p) === 'AndroidManifest.xml';
+  if (!manifest && !NAV_GRAPH.test(p)) return [];
+  // a dialog destination opens over a screen, and an activity-alias is another way into an activity
+  const screenTags = manifest ? ['activity'] : ['fragment', 'activity'];
+  const out = [];
+  let pkg = null;
+  for (const { name, body } of xmlTags(src)) {
+    if (manifest && name === 'manifest') { pkg = xmlAttrs(body).get('package')?.trim() || null; continue; }
+    if (!screenTags.includes(name)) continue;
+    const attrs = xmlAttrs(body);
+    if (/^remove/.test(attrs.get('tools:node') || '')) continue;
+    const cls = attrs.get('android:name')?.trim();
+    if (!cls || !CLASS_NAME.test(cls)) continue;
+    // a nested class is written Outer$Inner, and is shown by its own name
+    out.push({ fw: 'android', url: cls.split('.').pop().split('$').pop() || cls, cls, ...(pkg ? { pkg } : {}) });
+    if (out.length >= MAX_RECORDS) break;
+  }
+  return out;
+}
+
 export function findScreens(src, file) {
+  if (file.category === 'config' && file.lang === 'xml') return androidScreens(src, file.path);
   if (file.category === 'code' && file.lang === 'liquid') { const s = themeScreen(file.path); return s ? [s] : []; }
   if (file.category !== 'code' || !JS_LANGS.has(file.lang)) return [];
   const p = file.path;
@@ -352,6 +403,10 @@ function maskNested(s) {
 // ======================= build side =======================
 
 const UI_KIT = /(^|\/)(components\/(ui|common|shared|primitives|base|icons?|layout)|ui|primitives)\//i;
+const UI_KIT_JVM = /(^|\/)(components\/(ui|common|shared|primitives|base|icons?|layout)|primitives)\//i;
+const JVM_SRC = /(^|\/)src\/\w+\/(java|kotlin)\//;
+// a Kotlin or Java file in a source set; any other file, whatever its path, keeps the web rules
+const jvmSrc = (p) => (/\.(kt|java)$/.test(p) ? JVM_SRC.exec(p) : null);
 const UTILITY = /(^|\/)(utils?|helpers?|constants?|types?|typings|styles?|theme|icons?|config|i18n|locales?)(\/|\.[a-z]+$)|\.d\.ts$|(^|\/)(index|globals?)\.(css|scss)$/i;
 const TESTY = /(^|\/)(tests?|__tests__|spec|e2e|cypress|playwright|__mocks__|fixtures|stories)(\/|$)|\.(test|spec|stories)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.(py|go)$/i;
 const DATA_PATH = /(^|\/)(models?|schemas?|entities|entity|db|database|repositor(y|ies)|dao|tables?|prisma|orm)(\/|\.[a-z]+$|_)/i;
@@ -381,6 +436,82 @@ export function buildScreens({ graph, scan, root }) {
   const usesNext = (p) => { const base = p.replace(/(^|\/)(src\/)?pages\/.*$/, '$1'); for (const f of nextFiles) if (f.startsWith(base)) return true; return false; };
   const edgesFrom = new Map();
   for (const e of scan.edges || []) { if (!edgesFrom.has(e.from)) edgesFrom.set(e.from, []); edgesFrom.get(e.from).push(e.to); }
+  const srcCache = new Map();
+  const lines = (p) => {
+    if (srcCache.has(p)) return srcCache.get(p);
+    let v = null;
+    try { if (root) v = fs.readFileSync(path.join(root, p), 'utf8').split('\n'); } catch {}
+    srcCache.set(p, v);
+    return v;
+  };
+  // Android: fully qualified class name -> the files declaring it, built the way resolve.mjs builds its JVM index
+  let jvmIndex = null, bySimpleName = null;
+  // test source sets, build variant ones too (testDebug, androidTestFree), and a module under a tests or fixtures folder; a module or package folder named "stories" or "spec" is not one
+  const JVM_TEST = /(^|\/)src\/((test|androidTest|testFixtures)([A-Z]\w*)?|\w+Test)\//;
+  const JVM_TEST_MODULE = /(^|\/)(tests?|fixtures)(\/|$)/i;
+  const isClassTest = (p) => {
+    const m = jvmSrc(p);
+    return m ? JVM_TEST_MODULE.test(p.slice(0, m.index)) || JVM_TEST.test(p) || kindsOf(files.get(p)?.n).has('test') : isTest(p);
+  };
+  const classIndex = () => {
+    if (jvmIndex) return jvmIndex;
+    jvmIndex = new Map();
+    bySimpleName = new Map();
+    for (const f of scanFiles) {
+      if (!f.pkg || !files.has(f.path) || isClassTest(f.path)) continue;
+      for (const n of new Set([P.basename(f.path).replace(/\.\w+$/, ''), ...(f.decls || [])])) {
+        const k = `${f.pkg}.${n}`;
+        if (!jvmIndex.has(k)) {
+          jvmIndex.set(k, new Set());
+          if (!bySimpleName.has(n)) bySimpleName.set(n, []);
+          bySimpleName.get(n).push(k);
+        }
+        jvmIndex.get(k).add(f.path);
+      }
+    }
+    return jvmIndex;
+  };
+  // the module folder a Kotlin or Java file sits in: what comes before its src/<set>/java or kotlin/
+  const moduleOf = (p) => { const m = jvmSrc(p); return m ? p.slice(0, m.index) : null; };
+  // a manifest with no package attribute takes it from the module's Gradle namespace
+  const namespaces = new Map();
+  const namespaceOf = (mod) => {
+    if (!namespaces.has(mod)) {
+      let ns = null;
+      for (const b of ['build.gradle.kts', 'build.gradle']) {
+        try { if (fs.statSync(path.join(root, mod + b)).size > MAX_CONFIG_BYTES) continue; } catch { continue; }
+        ns =/(?:^|[{;])[ \t]*namespace[ \t]*(?:=[ \t]*)?["']([\w.]+)["'][ \t]*(?=$|[;}]|\/\/)/m.exec((lines(mod + b) || []).join('\n'))?.[1] || null;
+        if (ns) break;
+      }
+      namespaces.set(mod, ns);
+    }
+    return namespaces.get(mod);
+  };
+  /**
+   * The one file declaring an Android class name, and the class's full name: a file of the same module wins, copies
+   * of one class in one module (product flavors) link the first, and anything else matching twice links nothing.
+   */
+  const classFile = (from, { cls, pkg }) => {
+    const index = classIndex();
+    const [outer, ...nested] = cls.split('$');
+    const m = /^(.*\/)?src\/[^/]+\/(?:AndroidManifest\.xml$|res\/)/.exec(from);
+    if (!pkg && m && P.basename(from) === 'AndroidManifest.xml') pkg = namespaceOf(m[1] || '');
+    // ".ui.MainActivity" and "MainActivity" are relative to the manifest's package
+    const full = outer.startsWith('.') ? (pkg ? pkg + outer : null) : outer.includes('.') ? outer : (pkg ? `${pkg}.${outer}` : null);
+    let keys = full && index.has(full) ? [full] : [];
+    if (!keys.length && !pkg) {
+      // no package known: any package ending the same way
+      const tail = outer.startsWith('.') ? outer : '.' + outer;
+      keys = (bySimpleName.get(outer.split('.').pop()) || []).filter((k) => k.endsWith(tail));
+    }
+    const hits = keys.flatMap((k) => [...index.get(k)].map((p) => ({ k, p })));
+    const near = m ? hits.filter((h) => h.p.startsWith((m[1] || '') + 'src/')) : [];
+    const pick = near.length ? near : hits;
+    const one = pick.length === 1 || (pick.length > 1 && pick.every((h) => h.k === pick[0].k && moduleOf(h.p) != null && moduleOf(h.p) === moduleOf(pick[0].p)));
+    if (!one) return null;
+    const { k, p } = pick.sort((a, b) => (a.p < b.p ? -1 : 1))[0];
+    return { file: p, key: [k, ...nested].join('$') };
+  };
   const resolveHint = (from, h) => {
     if (h.target) {
       if (files.has(h.target)) return h.target;
@@ -396,11 +527,12 @@ export function buildScreens({ graph, scan, root }) {
     }
     return h.comp ? from : null; // component defined in the router file itself
   };
-  const routed = []; // router entries: { url, file, fw }
+  const routed = []; // router entries: { url, file, fw }, and an Android class's full name as key
   const pageHints = [];
   for (const f of scanFiles) for (const h of f.screens || []) {
     if (!h || typeof h.url !== 'string') continue;
-    if (h.comp || h.spec || h.target) { const file = resolveHint(f.path, h); if (file) routed.push({ url: h.url, file, fw: h.fw }); }
+    if (h.cls) { if (JVM_TEST.test(f.path)) continue; const c = classFile(f.path, h); if (c) routed.push({ url: h.url, file: c.file, fw: h.fw, key: c.key }); }
+    else if (h.comp || h.spec || h.target) { const file = resolveHint(f.path, h); if (file) routed.push({ url: h.url, file, fw: h.fw }); }
     else pageHints.push({ url: h.url, file: f.path, fw: h.fw });
   }
   const routedFiles = new Set(routed.map((r) => r.file));
@@ -420,19 +552,14 @@ export function buildScreens({ graph, scan, root }) {
   }
   const appSize = new Map();
   for (const f of graph.files) { const a = topOf(f.n); appSize.set(a, (appSize.get(a) || 0) + 1); }
-  const noiseFront = (p) => UI_KIT.test(p) || UTILITY.test(p) || (indeg.get('f:' + p) || 0) >= Math.max(6, Math.round((appSize.get(appOf(p)) || 0) * 0.05));
+  const noiseFront = (p) => {
+    const m = jvmSrc(p), q = m ? p.slice(m.index) : p;
+    return (m ? UI_KIT_JVM : UI_KIT).test(q) || UTILITY.test(q) || (indeg.get('f:' + p) || 0) >= Math.max(6, Math.round((appSize.get(appOf(p)) || 0) * 0.05));
+  };
   const isDb = (n) => DB_PKG.test((n.packages || []).join(' ')) || DB_LABEL.test(n.label);
   const noiseBack = (p) => !isData(p) && (UTILITY.test(p) || AUTHY.test(p) || (indeg.get('f:' + p) || 0) >= Math.max(10, Math.round((appSize.get(appOf(p)) || 0) * 0.08)));
 
   // ---------- source regions (to follow only what a screen / an endpoint really uses) ----------
-  const srcCache = new Map();
-  const lines = (p) => {
-    if (srcCache.has(p)) return srcCache.get(p);
-    let v = null;
-    try { if (root) v = fs.readFileSync(path.join(root, p), 'utf8').split('\n'); } catch {}
-    srcCache.set(p, v);
-    return v;
-  };
   const symRanges = (p) => {
     const s = (files.get(p)?.s || []).map((x) => ({ name: x[0], line: x[2] })).sort((a, b) => a.line - b.line);
     return s.map((x, i) => ({ ...x, end: (s[i + 1]?.line || 1e9) - 1 }));
@@ -539,7 +666,7 @@ export function buildScreens({ graph, scan, root }) {
   // ---------- behind: walk from the screen's file ----------
   function behind(page, app, url) {
     const appKind = (id) => nodes.get(id)?.kind;
-    const frontOk = (p) => files.has(p) && !isTest(p) && (appOf(p) === app || ['ui', 'library', 'feature'].includes(appKind(appOf(p))));
+    const frontOk = (p) => files.has(p) && !isClassTest(p) && !androidFiles.has(p) && (appOf(p) === app || ['ui', 'library', 'feature'].includes(appKind(appOf(p))));
     // 1) frontend walk with focus (which exports of each file are actually used)
     const seen = new Map(); // path -> { depth, focus:Set|null(all), members:Set|null, parent }
     const queue = [{ p: page, depth: 0, focus: null, members: null, parent: null }];
@@ -685,18 +812,48 @@ export function buildScreens({ graph, scan, root }) {
   }
 
   // ---------- assemble ----------
+  // an app written in React Native, Flutter, Capacitor, Cordova or Tauri has an Android activity that only hosts it
+  const HOST_SHELL = /^[ \t]*(?:[\w@]+[ \t]+){0,6}?class[ \t]+\w+[^{;\n]{0,300}?(?:\bextends[ \t]+|:[ \t]*)(?:[\w.]+\.)?(?:Bridge|React|Flutter|FlutterFragment|Cordova|Tauri)Activity\b/m;
+  const shells = new Map();
+  const isShell = (p) => { if (!shells.has(p)) shells.set(p, HOST_SHELL.test((lines(p) || []).join('\n'))); return shells.get(p); };
+  const android = new Set(candidates.filter((c) => c.fw === 'android' && files.has(c.file) && !isClassTest(c.file) && !isShell(c.file)));
+  // two Android classes of one simple name in one app: each shown with as much of its package as tells them apart
+  const androidUrl = new Map();
+  const sameName = new Map();
+  for (const c of android) {
+    const g = `${appOf(c.file)}\n${c.url}`;
+    if (!sameName.has(g)) sameName.set(g, new Map());
+    sameName.get(g).set(c.file, c.key.split(/[.$]/));
+  }
+  const tail = (segs, n) => segs.slice(-n).join('.');
+  for (const [g, byFile] of sameName) {
+    if (byFile.size < 2) continue;
+    for (const [file, segs] of byFile) {
+      const ties = (n) => [...byFile].some(([o, s]) => o !== file && tail(s, n) === tail(segs, n));
+      let n = 2;
+      while (n < segs.length && ties(n)) n++;
+      // the same full name in two modules (a phone and a wear app): told apart by the module folder
+      const mod = moduleOf(file);
+      androidUrl.set(`${g}\n${file}`, !ties(n) ? tail(segs, n) : mod ? `${segs[segs.length - 1]} (${mod})` : segs[segs.length - 1]);
+    }
+  }
   const screens = new Map();
   for (const c of candidates) {
-    if (!files.has(c.file) || isTest(c.file)) continue;
+    if (!files.has(c.file) || isClassTest(c.file) || (c.fw === 'android' && !android.has(c))) continue;
     const app = appOf(c.file);
-    // alternate theme templates are separate pages that differ only by ?view=
-    const url = c.fw === 'shopify-theme' ? c.url : normalizeUrl(c.url) || '/';
+    // alternate theme templates are separate pages that differ only by ?view=; an Android screen has a class name, not a path
+    const url = c.fw === 'android' ? androidUrl.get(`${app}\n${c.url}\n${c.file}`) || c.url : c.fw === 'shopify-theme' ? c.url : normalizeUrl(c.url) || '/';
     const id = `screen:${app}:${url}`;
     if (screens.has(id)) continue;
     const f = files.get(c.file);
-    screens.set(id, { id, url, file: c.file, app, fw: c.fw, name: f.auto && /\b(page|index|route)\b/i.test(f.name) ? humanUrl(url) : f.name || humanUrl(url), description: f.d || '' });
+    // an Android class takes its file's written name and description only when it is the file's own class
+    const own = c.fw === 'android' && P.basename(c.file).replace(/\.\w+$/, '') === c.key.split('.').pop();
+    const name = c.fw === 'android' ? (own && !f.auto ? f.name : humanize(c.key.split(/[.$]/).pop())) : f.auto && /\b(page|index|route)\b/i.test(f.name) ? humanUrl(url) : f.name || humanUrl(url);
+    screens.set(id, { id, url, file: c.file, app, fw: c.fw, name, description: c.fw !== 'android' || own ? f.d || '' : '' });
   }
   const list = [...screens.values()].sort((a, b) => a.app.localeCompare(b.app) || a.url.localeCompare(b.url));
+  // an activity naming the activity it opens doesn't make that one a part of it
+  const androidFiles = new Set(list.filter((s) => s.fw === 'android').map((s) => s.file));
   for (const s of list) {
     try { s.behind = behind(s.file, s.app, s.url); } catch (e) { s.behind = [{ id: 'f:' + s.file, note: 'The screen itself', kind: 'screen' }]; }
   }
