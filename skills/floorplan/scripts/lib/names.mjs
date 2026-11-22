@@ -93,6 +93,7 @@ export const JARGON = [
   { re: /\brefactor(?:s|ed|ing)?\b|\btech(?:nical)? debt\b/gi, row: 'refactor, tech debt', say: 'leave it out' },
   { re: /\bMCP\b/g, row: 'MCP server', say: 'a connection that lets AI assistants look things up in your app' },
   { re: /\bunit tests?\b|\btest suites?\b|\be2e\b|\bend-to-end tests?\b/gi, row: 'unit tests, test suite', say: 'automatic checks that the code still works' },
+  { re: /(?:حزام\s*وكيل|ذاكرة\s*حالمة|الذاكرة\s*الحالمة|أخطبوط\s*تدوير|يكسر\s*النظام|نقطة\s*نهاية)/g, row: 'حزام وكيل، ذاكرة حالمة، أخطبوط تدوير، يكسر النظام، نقطة نهاية', say: 'بيئة تشغيل الوكيل، أو ترسيخ الذاكرة في الخلفية، أو منظومة مضاعفة المحتوى، أو يُعطّل/يُخلّ بـ، أو طلب يستقبله الخادم' },
 ];
 // Frameworks and code libraries: fine in project.summary, never in a part's label or summary on a map for
 // everyone (writing-descriptions.md, "Plain language" rule 5). Only names that can't be an everyday word.
