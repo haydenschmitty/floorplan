@@ -133,6 +133,7 @@ The default audience is `"everyone"`. Write as if explaining the app to its owne
 | refactor, tech debt | (leave out) |
 | MCP server | a connection that lets AI assistants (like Claude) look things up in your app |
 | unit tests, test suite | automatic checks that the code still works |
+| حزام وكيل، ذاكرة حالمة، أخطبوط تدوير، يكسر النظام، نقطة نهاية | بيئة تشغيل الوكيل / ترسيخ الذاكرة في الخلفية / منظومة مضاعفة المحتوى / يُعطّل أو يُخلّ بـ / طلب يستقبله الخادم |
 
 On a map for everyone, `build.mjs` warns when a part's `label` or `summary` in architecture.json uses words from this table or names a framework, and names the part, so you can reword it. It checks the words that are almost never the business's own (the list is in `scripts/lib/names.mjs`), and never product names like Stripe or Postgres. It's a warning, never an error.
 
