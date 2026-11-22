@@ -43,8 +43,9 @@ skills/floorplan/
     vendor/        bundled layout engine (elkjs) and fonts, with their licenses
 tests/                 regression tests and the sample projects they map
 tools/checksums.mjs    writes CHECKSUMS.txt for a release, and checks an installed copy against it
+tools/install-kilo.mjs installs the skill and a /floorplan command where Kilo Code loads them
 CHECKSUMS.txt          SHA-256 of every file the plugin runs from, as of the last release
-docs/                  these guides
+docs/                  these guides (kilo.md covers running under Kilo Code)
 ```
 
 ## Try your working copy
@@ -58,7 +59,7 @@ claude plugin install floorplan@floorplan
 
 A plugin installed from a local folder runs straight from it, so edits apply in the next session with no update step.
 
-To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. `--agent claude|codex|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex` on serve.mjs let you try either agent's map from anywhere.
+To try it in Codex, see [Trying a working copy](codex.md#trying-a-working-copy). Codex copies a local plugin when you add it, so run `codex plugin add floorplan@floorplan` again after each change. For Kilo Code, `node tools/install-kilo.mjs --symlink` links this checkout in, so edits apply in the next session. `--agent claude|codex|kilo|none` on build.mjs (or `FLOORPLAN_AGENT`) and `--engine claude|codex|kilo` on serve.mjs let you try any agent's map from anywhere.
 
 The scripts also run on their own, which is the fastest way to work on them:
 

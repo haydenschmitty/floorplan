@@ -1,6 +1,6 @@
-// Asking questions on the map: serve.mjs runs the Claude Code CLI or Codex on the person's own sign-in,
-// read-only, and turns their event stream into progress lines and an answer board. Stand-in CLIs
-// (fixtures/fake-cli) record what they were given, so these run without either one installed.
+// Asking questions on the map: serve.mjs runs the Claude Code CLI, Codex or Kilo Code on the person's own
+// sign-in, read-only, and turns their event stream into progress lines and an answer board. Stand-in CLIs
+// (fixtures/fake-cli) record what they were given, so these run without any of them installed.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -104,6 +104,84 @@ test('a signed-out Codex says so, so the map can tell the person to sign in', as
   const [failure] = pick(await ask(s, 'SIGNED-OUT question'), 'failure');
   assert.equal(failure.code, 'not_logged_in');
   assert.equal(pick(await ask(s, 'SIGNED-OUT again'), 'answer').length, 0);
+});
+
+// Kilo Code: only it installed, so every question runs through it
+const kiloOnly = () => ({ FLOORPLAN_CLAUDE: path.join(root, 'no-such-cli'), FLOORPLAN_CODEX: path.join(root, 'no-such-cli'), FLOORPLAN_KILO: path.join(FAKE, 'fake-kilo.mjs') });
+
+test('with only Kilo Code installed, questions run through it, read-only, with no in-map Change', async () => {
+  const s = await serve(kiloOnly());
+  assert.equal(s.page.engine, 'kilo');
+  assert.equal(s.page.cli, true);
+  assert.equal(s.page.change, false, 'kilo holds no answers to a schema, so Change is not offered');
+
+  const events = await ask(s, 'How do refunds work?');
+  assert.deepEqual(pick(events, 'progress').map((p) => p.text), ['Reading the map overview', 'Reading shop-api/routes/orders.js']);
+  const [answer] = pick(events, 'answer');
+  assert.equal(answer.title, 'Refunds');
+  assert.equal(answer.session, 'ses_testsession123');
+
+  const [call] = s.calls();
+  assert.equal(call.args[0], 'run');
+  assert.equal(call.args[call.args.indexOf('--format') + 1], 'json');
+  assert.ok(call.args.includes('--pure'), 'external plugins are off');
+  assert.equal(call.args[call.args.indexOf('--agent') + 1], 'floorplan-ask');
+  assert.equal(fs.realpathSync(call.args[call.args.indexOf('--dir') + 1]), fs.realpathSync(root));
+  assert.ok(call.args.includes('--title'), 'runs are titled, because Kilo saves every session');
+  assert.ok(!call.args.includes('--session'), 'a first question starts a session');
+  assert.ok(!call.args.includes('--model'), 'no model forced');
+  assert.match(call.input, /How do refunds work\?/);
+  assert.match(call.input, /Reply with only the JSON object/);
+
+  // the run stays in its own process (no daemon: it wouldn't see the config below) and carries its own agent
+  assert.equal(call.env.KILO_NO_DAEMON, '1');
+  assert.deepEqual(call.env.parent, [], 'the parent session\'s KILO*/OPENCODE* variables were stripped');
+  const perm = call.env.config.agent['floorplan-ask'].permission;
+  assert.equal(perm['*'], 'deny', 'nothing is allowed unless the agent config says so, MCP tools included');
+  // permission rules are last-match-wins in key order, so the order below is the protection itself
+  const bash = Object.keys(perm.bash);
+  assert.equal(bash[0], '*');
+  assert.ok(bash.indexOf('node floorplan/query.mjs *') < bash.indexOf('*&*'), 'the lookup script is allowed, shell operators denied after it');
+  assert.equal(bash[bash.length - 1], '*$*');
+  const read = Object.keys(perm.read);
+  assert.equal(read[0], '*');
+  assert.ok(read.indexOf('floorplan/index.html') > 0, 'the generated map page is off limits');
+  assert.ok(read.indexOf('*.env') < read.indexOf('*.env.example'), 'example env files come back after the deny');
+});
+
+test('a Kilo Code follow-up resumes the same session, and a foreign session id never reaches the CLI', async () => {
+  const s = await serve(kiloOnly());
+  const [first] = pick(await ask(s, 'How do refunds work?'), 'answer');
+  await ask(s, 'Who can ask for one?', first.session);
+  const [, second] = s.calls();
+  assert.equal(second.args[second.args.indexOf('--session') + 1], 'ses_testsession123');
+  await ask(s, 'Start over', 'not-a-session');
+  assert.ok(!s.calls()[2].args.includes('--session'));
+});
+
+test('--model reaches Kilo Code only in provider/model form', async () => {
+  const bare = await serve({ ...kiloOnly(), FLOORPLAN_MODEL: 'sonnet' });
+  await ask(bare, 'Anything?');
+  assert.ok(!bare.calls()[0].args.includes('--model'), 'a bare model name would fail every kilo question');
+  const full = await serve({ ...kiloOnly(), FLOORPLAN_MODEL: 'anthropic/claude-sonnet-4-5' });
+  await ask(full, 'Anything?');
+  assert.equal(full.calls()[0].args[full.calls()[0].args.indexOf('--model') + 1], 'anthropic/claude-sonnet-4-5');
+});
+
+test('a signed-out Kilo Code says so, in Kilo\'s own words', async () => {
+  const s = await serve(kiloOnly());
+  const [failure] = pick(await ask(s, 'SIGNED-OUT question'), 'failure');
+  assert.equal(failure.code, 'not_logged_in');
+  assert.match(failure.message, /kilo auth login/);
+});
+
+test('fail closed: an answer on the default agent\'s permissions never ships', async () => {
+  const s = await serve({ ...kiloOnly(), FAKE_KILO_IGNORE_CONFIG: '1' });
+  const events = await ask(s, 'How do refunds work?');
+  assert.deepEqual(pick(events, 'answer'), []);
+  const [failure] = pick(events, 'failure');
+  assert.match(failure.message, /read-only Floorplan agent/);
+  assert.match(failure.message, /falling back to its default agent/);
 });
 
 test('the Claude Code CLI comes first for a map Claude built, with read-only tools, and follow-ups resume', async () => {

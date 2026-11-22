@@ -1,4 +1,4 @@
-// Claude Code and Codex: the skill notices which one is running it, and the map remembers, so its
+// Claude Code, Codex and Kilo Code: the skill notices which one is running it, and the map remembers, so its
 // Ask bar and "Fix with …" prompts name the right one. Only Claude Code gets the CLAUDE.local.md note.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,6 +13,31 @@ test('Codex is recognised by the variables it sets for every command', () => {
   assert.equal(detectAgent({}, { CODEX_SESSION_ID: 'abc' }), 'codex');
   assert.equal(detectAgent({}, {}), 'claude');
   assert.equal(detectAgent({}, { CLAUDECODE: '1' }), 'claude');
+});
+
+test('Kilo Code is recognised by the variables the CLI and the VS Code extension set', () => {
+  assert.equal(detectAgent({}, { KILO: '1' }), 'kilo');
+  assert.equal(detectAgent({}, { KILO_APP_NAME: 'kilo-code' }), 'kilo');
+  assert.equal(detectAgent({}, { KILOCODE_VERSION: '7.8.32' }), 'kilo');
+  assert.equal(detectAgent({}, { KILO_CLIENT: 'vscode' }), 'kilo');
+  assert.equal(detectAgent({ agent: 'kilo' }, {}), 'kilo');
+  assert.equal(detectAgent({ agent: 'Kilo' }, { CODEX_THREAD_ID: 'abc' }), 'kilo');
+  assert.equal(detectAgent({}, { FLOORPLAN_AGENT: 'kilo' }), 'kilo');
+  // codex wins when both are visible, the same way it wins over the claude default
+  assert.equal(detectAgent({}, { CODEX_SESSION_ID: 'abc', KILO: '1' }), 'codex');
+});
+
+test('a map built under Kilo Code records it, and leaves the project notes alone', () => {
+  const root = shopApp();
+  try {
+    run('scan.mjs', root);
+    const out = run('build.mjs', root, '--agent', 'kilo');
+    assert.equal(readGraph(root).meta.agent, 'kilo');
+    assert.match(out, /AGENT {2}Kilo Code/);
+    assert.ok(!fs.existsSync(path.join(root, 'CLAUDE.local.md')), 'no CLAUDE.local.md');
+    assert.ok(!fs.existsSync(path.join(root, 'AGENTS.md')), 'no AGENTS.md');
+    assert.doesNotMatch(out, /CLAUDE\.LOCAL\.MD/);
+  } finally { cleanup(root); }
 });
 
 test('--agent and FLOORPLAN_AGENT override the guess, and nonsense is ignored', () => {
@@ -84,4 +109,12 @@ test("open.mjs names the program that answers questions, even when another one a
   assert.equal(cliLabel('codex', 'othertool v1.2.0'), 'othertool, found as the codex command');
   // text that isn't a program and its version leaves the usual name
   assert.equal(cliLabel('claude', 'unknown'), 'the Claude Code CLI');
+});
+
+test('kilo --version is a bare number, and wrappers are named as themselves', () => {
+  assert.equal(cliLabel('kilo', '7.7.5'), 'Kilo Code');
+  assert.equal(cliLabel('kilo', ''), 'Kilo Code');
+  assert.equal(cliLabel('kilo', 'kilo 7.7.5'), 'Kilo Code');
+  assert.equal(cliLabel('kilo', 'unknown'), 'Kilo Code');
+  assert.equal(cliLabel('kilo', 'devin 3000.11.238'), 'devin, found as the kilo command');
 });
