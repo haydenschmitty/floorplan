@@ -163,7 +163,7 @@ Want to click around yourself? Open the [live demo](https://haydenschmitty.githu
 
 ## Install
 
-You need [Node.js 18+](https://nodejs.org) and either Claude Code or Codex. Floorplan runs on the plan you already have, with no API keys.
+You need [Node.js 18+](https://nodejs.org) and Claude Code, Codex or Kilo Code. Floorplan runs on the plan you already have, with no API keys.
 
 ### Claude Code
 
@@ -192,6 +192,16 @@ codex plugin add floorplan@floorplan
 ```
 
 Start a new chat and ask for a floorplan, or type `$floorplan`. The map's Ask bar runs on your own Codex sign-in, with no API key. More in [Floorplan in Codex](docs/codex.md).
+
+### Kilo Code
+
+From a checkout of this repo, with the `kilo` CLI or the Kilo Code VS Code extension installed:
+
+```bash
+node tools/install-kilo.mjs            # ~/.config/kilo, or --project for one project's .kilo/
+```
+
+Start a new Kilo Code session and ask for a floorplan, or type `/floorplan`. The map's Ask bar runs on your own Kilo sign-in, read-only. More in [Floorplan in Kilo Code](docs/kilo.md).
 
 ## Quick start
 

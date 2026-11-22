@@ -21,15 +21,15 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **The page enforces that itself.** Every map carries a Content-Security-Policy: only the page's own scripts run (each is allowed by its SHA-256 hash, computed when the page is written), and images and fonts can only come from inside the file. An **exported copy** may contact nothing at all (`connect-src 'none'`); `floorplan/index.html` and the page the map's server serves may contact only that local server (`connect-src 'self'`), for asking questions, live reload, flows and Export. So even if text from a repository ever slipped past the map's escaping and became script, it couldn't send the map anywhere. The copy made for the Claude app (`--artifact`) has no policy of its own, because the Claude app runs its own code in that page and applies its own rules.
 - **Reporting a false alarm is yours to send.** If you tick the box under **Not a problem** in Health, the map opens a new GitHub issue in your browser with the text filled in, shown to you first. Nothing goes anywhere unless you submit it there.
 
-Asking questions on the map runs Claude Code or Codex, which talk to Anthropic or OpenAI the way they always do, on your account. Floorplan itself sends nothing.
+Asking questions on the map runs Claude Code, Codex or Kilo Code, which talk to Anthropic, OpenAI or your Kilo provider the way they always do, on your account. Under Kilo Code, each question also runs with `KILO_NO_DAEMON=1` and its own inline configuration, so it never attaches to a shared Kilo daemon, and it stops (rather than answers) if Kilo reports falling back to its default agent. Two honest notes there: Kilo has no ephemeral mode, so map questions appear in your Kilo session list under a "Floorplan" title, and the MCP servers declared in your own Kilo configuration may still start while a question runs (Floorplan starts none itself, and every MCP tool is denied). Floorplan itself sends nothing.
 
 ### The programs it runs
 
 | Program | When | Why |
 |---|---|---|
 | `git` | scan | Read-only: which files are tracked, the current branch and commit, what changed since the last map |
-| `where` (Windows) or `which` | starting the map's server | Finding the Claude Code or Codex CLI |
-| `claude` or `codex` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, or `codex exec --sandbox read-only` |
+| `where` (Windows) or `which` | starting the map's server | Finding the Claude Code, Codex or Kilo Code CLI |
+| `claude`, `codex` or `kilo` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, `codex exec --sandbox read-only`, or `kilo run` under a read-only agent defined for the run |
 | `node` | throughout | Running Floorplan's own scripts |
 | `cmd /c start`, `open` or `xdg-open` | opening the map | Opening the map's local address in your browser |
 
