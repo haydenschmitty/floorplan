@@ -120,6 +120,14 @@ test('path parameters: requirements and defaults written inline are left out of 
   assert.deepEqual(keys, ['GET /blog/{page}', 'GET /blog/{year}/{slug}']);
 });
 
+test("a route path written without its leading slash still gets one before the import's prefix", () => {
+  const { keys } = symfony({
+    'config/routes.yaml': 'c:\n    resource: ../src/Controller/\n    type: attribute\n    prefix: /api\n',
+    'src/Controller/FilesController.php': controller('App\\Controller', 'FilesController', "    #[Route(path: 'orders/files', methods: ['GET'])]\n    public function list() {}"),
+  });
+  assert.deepEqual(keys, ['GET /api/orders/files']);
+});
+
 test('a route name loaded twice: the later import wins, as in Symfony', () => {
   const { keys } = symfony({
     'config/routes.yaml': [

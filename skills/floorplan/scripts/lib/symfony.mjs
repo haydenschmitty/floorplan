@@ -33,6 +33,8 @@ export const sfPath = (p) => {
   const s = ('/' + p).replace(/\{!?(\w+)(?:<[^>]*>)?(?:\?[^}]*)?\}/g, '{$1}').replace(/\/{2,}/g, '/');
   return s.length > 1 ? s.replace(/\/$/, '') : s;
 };
+/** A route's own path with its leading slash, as Route::setPath() gives it before an import's prefix goes in front. */
+const withSlash = (p) => (p.startsWith('/') ? p : '/' + p);
 /** A prefix put in front of a path, as Symfony's addPrefix does. */
 const withPrefix = (prefix, p) => { const t = (prefix || '').trim().replace(/^\/+|\/+$/g, ''); return t ? `/${t}${p}` : p; };
 const hasGlob = (p) => /[*?{[]/.test(p);
@@ -92,7 +94,7 @@ export function symfonyRoutes(files, read) {
     const loadClass = (f, c, ctx) => {
       loaded.add(`${f.path}|${c.cls}`);
       for (const r of c.routes) for (const prefix of ctx.prefixes) keep({
-        name: ctx.names + r.name, file: f.path, line: r.line, handler: r.fn, methods: r.methods, path: sfPath(prefix + r.path),
+        name: ctx.names + r.name, file: f.path, line: r.line, handler: r.fn, methods: r.methods, path: sfPath(prefix + withSlash(r.path)),
         ...(r.doc ? { doc: r.doc } : {}), ...(r.auto ? {} : { routeName: ctx.names + r.name }),
       });
     };
@@ -100,7 +102,7 @@ export function symfonyRoutes(files, read) {
       const f = e.controller && classFile.get(e.controller.cls.toLowerCase());
       const m = f && (f.methods || []).find((x) => x.name.toLowerCase() === e.controller.fn.toLowerCase());
       for (const p of e.paths) for (const prefix of ctx.prefixes) keep({
-        name: ctx.names + e.name, routeName: ctx.names + e.name, methods: e.methods, path: sfPath(prefix + (p.startsWith('/') ? p : '/' + p)),
+        name: ctx.names + e.name, routeName: ctx.names + e.name, methods: e.methods, path: sfPath(prefix + withSlash(p)),
         file: f ? f.path : from, line: f ? m?.line || (f.symbols || []).find((s) => s.kind === 'class')?.line || 1 : line,
         ...(f ? { handler: e.controller.fn, defFile: from, defLine: line } : {}), ...(m?.doc ? { doc: m.doc } : {}),
       });
