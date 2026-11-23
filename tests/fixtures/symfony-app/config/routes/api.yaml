@@ -1,0 +1,17 @@
+# The public API lives under /api, except the status check, which load balancers call at /status.
+api:
+    resource: ../../src/Api/
+    type: attribute
+    prefix: /api
+    name_prefix: api_
+    exclude:
+        - ../../src/Api/StatusController.php
+
+status:
+    resource: App\Api\StatusController
+    type: attribute
+
+when@dev:
+    debug:
+        resource: ../../src/Debug/
+        type: attribute

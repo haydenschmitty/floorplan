@@ -604,11 +604,12 @@ test('files of unclosed lists and brackets are still read quickly', async () => 
   }
 });
 
-test('PHP files of unclosed brackets, route groups and statements are still read quickly', async () => {
+test('PHP files of unclosed brackets, route groups, statements and Symfony routes are still read quickly', async () => {
   const { extract } = await lib('extract.mjs');
   const { findIssues } = await lib('health.mjs');
   const half = (unit) => '<?php\n' + unit.repeat(Math.ceil((512 * 1024) / unit.length));
   const inClass = (head, unit) => '<?php\nclass A {\n' + head + unit.repeat(Math.ceil((512 * 1024) / unit.length));
+  const sf = (unit) => '<?php\nuse Symfony\\Component\\Routing\\Attribute\\Route;\nuse Symfony\\Component\\Routing\\Annotation\\Route as R;\n' + unit.repeat(Math.ceil((512 * 1024) / unit.length));
   const cases = {
     'Route::get( with no )': half('Route::get('),
     'route groups never closed': half("Route::prefix('a')->group(function () {\n"),
@@ -632,6 +633,19 @@ test('PHP files of unclosed brackets, route groups and statements are still read
     '$this->middleware( with no )': half('$this->middleware('),
     'middleware aliases never closed': '<?php\n->withMiddleware(' + '->alias('.repeat(65536),
     'Kernel lists never closed': half('$middlewareGroups = ['),
+    // Symfony: route attributes and annotations, and route config written in PHP
+    'Route attributes never closed': sf("#[Route('/a', "),
+    'Route attributes with nothing after them': sf("#[Route('/a'), Route(path: '/b')]\n"),
+    'routed classes one after another': sf("class A {\n#[Route('/a')]\npublic function f() {}\n}\n"),
+    'routed methods of one class': sf('class A {\n') + "#[Route('/a', methods: ['GET'])]\npublic function f() {}\n".repeat(8000),
+    'Route annotations never closed': sf('/** @Route("/a", methods={'),
+    'docblocks never closed': sf('/** @Route('),
+    'imports with no )': sf('return function (RoutingConfigurator $routes) {\n') + '$routes->import('.repeat(60000),
+    'import chains that never end': sf("return function (RoutingConfigurator $routes) {\n$routes->import('a')") + '->prefix('.repeat(60000),
+    'variables with no ;': sf('class Kernel extends BaseKernel {\nuse MicroKernelTrait;\nprotected function configureRoutes(RoutingConfigurator $routes) {\n') + '$a = '.repeat(60000),
+    'ifs on the environment never closed': sf('return function (RoutingConfigurator $routes) {\n') + "if ($routes->env() === 'dev') { ".repeat(20000),
+    'imports in ifs on the environment': sf('return function (RoutingConfigurator $routes) {\n') + "if ($routes->env() === 'dev') { $routes->import('a'); }\n".repeat(12000),
+    'ifs never closed': sf('return function (RoutingConfigurator $routes) {\n') + 'if ('.repeat(100000),
   };
   for (const [name, src] of Object.entries(cases)) {
     const t = performance.now();

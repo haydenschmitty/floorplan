@@ -2225,10 +2225,13 @@ function whatWasChecked({ graph, scan, perRepo, live, usesSupabase, supabaseTabl
     if (sv) servers.push({ file: f.path, what: `it ${sv.how || 'calls'} ${sv.what}` });
     else if (/(^|\/)supabase\/functions\/[^/]+\/index\.[jt]s$/.test(f.path)) servers.push({ file: f.path, what: 'it’s a Supabase Edge Function' });
   }
+  // Symfony's endpoints are on the map, but who may call them (security.yaml, #[IsGranted]) isn't read yet
+  const symfony = (scan.routes || []).filter((r) => r.framework === 'symfony' && !TEST_FILE.test(r.file)).length;
+  const symfonyNote = symfony ? `. Symfony’s access control (access_control in security.yaml, #[IsGranted]) isn’t read yet, so its ${plural(symfony, 'endpoint')} ${symfony === 1 ? 'wasn’t' : 'weren’t'} checked` : '';
   if (checkedRoutes) add('endpoints', 'Endpoint sign-in', true, found > checkedRoutes
-    ? `checked ${checkedRoutes} of the ${found} endpoints found (the others are set up in a way Floorplan can’t check yet, or belong to scripts and tests)`
+    ? `checked ${checkedRoutes} of the ${found} endpoints found (the others are set up in a way Floorplan can’t check yet, or belong to scripts and tests)${symfonyNote}`
     : `checked ${plural(checkedRoutes, 'endpoint')}`);
-  else if (found) add('endpoints', 'Endpoint sign-in', false, `not checked: ${plural(found, 'endpoint')} found, but set up in a way Floorplan can’t check for a login yet`);
+  else if (found) add('endpoints', 'Endpoint sign-in', false, `not checked: ${plural(found, 'endpoint')} found, but set up in a way Floorplan can’t check for a login yet${symfonyNote}`);
   else if (servers.length) add('endpoints', 'Endpoint sign-in', false, `not checked: no endpoints found, but ${servers[0].file} looks like it runs a server (${servers[0].what})${servers.length > 1 ? `, and so ${servers.length === 2 ? 'does 1 other file' : `do ${servers.length - 1} other files`}` : ''}. Its endpoints may be set up in a way Floorplan doesn’t recognise yet, so nothing checked whether they need a login.`, true);
   else add('endpoints', 'Endpoint sign-in', false, 'not checked: no endpoints found. If your app has a server, it may use a setup Floorplan doesn’t recognise yet.');
 
