@@ -1964,6 +1964,383 @@ export function phpPages(files) {
   return added;
 }
 
+// ---------- PHP: Symfony ----------
+
+// a class, function, enum… declaration, read from just past the attributes and docblock above it
+const PHP_DECL = /(?:(?:abstract|final|readonly|public|protected|private|static)\s+)*(class|function|enum|interface|trait)\s+&?([A-Za-z_]\w*)/y;
+
+/**
+ * PHP 8 attributes (`#[Route('/x'), IsGranted('ROLE_USER')]`) and what each decorates: the class or function
+ * after it, past any other attributes. Found by brackets, so an attribute written over several lines counts
+ * too. Each is { at, end, items: [{ name, args }], target?: { kind, name, at, abstract } }.
+ */
+function phpAttributes(code, bare, close, spend) {
+  const out = [];
+  let after = 0;
+  for (const m of bare.matchAll(/#\[/g)) {
+    if (m.index < after) continue; // (inside another attribute's arguments)
+    const open = m.index + 1, end = close(open);
+    after = end;
+    if (!spend(end - open)) break;
+    const parts = phpParts(code, bare, close, open + 1, end - 1);
+    const items = [];
+    parts.forEach((t, i) => {
+      const n = /^(\\?[A-Za-z_][\w\\]*)\s*(\()?/.exec(t);
+      if (!n) return;
+      const paren = n[2] ? parts.starts[i] + n[0].length - 1 : -1;
+      items.push({ name: n[1], args: paren >= 0 ? phpParts(code, bare, close, paren + 1, close(paren) - 1) : [] });
+    });
+    out.push({ at: m.index, end, items });
+  }
+  // what each decorates: the next attribute's target when only spaces separate them, else the declaration
+  // after it (read backwards, so a run of attributes costs its own length)
+  for (let k = out.length - 1; k >= 0; k--) {
+    const a = out[k], next = out[k + 1];
+    if (next && !/\S/.test(bare.slice(a.end, next.at))) { if (next.target) a.target = next.target; continue; }
+    let i = a.end;
+    while (i < bare.length && /\s/.test(bare[i])) i++;
+    PHP_DECL.lastIndex = i;
+    const d = PHP_DECL.exec(bare);
+    if (d) a.target = { kind: d[1], name: d[2], at: i, abstract: /\babstract\b/.test(d[0]) };
+  }
+  return out;
+}
+
+// Symfony's route attribute and annotation, under each name they've had
+const SF_ROUTE = new Set(['symfony\\component\\routing\\attribute\\route', 'symfony\\component\\routing\\annotation\\route', 'sensio\\bundle\\frameworkextrabundle\\configuration\\route']);
+const SF_METHOD = 'sensio\\bundle\\frameworkextrabundle\\configuration\\method';
+// Route's constructor arguments, in order, for the ones written without a name
+const SF_ROUTE_ARGS = ['path', 'name', 'requirements', 'options', 'defaults', 'host', 'methods', 'schemes', 'condition', 'priority', 'locale', 'format', 'utf8', 'stateless', 'env'];
+// the production environment, the one whose routes a map shows
+const SF_ENV = 'prod';
+
+/** A PHP string, or the strings of an array literal (a list, or a map's values: localized paths), or []. */
+function phpStrings(t) {
+  if (t == null) return [];
+  const s = phpStr(t);
+  if (s != null) return [s];
+  return phpPairs(t).map(([, v]) => phpStr(v)).filter((x) => x != null);
+}
+
+/** A #[Route(…)]'s arguments as { paths, name, methods, env }. */
+function sfRouteArgs(args) {
+  const named = {};
+  let pos = 0;
+  for (const a of args) {
+    const [k, v] = phpNamed(a);
+    if (k) named[k] = v;
+    else if (pos < SF_ROUTE_ARGS.length) named[SF_ROUTE_ARGS[pos++]] = v;
+  }
+  return {
+    paths: phpStrings(named.path), name: named.name != null ? phpStr(named.name) : null,
+    methods: phpStrings(named.methods).map((x) => x.toUpperCase()), env: phpStrings(named.env),
+  };
+}
+
+/** A docblock annotation's value: "text", or {"A", "B"} / {"en"="/a"} as a list of the strings. */
+function annotationValue(t) {
+  t = (t || '').trim();
+  if (t.startsWith('{') && t.endsWith('}')) return phpSplit(t.slice(1, -1)).map((p) => phpStr(p.replace(/^[^=]*=(?!>)/, '').trim()) ?? phpStr(p)).filter((x) => x != null);
+  const s = phpStr(t);
+  return s == null ? [] : [s];
+}
+
+/** @Route("/x", name="y", methods={"GET"}) and @Method({"GET"}) in a docblock, as sfRouteArgs reads attributes. */
+function annotationArgs(text) {
+  const named = {};
+  const parts = phpSplit(text);
+  parts.forEach((p, i) => {
+    const m = /^(\w+)\s*=\s*([\s\S]*)$/.exec(p);
+    if (m) named[m[1]] = m[2];
+    else if (i === 0) named.path = named.value = p;
+  });
+  const name = annotationValue(named.name)[0];
+  return { paths: annotationValue(named.path), name: name ?? null, methods: annotationValue(named.methods).map((x) => x.toUpperCase()), env: annotationValue(named.env) };
+}
+
+/**
+ * Legacy route annotations in docblocks (comments, so read from the source): [{ at, routes: [args], methods }],
+ * `at` being where the declaration after the docblock starts.
+ */
+function phpRouteAnnotations(src, code, bare, close, cls, spend) {
+  const out = [];
+  if (!/@(?:Route|Method)\s*\(/.test(src)) return out;
+  for (let from = src.indexOf('/**'); from >= 0;) {
+    const end = src.indexOf('*/', from + 3);
+    if (end < 0) break;
+    const m = { index: from, 0: src.slice(from, end + 2) };
+    from = src.indexOf('/**', end + 2);
+    if (code[m.index] !== ' ' || !/@(?:Route|Method)\s*\(/.test(m[0])) continue; // a string, not a comment; or no route
+    const routes = [], methods = [];
+    for (const a of m[0].matchAll(/@(\\?[A-Za-z_][\w\\]*)\s*\(/g)) {
+      const full = (cls(a[1]) || '').toLowerCase();
+      if (!SF_ROUTE.has(full) && full !== SF_METHOD) continue;
+      // the annotation's own brackets, at most a couple of thousand characters
+      let depth = 0, j = a.index + a[0].length - 1;
+      const stop = Math.min(m[0].length, j + 2000);
+      if (!spend(stop - j)) return out;
+      for (; j < stop; j++) {
+        const c = m[0][j];
+        if (c === '"') { j = phpStringEnd(m[0], j) - 1; continue; }
+        if (c === '(') depth++; else if (c === ')' && --depth === 0) break;
+      }
+      if (depth !== 0) continue;
+      const text = m[0].slice(a.index + a[0].length, j).replace(/\n\s*\*/g, ' ');
+      const args = annotationArgs(text);
+      if (full === SF_METHOD) methods.push(...(args.paths.length ? args.paths : []).map((x) => x.toUpperCase()));
+      else routes.push(args);
+    }
+    if (!routes.length) continue;
+    let i = m.index + m[0].length;
+    while (i < bare.length && /\s/.test(bare[i])) i++;
+    while (bare.startsWith('#[', i)) { i = close(i + 1); while (i < bare.length && /\s/.test(bare[i])) i++; }
+    PHP_DECL.lastIndex = i;
+    const d = PHP_DECL.exec(bare);
+    if (d) out.push({ target: { kind: d[1], name: d[2], at: i, abstract: /\babstract\b/.test(d[0]) }, routes: routes.map((r) => ({ ...r, methods: [...r.methods, ...methods] })) });
+  }
+  return out;
+}
+
+/** Symfony's default name for a route that doesn't give one (AttributeClassLoader::getDefaultRouteName). */
+const sfDefaultName = (fqcn, fn, index) => `${fqcn.replace(/\\/g, '_')}_${fn}`.toLowerCase() + (index > 0 ? `_${index}` : '');
+
+/**
+ * The routes a Symfony controller class declares, as Symfony's attribute loader reads them: the first route on
+ * the class gives the path, name prefix and methods of the routes on its methods; a class with no routes on its
+ * methods but an __invoke() is itself the endpoint, once for each route on the class. An abstract class, and a
+ * route (or class) only for another environment than production, declare none.
+ */
+function sfClassRoutes(decl, fqcn, classRoutes, methodRoutes, methods, classDoc) {
+  if (decl.abstract) return [];
+  const live = (r) => !r.env.length || r.env.includes(SF_ENV);
+  const g = classRoutes[0];
+  if (g && !live(g)) return [];
+  const out = [];
+  for (const { fn, line, doc, routes } of methodRoutes) {
+    let index = 0;
+    for (const r of routes) {
+      if (!live(r)) continue;
+      const auto = r.name == null;
+      const name = (g?.name || '') + (auto ? sfDefaultName(fqcn, fn, index++) : r.name);
+      for (const p of r.paths) out.push({ path: (g?.paths[0] || '') + p, methods: [...new Set([...(g?.methods || []), ...r.methods])], name, ...(auto ? { auto } : {}), line, fn, ...(doc ? { doc } : {}) });
+    }
+  }
+  const invoke = !out.length && classRoutes.length ? methods.find((m) => m.name.toLowerCase() === '__invoke' && m.line > decl.line && m.line < decl.endLine) : null;
+  if (!out.length && invoke) {
+    let index = 0;
+    for (const r of classRoutes) {
+      if (!live(r)) continue;
+      const auto = r.name == null;
+      const name = auto ? sfDefaultName(fqcn, '__invoke', index++) : r.name;
+      const doc = classDoc || invoke.doc;
+      for (const p of r.paths) out.push({ path: p, methods: r.methods, name, ...(auto ? { auto } : {}), line: decl.line, fn: '__invoke', ...(doc ? { doc } : {}) });
+    }
+  }
+  return out;
+}
+
+/**
+ * Where a path in Symfony's route config points, as `@base/…` (the project's folder, where composer.json is)
+ * or relative to the file it's written in, or { cls } for `X::class`. Null when it can't be read without
+ * running the code. Production is the environment ($this->environment, $routes->env()).
+ */
+function sfPathExpr(text, vars, consts, cls) {
+  const t = (text || '').trim();
+  let m = /^(\\?[A-Za-z_][\w\\]*)\s*::\s*class$/.exec(t);
+  if (m) return { cls: cls(m[1]) };
+  if (phpIsArray(t)) { const p = phpPairs(t).find(([k]) => k === 'path'); return p ? sfPathExpr(p[1], vars, consts, cls) : null; }
+  const parts = [];
+  let depth = 0, from = 0;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === "'" || c === '"') { i = phpStringEnd(t, i) - 1; continue; }
+    if (c === '(' || c === '[') depth++; else if (c === ')' || c === ']') depth--;
+    else if (c === '.' && depth === 0) { parts.push(t.slice(from, i).trim()); from = i + 1; }
+  }
+  parts.push(t.slice(from).trim());
+  let out = '';
+  for (const [k, p] of parts.entries()) {
+    const s = phpStr(p);
+    if (s != null) { out += s; continue; }
+    if (/^\$this\s*->\s*(?:environment|getEnvironment\(\s*\))$|^\$\w+\s*->\s*env\(\s*\)$/.test(p)) { out += SF_ENV; continue; }
+    if ((m = /^(?:self|static)\s*::\s*([A-Za-z_]\w*)$/.exec(p)) && consts[m[1]] != null) { out += consts[m[1]]; continue; }
+    if ((m = /^\$(\w+)$/.exec(p)) && vars[m[1]] != null) { out += vars[m[1]]; continue; }
+    if (k > 0) return null;
+    if (/^\$this\s*->\s*getProjectDir\(\s*\)$/.test(p)) out = '@base';
+    else if (/^\$this\s*->\s*getConfigDir\(\s*\)$/.test(p)) out = '@base/config';
+    else if (/^__DIR__$/.test(p)) out = '.';
+    else if ((m = /^\\?dirname\(\s*__DIR__\s*(?:,\s*(\d+)\s*)?\)$/.exec(p))) out = Array(Number(m[1] || 1)).fill('..').join('/');
+    else return null;
+  }
+  return out || null;
+}
+
+/** A controller written in route config: 'App\X::show', [X::class, 'show'], X::class (invokable), as { cls, fn }. */
+function sfController(t, cls) {
+  if (t == null) return null;
+  const s = phpStr(t);
+  if (s != null) { const [c, fn] = s.split('::'); return { cls: c.replace(/^\\/, ''), fn: fn || '__invoke' }; }
+  const m = /^(\\?[A-Za-z_][\w\\]*)\s*::\s*class$/.exec(t.trim());
+  if (m) return { cls: cls(m[1]), fn: '__invoke' };
+  const pair = phpArrayBody(t) != null ? phpSplit(phpArrayBody(t)) : [];
+  const c = pair[0] && /^(\\?[A-Za-z_][\w\\]*)\s*::\s*class$/.exec(pair[0]);
+  return c && phpStr(pair[1]) ? { cls: cls(c[1]), fn: phpStr(pair[1]) } : null;
+}
+
+/**
+ * Symfony route config written in PHP, in code[from, to) (a config/routes.php closure, or Kernel::configureRoutes):
+ * `$routes->import(…)->prefix(…)->namePrefix(…)` and `$routes->add('name', '/path')->controller(…)->methods(…)`, as
+ * entries the route loader (lib/symfony.mjs) follows. Calls inside an `if` on the environment count only when it
+ * picks production. An import whose path can't be read is kept with resource: null.
+ */
+function sfConfigEntries({ code, bare, close, spend, at, cls, consts }, from, to, v, builder) {
+  const out = [];
+  const region = bare.slice(from, to);
+  const vars = {};
+  for (const m of region.matchAll(/\$(\w+)\s*=(?![=>])\s*([^;]{1,500});/g)) {
+    const val = sfPathExpr(code.slice(from + m.index + m[0].indexOf('=') + 1, from + m.index + m[0].length - 1), vars, consts, cls);
+    if (typeof val === 'string' && vars[m[1]] == null) vars[m[1]] = val;
+  }
+  // `if (…env…) { … }` blocks for another environment
+  const skipped = [];
+  for (const m of region.matchAll(/\bif\s*\(/g)) {
+    const open = from + m.index + m[0].length - 1, end = close(open);
+    if (end - open > 500) continue;
+    const cond = code.slice(open + 1, end - 1);
+    if (!/env\s*\(|environment|getEnvironment/.test(cond)) continue;
+    const words = [...cond.matchAll(/(['"])(\w+)\1/g)].map((x) => x[2]);
+    const forProd = words.includes(SF_ENV) === !/!==?|!\s*\$/.test(cond);
+    let b = end;
+    while (b < to && /\s/.test(bare[b])) b++;
+    // (blocks nest or sit apart, so only the outermost ones are kept, in order)
+    if (!forProd && bare[b] === '{' && !(skipped.length && b < skipped[skipped.length - 1][1])) skipped.push([b, close(b)]);
+  }
+  const inSkipped = (pos) => {
+    let lo = 0, hi = skipped.length - 1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (skipped[mid][0] < pos) { if (pos < skipped[mid][1]) return true; lo = mid + 1; } else hi = mid - 1; }
+    return false;
+  };
+  const named = (args, names) => {
+    const o = {};
+    let pos = 0;
+    for (const a of args) { const [k, val] = phpNamed(a); if (k) o[k] = val; else if (pos < names.length) o[names[pos++]] = val; }
+    return o;
+  };
+  // a call's arguments are short: one running further than PHP_PATH_MAX isn't read (it would cost its length)
+  const argsOf = (p) => (close(p) - p <= PHP_PATH_MAX && spend(close(p) - p) ? phpParts(code, bare, close, p + 1, close(p) - 1) : null);
+  for (const m of region.matchAll(new RegExp(String.raw`\$${v}\s*->\s*(import|add)\s*\(`, 'g'))) {
+    const pos = from + m.index;
+    if (inSkipped(pos)) continue;
+    const paren = pos + m[0].length - 1;
+    const args = argsOf(paren);
+    if (!args) continue;
+    const chain = [];
+    for (let j = close(paren), n = 0; n < 20; n++) {
+      const c = /^\s*->\s*(\w+)\s*\(/.exec(bare.slice(j, j + 200));
+      if (!c) break;
+      const p = j + c[0].length - 1;
+      const cargs = argsOf(p);
+      if (!cargs) break;
+      chain.push([c[1], cargs]);
+      j = close(p);
+    }
+    const line = at(pos);
+    if (m[1] === 'import') {
+      const a = named(args, builder ? ['resource', 'prefix', 'type'] : ['resource', 'type', 'ignoreErrors', 'exclude']);
+      const resource = sfPathExpr(a.resource, vars, consts, cls);
+      const e = { kind: 'import', resource, type: phpStr(a.type) ?? null, prefix: builder && a.prefix ? phpStrings(a.prefix) : [], namePrefix: '', exclude: phpStrings(a.exclude), line };
+      for (const [name, cargs] of chain) {
+        if (name === 'prefix') e.prefix = phpStrings(cargs[0]);
+        else if (name === 'namePrefix') e.namePrefix = phpStr(cargs[0]) || '';
+      }
+      out.push(e);
+    } else {
+      const a = named(args, ['name', 'path']);
+      const e = { kind: 'route', name: phpStr(a.name), paths: phpStrings(a.path), methods: [], controller: null, line };
+      for (const [name, cargs] of chain) {
+        if (name === 'controller') e.controller = sfController(cargs[0], cls);
+        else if (name === 'methods') e.methods = phpStrings(cargs[0]).map((x) => x.toUpperCase());
+      }
+      if (e.name && e.paths.length) out.push(e);
+    }
+  }
+  return out;
+}
+
+/**
+ * What a PHP file tells Symfony's router: the routes each controller class declares, whether it's the app's
+ * Kernel (and reads its own route config in configureRoutes()), and the entries of route config written in PHP.
+ * Which of them Symfony serves, and under which prefix, is worked out across files (lib/symfony.mjs).
+ */
+function symfonyFacts({ src, code, bare, close, spend, at, lines, cls, decls, methods, attributes, imports }) {
+  const sfRoute = (name) => SF_ROUTE.has((cls(name) || '').toLowerCase());
+  // route declarations by what they decorate (its position)
+  const byTarget = new Map();
+  const add = (target, r) => { if (!byTarget.has(target.at)) byTarget.set(target.at, { target, routes: [] }); byTarget.get(target.at).routes.push(r); };
+  for (const a of attributes) if (a.target) for (const it of a.items) if (sfRoute(it.name)) add(a.target, sfRouteArgs(it.args));
+  for (const a of phpRouteAnnotations(src, code, bare, close, cls, spend)) for (const r of a.routes) add(a.target, r);
+
+  const methodAt = new Map(methods.map((m) => [m.line, m]));
+  const firstAttr = new Map();
+  for (const a of attributes) if (a.target && !firstAttr.has(a.target.at)) firstAttr.set(a.target.at, a.at);
+  // each route's class: the last one starting at or before it, if it's still open there (classes don't nest)
+  const list = decls.list.filter((d) => d.kind === 'class');
+  const own = new Map(); // class -> its route declarations, in order
+  for (const x of [...byTarget.values()].sort((a, b) => a.target.at - b.target.at)) {
+    let lo = 0, hi = list.length - 1, d = null;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (list[mid].start <= x.target.at) { d = list[mid]; lo = mid + 1; } else hi = mid - 1; }
+    if (!d || x.target.at >= d.bodyEnd) continue;
+    if (!own.has(d)) own.set(d, []);
+    own.get(d).push(x);
+  }
+  const classes = [];
+  const ns = decls.ns;
+  for (const [d, xs] of own) {
+    const fqcn = ns ? `${ns}\\${d.name}` : d.name;
+    const onClass = xs.find((x) => x.target.kind === 'class');
+    const onMethods = xs.filter((x) => x.target.kind === 'function').map((x) => {
+      const m = methodAt.get(at(x.target.at));
+      return { fn: x.target.name, line: at(x.target.at), doc: m?.doc, routes: x.routes };
+    });
+    const first = onClass && firstAttr.get(onClass.target.at);
+    const classDoc = commentBefore(lines, at(first ?? d.start) - 1, 'php');
+    const routes = sfClassRoutes(d, fqcn, onClass?.routes || [], onMethods, methods, classDoc);
+    if (routes.length) classes.push({ cls: fqcn, line: d.line, routes });
+  }
+
+  const out = {};
+  if (classes.length) out.classes = classes;
+  // the Kernel: a class that uses MicroKernelTrait or extends Symfony's Kernel
+  const consts = {};
+  for (const m of bare.matchAll(/\bconst\s+(?:\w+\s+)?([A-Za-z_]\w*)\s*=\s*(['"])/g)) {
+    const end = phpStringEnd(code, m.index + m[0].length - 1);
+    const s = phpStr(code.slice(m.index + m[0].length - 1, end));
+    if (s != null) consts[m[1]] = s;
+  }
+  const ctx = { code, bare, close, spend, at, cls, consts };
+  const microKernel = imports.some((i) => /(^|\\)MicroKernelTrait$/.test(i.spec || ''));
+  for (const d of decls.list) {
+    if (d.kind !== 'class' || d.abstract) continue;
+    const parent = /\bextends\s+(\\?[\w\\]+)/.exec(d.head)?.[1];
+    if (!microKernel && (cls(parent) || '').toLowerCase() !== 'symfony\\component\\httpkernel\\kernel') continue;
+    const cr = new RegExp(String.raw`function\s+configureRoutes\s*\(\s*\??(\\?[\w\\]+)\s+\$(\w+)`, 'g');
+    cr.lastIndex = d.start;
+    const m = cr.exec(bare);
+    if (m && m.index < d.bodyEnd) {
+      const open = bare.indexOf('{', m.index + m[0].length);
+      const builder = /RouteCollectionBuilder$/.test(m[1]);
+      out.kernel = { line: d.line, overrides: true, entries: open < 0 ? [] : sfConfigEntries(ctx, open, close(open), m[2], builder) };
+    } else out.kernel = { line: d.line, overrides: false };
+    break;
+  }
+  // route config written in PHP: the closure config/routes.php and config/routes/*.php return
+  if (!out.kernel && /RoutingConfigurator/.test(bare)) {
+    const v = /RoutingConfigurator\s+\$(\w+)/.exec(bare)?.[1];
+    if (v) out.config = sfConfigEntries(ctx, 0, bare.length, v, false);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 function extractPhp(src, filePath) {
   const code = stripPhp(src);
   const at = lineIndex(code);
@@ -1977,6 +2354,7 @@ function extractPhp(src, filePath) {
   // class-like bodies, to tell `use Trait;` inside a class from a top-level `use Some\Class;`
   const symbols = [];
   const bodies = [];
+  const decls = []; // class-likes with where they start and end, for Symfony's routes
   const nextBrace = forwardIndexOf(bare, '{'), nextSemi = forwardIndexOf(bare, ';');
   for (const m of bare.matchAll(/^[ \t]*(?:(?:abstract|final|readonly)\s+)*(class|interface|trait|enum)\s+([A-Za-z_]\w*)/gm)) {
     // the body starts at the next {, unless a ; comes first
@@ -1984,6 +2362,7 @@ function extractPhp(src, filePath) {
     if (brace < 0 || (semi >= 0 && semi < brace)) continue;
     symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
     bodies.push([brace + 1, close(brace)]);
+    decls.push({ name: m[2], kind: m[1], line: at(m.index), start: m.index, bodyEnd: close(brace), endLine: at(close(brace) - 1), abstract: /\babstract\b/.test(m[0]), head: bare.slice(from, Math.min(brace, from + 500)) });
   }
   for (const m of bare.matchAll(/^function\s+&?([A-Za-z_]\w*)\s*\(/gm)) symbols.push({ name: m[1], kind: 'function', line: at(m.index) });
   // bodies nest or sit apart, so the outermost ones, in order, say whether a position is inside any
@@ -2029,11 +2408,16 @@ function extractPhp(src, filePath) {
     }
   }
 
+  // PHP 8 attributes, and the line where those above each declaration start (an attribute can span lines)
+  const attributes = bare.includes('#[') ? phpAttributes(code, bare, close, spend) : [];
+  const attrsFrom = new Map();
+  for (const a of attributes) if (a.target && !attrsFrom.has(at(a.target.at))) attrsFrom.set(at(a.target.at), at(a.at));
+
   // methods: where a route's controller action starts, and its doc comment
   const methods = [];
   for (const m of bare.matchAll(/^[ \t]+((?:(?:public|protected|private|static|final|abstract)\s+)*)function\s+&?([A-Za-z_]\w*)\s*\(/gm)) {
     const line = at(m.index);
-    let k = line - 1;
+    let k = (attrsFrom.get(line) ?? line) - 1;
     while (k > 0 && /^\s*#\[/.test(lines[k - 1])) k--; // PHP 8 attributes sit between the docblock and the method
     const doc = commentBefore(lines, k);
     // the classes its parameters are typed with (a form request among them checks who may call)
@@ -2066,11 +2450,15 @@ function extractPhp(src, filePath) {
     inertia.push({ page: m[2], line, ...(methodAt(line) ? { fn: methodAt(line) } : {}) });
   }
 
+  // Symfony: routes on controller classes, the Kernel, and route config written in PHP (lib/symfony.mjs)
+  const symfony = /#\[|@(?:Route|Method)\s*\(|RoutingConfigurator|RouteCollectionBuilder|MicroKernelTrait|\bKernel\b/.test(bare) || /@Route\s*\(/.test(src)
+    ? symfonyFacts({ src, code, bare, close, spend, at, lines, cls, decls: { ns, list: decls }, methods, attributes, imports }) : null;
+
   const { calls, hosts } = extractCalls(code, at, { skip: /\bRoute\s*::|->(?:prefix|group|middleware)\(/ });
   const classes = symbols.filter((s) => s.kind !== 'function').map((s) => (ns ? `${ns}\\${s.name}` : s.name));
   return {
     imports, symbols, routes, mounts, calls, hosts,
-    ...(classes.length ? { classes } : {}), ...(methods.length ? { methods } : {}), ...(inertia.length ? { inertia } : {}),
+    ...(classes.length ? { classes } : {}), ...(methods.length ? { methods } : {}), ...(inertia.length ? { inertia } : {}), ...(symfony ? { symfony } : {}),
     // where the PHP starts, for a page's endpoint (phpPages)
     ...(/<\?(?:php\b|=)/i.test(src) ? { phpStart: at(src.search(/<\?(?:php\b|=)/i)) } : {}),
   };

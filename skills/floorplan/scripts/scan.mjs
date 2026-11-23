@@ -20,6 +20,7 @@ import { resolveRoutes, matchCalls, matchWayfinder, inertiaLinks } from './lib/r
 import { nuxtAutoImports } from './lib/nuxt.mjs';
 import { serverlessRoutes } from './lib/serverless.mjs';
 import { edgeFunctionRoutes } from './lib/supabase-functions.mjs';
+import { symfonyRoutes } from './lib/symfony.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const unattended = unattendedMode(args);
@@ -97,7 +98,7 @@ for (const { path: p, repo } of fileList) {
       // h: exact content. sig: the parts a description depends on (exports, routes, docstring),
       // so edits inside function bodies don't mark a file's description as stale.
       f.h = hash(src);
-      f.sig = hash(JSON.stringify([(f.symbols || []).map((s) => s.name).sort(), (f.routes || []).map((r) => `${r.method} ${r.path}`).sort(), f.doc || '']));
+      f.sig = hash(JSON.stringify([(f.symbols || []).map((s) => s.name).sort(), [...(f.routes || []), ...(f.symfony?.classes || []).flatMap((c) => c.routes)].map((r) => `${r.method || r.methods} ${r.path}`).sort(), f.doc || '']));
     }
     // extension hooks: per-file health findings (lib/health.mjs) and app screens (lib/screens.mjs)
     if (src.length) {
@@ -185,6 +186,9 @@ const routes = resolveRoutes(files);
 // Serverless Framework: endpoints declared in serverless.yml, placed in the file that answers them (lib/serverless.mjs)
 const serverless = serverlessRoutes(files, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
 routes.push(...serverless.routes);
+// Symfony: the routes its route config loads, from #[Route] controllers or defined in the config (lib/symfony.mjs)
+const symfony = symfonyRoutes(files, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
+routes.push(...symfony.routes);
 // Supabase Edge Functions: each one's address under /functions/v1 (lib/supabase-functions.mjs)
 const edge = edgeFunctionRoutes(files, routes, (p) => { try { return fs.readFileSync(path.join(root, p), 'utf8'); } catch { return ''; } });
 const http = matchCalls(files, routes);
@@ -350,6 +354,14 @@ if (laravel.length) {
   }
   const loose = [...routeFiles].filter((p) => !loaded.has(p) && !/(^|\/)bootstrap\/app\.php$|(^|\/)Providers\//.test(p));
   if (loose.length) line(`  route files nothing loads (their addresses may be missing a prefix): ${loose.slice(0, 6).join(', ')}${loose.length > 6 ? ' …' : ''}`);
+  line();
+}
+
+if (symfony.routes.length || symfony.unread.length) {
+  const controllers = new Set(symfony.routes.filter((r) => r.handler).map((r) => r.file));
+  line(`SYMFONY  ${symfony.routes.length} endpoints from ${controllers.size} controller(s), loaded by ${symfony.configs.length} route config file(s) (each endpoint sits in the controller method that answers it)`);
+  for (const u of symfony.unread.slice(0, 6)) line(`  ${u.file}:${u.line}  an import whose path the scan couldn't read without running the code${symfony.loose ? `; the ${symfony.loose} route(s) no other import loads are listed at their own address, without a prefix it may add` : ''}`);
+  if (symfony.unread.length > 6) line(`  … ${symfony.unread.length - 6} more`);
   line();
 }
 
