@@ -1929,8 +1929,9 @@ const PHP_DOC_ROOT = /^((?:.*\/)?(?:public|public_html|www|htdocs))\//;
  * Plain PHP sites, with no framework routing: a script under the document root (public/, public_html/, www/,
  * htdocs/) answers requests at its own address, public/orders/save.php at /orders/save.php and an index.php at
  * its folder's. Scripts other scripts include are parts of pages, not pages, and so are files and folders
- * starting with _ or a dot. A document root whose index.php loads Composer's vendor/autoload.php is a framework's
- * front controller (Laravel, Symfony, Slim), whose routes are read elsewhere, so it's left alone.
+ * starting with _ or a dot. A document root whose index.php loads Composer's autoloader (itself, or through a file
+ * it requires) is a framework's front controller (Laravel, Symfony, Slim), whose routes are read elsewhere, so
+ * it's left alone.
  * Adds the endpoints to each file's routes; call it after imports are resolved (imp.files).
  * After @maccydee's document-root rule in #13.
  */
@@ -1940,6 +1941,10 @@ export function phpPages(files) {
   const included = new Set(php.flatMap((f) => (f.imports || []).flatMap((imp) => imp.files || [])));
   const byPath = new Map(php.map((f) => [f.path, f]));
   const frontController = new Map();
+  // Composer's autoloader (or Symfony Runtime's, autoload_runtime.php), loaded by the file or by one it loads
+  // (Symfony 4's config/bootstrap.php), a couple of files deep
+  const loadsAutoloader = (f, depth = 0) => !!f?.imports?.some((imp) => /(^|\/)vendor\/autoload(?:_runtime)?\.php$/.test(imp.spec || '')
+    || (depth < 2 && imp.kind === 'include' && (imp.files || []).some((p) => loadsAutoloader(byPath.get(p), depth + 1))));
   let added = 0;
   for (const f of php) {
     const m = PHP_DOC_ROOT.exec(f.path);
@@ -1947,7 +1952,7 @@ export function phpPages(files) {
     const root = m[1];
     if (!frontController.has(root)) {
       const index = byPath.get(`${root}/index.php`);
-      frontController.set(root, !!index?.imports?.some((imp) => /(^|\/)vendor\/autoload\.php$/.test(imp.spec || '')));
+      frontController.set(root, loadsAutoloader(index));
     }
     if (frontController.get(root)) continue;
     const rel = f.path.slice(root.length + 1);
