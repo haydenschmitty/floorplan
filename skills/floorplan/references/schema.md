@@ -18,6 +18,7 @@ Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-
 | `audience` | `"everyone"` \| `"developers"` | no | who names and descriptions are written for. Default `"everyone"`: plain language a non-technical owner understands (what it does for the business, in everyday words). `"developers"`: technical style for engineers |
 | `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs`. The scan and the build list what's left out, by category, on their `NOT MAPPED` line |
 | `ignore` | string[] | no | globs for files to leave off the board entirely (generated code, vendored libs, fixtures) |
+| `git` | `"none"` \| `"inputs"` | no | whether the map is shared through git. Default `"none"`: the map folder's `.gitignore` ignores the whole folder. `"inputs"`: it ignores only the files every build writes again, so the project can commit `architecture.json`, `descriptions/` and the other inputs ([project files](../../../docs/project-files.md#sharing-the-map-through-git)). Set it only when the user wants to commit the map |
 | `editor` | string | no | the editor **Open in editor** opens. Default VS Code. A name (`vscode`, `vscode-insiders`, `vscodium`, `cursor`, `windsurf`, `zed`, `idea`, `phpstorm`) or a link with `{path}`, `{line}` and `{column}` in an editor's own scheme, like `"zed://file/{path}:{line}"`. Set it only when the user says which editor they use |
 
 ## nodes

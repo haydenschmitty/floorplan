@@ -57,6 +57,10 @@ In Codex this file isn't touched. Codex has no personal, uncommitted notes file 
 
 The map is personal to each clone. Teammates who install Floorplan make their own.
 
+### Sharing the map through git
+
+To share one map with your team, so nobody spends tokens making it again, set `"git": "inputs"` in `floorplan/architecture.json`. The folder's `.gitignore` then ignores only the files every build writes again (`graph.json`, `index.html`, `.cache/`, the copied `serve.mjs`, `query.mjs` and `page-safety.mjs`, and exported copies), and the build stops suggesting you untrack the folder. Commit the rest: `architecture.json`, `descriptions/`, the `.gitignore` itself, and, if you have them, `recent-work.json`, `custom-flows.json` and `health-dismissed.json`. A teammate who pulls them gets the same map by running `build.mjs`, with no AI involved.
+
 If you committed a `floorplan/` folder before, ignoring it doesn't untrack those files. The build tells you the command that does, which keeps the files on disk:
 
 ```bash
