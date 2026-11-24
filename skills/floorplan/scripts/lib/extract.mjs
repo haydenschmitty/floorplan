@@ -899,6 +899,33 @@ function swiftMentions(code) {
 
 // ---------- Rust ----------
 
+// utoipa's `#[utoipa::path(put, path = "/api/tags/{id}", …)]` documents an endpoint for OpenAPI; its path is
+// not a request. The attribute is blanked out, newlines kept so every later line number stays the same.
+function withoutApiDocs(code) {
+  let out = '';
+  let from = 0;
+  for (const m of code.matchAll(/#\[\s*utoipa::path\b/g)) {
+    if (m.index < from) continue;
+    let depth = 0;
+    let quote = false;
+    let end = code.length;
+    for (let i = m.index + 1; i < code.length; i++) {
+      const c = code[i];
+      if (quote) {
+        if (c === '\\') i++;
+        else if (c === '"') quote = false;
+      } else if (c === '"') quote = true;
+      else if (c === '[' || c === '(') depth++;
+      else if (c === ']' || c === ')') {
+        if (--depth === 0) { end = i + 1; break; }
+      }
+    }
+    out += code.slice(from, m.index) + code.slice(m.index, end).replace(/[^\n]/g, ' ');
+    from = end;
+  }
+  return out + code.slice(from);
+}
+
 function extractRust(src) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
@@ -925,7 +952,7 @@ function extractRust(src) {
   // sit under the prefix. The module is the path's first segment, as `mod routes;` names it; the function its last.
   const mounts = [];
   for (const m of all(/web::scope\(\s*"([^"]*)"\s*\)((?:(?!web::scope\()[\s\S]){0,800}?)\.configure\(\s*(?:(?:crate|self|super)::)?(\w+)((?:::\w+)+)\s*\)/g, code)) mounts.push({ prefix: m[1], spec: m[3], fn: m[4].split('::').pop(), line: at(m.index) });
-  const { calls, hosts } = extractCalls(code, at);
+  const { calls, hosts } = extractCalls(withoutApiDocs(code), at);
   // every function (public or not) and the names `use` brings in, for finding the handler a route names
   const fns = all(/^[ \t]*(?:pub(?:\([^)\n]{0,60}\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)/gm, code).map((m) => ({ name: m[1], line: at(m.index) }));
   return { imports, symbols, routes, mounts, calls, hosts, fns, uses: rustUses(code) };
