@@ -439,6 +439,9 @@ body.no-panel #panel-resize { opacity: 0; pointer-events: none; }
 #ask-sheet { max-height: min(46vh, 480px); display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-panel); animation: sheetIn .45s var(--ease); }
 @keyframes sheetIn { from { opacity: 0; transform: translateY(12px) scale(.985); } }
 #ask-sheet[hidden] { display: none; }
+#ask-sheet.min .sb { display: none; }
+#ask-sheet.min .sh { padding-bottom: 12px; }
+#ask-sheet.min .sh .q { cursor: pointer; }
 #ask-sheet .sh { display: flex; align-items: center; gap: 6px; padding: 12px 12px 4px 20px; }
 #ask-sheet .sh .q { flex: 1; min-width: 0; color: var(--text-3); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ask-sheet .sh .btn { height: 32px; }
@@ -771,6 +774,8 @@ const P = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   left: '<path d="m15 18-6-6 6-6"/>',
   right: '<path d="m9 18 6-6-6-6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  up: '<path d="m18 15-6-6-6 6"/>',
 };
 const icon = (k) => `<svg viewBox="0 0 24 24">${P[k] || P.file}</svg>`;
 const iconI = (k) => `<svg class="i" viewBox="0 0 24 24">${P[k] || P.file}</svg>`;
@@ -2013,7 +2018,7 @@ function highlightFlow(a, b) {
 
 // ======================= ask (Claude Code CLI or Codex via serve.mjs, or the Claude app) =======================
 const Q = createGraphQuery(G);
-const askState = { engine: null, sample: null, busy: false, ctl: null, session: null, turns: [], last: null };
+const askState = { engine: null, sample: null, busy: false, ctl: null, session: null, turns: [], last: null, min: false };
 const askInput = $('#ask-input'), askSend = $('#ask-send'), sheet = $('#ask-sheet'), warn = $('#ask-warn');
 const DOCS = 'https://docs.claude.com/en/docs/claude-code/overview'; // the Claude app's tip: install the CLI
 const WARNINGS = {
@@ -2088,7 +2093,18 @@ function sheetShell(question, body) {
   sheet.innerHTML = `<div class="sh"><span class="q" title="${h(question)}">${h(question)}</span>
     ${askState.last && state.container !== 'q:answer' ? '<button class="btn soft" data-act="board">Show answer board</button>' : ''}
     ${state.container === 'q:answer' ? '<button class="btn soft" data-act="map">Back to map</button>' : ''}
+    <button class="btn icon" data-act="min" title="${askState.min ? 'Expand' : 'Minimize'}" aria-expanded="${!askState.min}">${iconI(askState.min ? 'up' : 'down')}</button>
     <button class="btn icon" data-act="close" title="Close">${iconI('x')}</button></div><div class="sb">${body}</div>`;
+  sheet.classList.toggle('min', askState.min);
+  // minimizing keeps the question line, so the answer can come back after you look at the map behind it
+  const setMin = (on) => {
+    askState.min = on;
+    sheet.classList.toggle('min', on);
+    const b = sheet.querySelector('[data-act="min"]');
+    b.title = on ? 'Expand' : 'Minimize'; b.setAttribute('aria-expanded', String(!on)); b.innerHTML = iconI(on ? 'up' : 'down');
+  };
+  sheet.querySelector('[data-act="min"]').onclick = () => setMin(!askState.min);
+  sheet.querySelector('.q').onclick = () => { if (askState.min) setMin(false); };
   sheet.querySelector('[data-act="close"]').onclick = () => { if (askState.busy) cancelAsk(); sheet.hidden = true; if (state.container === 'q:answer') go('root'); else fit(true); };
   sheet.querySelector('[data-act="map"]')?.addEventListener('click', () => go('root'));
   sheet.querySelector('[data-act="board"]')?.addEventListener('click', () => go('q:answer'));
@@ -2275,6 +2291,7 @@ async function submitAsk() {
   if (!question && ctxIds.length) question = ctxIds.length === 1 ? `What is ${info(ctxIds[0]).name} and how does it fit in?` : `How do ${ctxIds.map((id) => info(id).name).join(' and ')} relate?`;
   if (!question || !askState.engine) return;
   askInput.value = '';
+  askState.min = false; // a new question always shows its answer
   askState.context = []; renderChips();
   if (askState.mode === 'change') return requestChange(ctxIds.length ? `${question}\n\nThis is about: ${ctxIds.map((id) => `${id} (${info(id).name})`).join(', ')}.` : question);
   const shown = question;
