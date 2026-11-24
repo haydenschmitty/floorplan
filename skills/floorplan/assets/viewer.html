@@ -1764,6 +1764,7 @@ function itemPanel(item, viaConnector) {
     html += `</div><div class="sec"><div class="stats">${PLAN ? `<div><b>${fmt(G.links.filter((l) => l.a === fid).length)}</b><span>uses</span></div>` : `<div><b>${fmt(f.loc)}</b><span>lines</span></div>`}<div><b>${(routesByFile.get(f.p) || []).length}</b><span>endpoints</span></div><div><b>${technical() ? (f.s || []).length : fmt(G.links.filter((l) => l.b === 'f:' + f.p).length)}</b><span>${technical() ? 'exports' : 'used by'}</span></div></div>
       ${owner ? `<div class="list" style="margin-top:12px">${rowFor('n:' + owner.id, 'module')}</div>` : ''}</div>`;
     html += listSec('Endpoints', (routesByFile.get(f.p) || []).map((ri) => routeRow(ri)), undefined, 60);
+    html += listSec('Endpoints registered here', routes.map((r, ri) => [r, ri]).filter(([r]) => r.rf === f.p && r.f !== f.p).map(([, ri]) => routeRow(ri)), undefined, 60);
     const inL = G.links.filter((l) => l.b === fid), outL = G.links.filter((l) => l.a === fid);
     const rowL = (l, other) => rowFor(other, l.calls?.length ? plural(l.calls.length, 'call') : KIND_LABEL[l.k], `var(--k-${l.k})`);
     html += listSec('Used by', inL.map((l) => rowL(l, l.a)));
@@ -1773,9 +1774,11 @@ function itemPanel(item, viaConnector) {
   } else if (i.type === 'route') {
     const r = i.r, url = editorUrl(r.f, r.l);
     html += pathBox(`${r.m} ${r.p}`);
-    if (url) actions.push(`<a class="btn soft" href="${hk(url)}">${iconI('open')}Open handler</a>`);
+    if (r.hu) html += `<div class="callout">Handler not verified: ${h(r.hu)}. Shown where the endpoint is registered.</div>`;
+    if (url) actions.push(`<a class="btn soft" href="${hk(url)}">${iconI('open')}${r.hu ? 'Open registration' : 'Open handler'}</a>`);
     html += `<div class="actions">${actions.join('')}</div></div>`;
-    html += `<div class="sec"><h3>Handled by</h3><div class="list">${rowFor('f:' + r.f, r.h ? h(r.h) + '()' : '')}</div></div>`;
+    html += `<div class="sec"><h3>${r.hu ? 'Registered in' : 'Handled by'}</h3><div class="list">${rowFor('f:' + r.f, r.h ? h(r.h) + '()' : r.hu ? `line ${r.l}` : '')}</div></div>`;
+    if (r.rf) html += `<div class="sec"><h3>Registered in</h3><div class="list">${rowFor('f:' + r.rf, `line ${r.rl}`)}</div></div>`;
     const ri = routes.indexOf(r);
     const callers = new Map();
     for (const l of G.links) { const n = (l.calls || []).filter(([x]) => x === ri).length; if (n) callers.set(l.a, (callers.get(l.a) || 0) + n); }

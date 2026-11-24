@@ -91,7 +91,7 @@ test('actix-web: full paths, and the web app calls matched to them', () => {
     'DELETE /api/atoms/{id} <- server/src/routes.rs',
     'GET /api/atoms <- server/src/routes.rs',
     'GET /api/exports/{id}/download <- server/src/main.rs',
-    'GET /health <- server/src/main.rs',
+    'GET /health <- server/src/routes.rs', // registered in main.rs; routes.rs defines health(), so it sits there
     'POST /api/atoms <- server/src/routes.rs',
     'POST /api/voice/transcribe <- server/src/routes.rs',
   ]);

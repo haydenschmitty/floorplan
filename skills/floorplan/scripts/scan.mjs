@@ -337,6 +337,15 @@ for (const h of http) {
 for (const [k, v] of [...httpDir.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)) line(`  ${String(v).padStart(5)}  ${k}`);
 line();
 
+// actix-web: endpoints placed in the function that answers them, and those left at their registration
+const rustNamed = routes.filter((r) => r.framework !== 'laravel' && (r.handlerUnresolved || (r.defFile && r.defFile.endsWith('.rs'))));
+if (rustNamed.length) {
+  const open = rustNamed.filter((r) => r.handlerUnresolved);
+  line(`ACTIX  ${rustNamed.length} endpoints name a handler: ${rustNamed.length - open.length} verified in their function's file (registration kept), ${open.length} not verified (left at the registration line, with the reason)`);
+  for (const r of open.slice(0, 5)) line(`  ? ${r.method} ${r.path} — ${r.handlerUnresolved}`);
+  if (open.length > 5) line(`  … and ${open.length - 5} more`);
+}
+
 const laravel = routes.filter((r) => r.framework === 'laravel');
 if (laravel.length) {
   const routeFiles = new Set(laravel.map((r) => r.defFile || r.file));

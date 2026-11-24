@@ -915,13 +915,45 @@ function extractRust(src) {
   // (its `var`), so a scope that configures one function prefixes only that function's routes.
   const configFns = [...all(/\bfn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)/g, code)].map((m) => ({ at: m.index, name: /\bServiceConfig\b/.test(m[2]) ? m[1] : null }));
   const configFnAt = (i) => { let name = null; for (const f of configFns) { if (f.at > i) break; name = f.name; } return name; };
-  for (const m of all(/\.route\(\s*"([^"]+)"\s*,\s*(?:web::)?(get|post|put|patch|delete)\b/g, code)) routes.push({ method: m[2].toUpperCase(), path: m[1], var: configFnAt(m.index), line: at(m.index) });
+  for (const m of all(/\.route\(\s*"([^"]+)"\s*,\s*(web::)?(get|post|put|patch|delete)\b/g, code)) {
+    // actix-web names its handler in `.to(module::function)`, before the next route
+    const rest = code.slice(m.index + m[0].length, m.index + m[0].length + 400).split('.route(')[0];
+    const to = m[2] && /^\s*\(\s*\)[\s\S]*?\.to\(\s*((?:\w+::)*\w+)\s*\)/.exec(rest)?.[1];
+    routes.push({ method: m[3].toUpperCase(), path: m[1], var: configFnAt(m.index), line: at(m.index), ...(to ? { to } : {}) });
+  }
   // actix-web `web::scope("/api")…configure(routes::configure_routes)`: the routes that function registers
   // sit under the prefix. The module is the path's first segment, as `mod routes;` names it; the function its last.
   const mounts = [];
   for (const m of all(/web::scope\(\s*"([^"]*)"\s*\)((?:(?!web::scope\()[\s\S]){0,800}?)\.configure\(\s*(?:(?:crate|self|super)::)?(\w+)((?:::\w+)+)\s*\)/g, code)) mounts.push({ prefix: m[1], spec: m[3], fn: m[4].split('::').pop(), line: at(m.index) });
   const { calls, hosts } = extractCalls(code, at);
-  return { imports, symbols, routes, mounts, calls, hosts };
+  // every function (public or not) and the names `use` brings in, for finding the handler a route names
+  const fns = all(/^[ \t]*(?:pub(?:\([^)\n]{0,60}\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)/gm, code).map((m) => ({ name: m[1], line: at(m.index) }));
+  return { imports, symbols, routes, mounts, calls, hosts, fns, uses: rustUses(code) };
+}
+
+/** `use a::b::c;`, `use a::b as c;`, `use a::{b, c as d, e::{f, g}};` → { c: 'a::b::c', … }. */
+function rustUses(code) {
+  const out = {};
+  const split = (s) => { // top-level commas only
+    const parts = []; let depth = 0, cur = '';
+    for (const ch of s) { if (ch === '{') depth++; if (ch === '}') depth--; if (ch === ',' && !depth) { parts.push(cur); cur = ''; } else cur += ch; }
+    return [...parts, cur].map((x) => x.trim()).filter(Boolean);
+  };
+  const walk = (prefix, tree) => {
+    const brace = tree.indexOf('{');
+    if (brace >= 0 && tree.endsWith('}')) {
+      const head = tree.slice(0, brace).replace(/::\s*$/, '');
+      for (const item of split(tree.slice(brace + 1, -1))) walk(head ? `${prefix}${head}::` : prefix, item);
+      return;
+    }
+    const [, p, as] = /^([\w:]+)(?:\s+as\s+(\w+))?$/.exec(tree) || [];
+    if (!p) return;
+    const full = p === 'self' ? prefix.replace(/::$/, '') : prefix + p;
+    const name = as || full.split('::').pop();
+    if (name && name !== '_' && full) out[name] = full;
+  };
+  for (const m of all(/^[ \t]*(?:pub(?:\([^)\n]{0,60}\))?\s+)?use\s+([^;]+);/gm, code)) walk('', m[1].replace(/\s+/g, ' ').replace(/\s*(::|\{|\}|,)\s*/g, '$1').trim());
+  return out;
 }
 
 // ---------- JVM ----------
