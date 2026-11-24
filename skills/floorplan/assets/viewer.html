@@ -330,6 +330,21 @@ body.resizing #panel-resize::after { background: rgba(var(--ink), .4); }
 body.resizing, body.resizing * { cursor: ew-resize !important; user-select: none; }
 body.resizing #panel, body.resizing #ask, body.resizing #flowbar { transition: none; }
 body.exported #ask { display: none; }
+body.exported #saved { display: none; }
+#saved { position: absolute; left: 16px; bottom: 66px; width: 220px; max-height: min(40vh, 360px); z-index: 4; display: flex; flex-direction: column; overflow: hidden; border-radius: 18px; }
+#saved[hidden] { display: none; }
+#saved .sv-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: var(--text-2); font: inherit; font-size: 12.5px; font-weight: 500; padding: 9px 12px; cursor: pointer; text-align: left; }
+#saved .sv-head:hover { color: var(--text); }
+#saved .sv-head .n { color: var(--text-3); font-weight: 400; }
+#saved .sv-head .i { margin-left: auto; }
+#saved ul { list-style: none; margin: 0; padding: 0 6px 6px; overflow: auto; }
+#saved li { display: flex; align-items: center; gap: 2px; border-radius: 10px; }
+#saved li:hover, #saved li.cur { background: rgba(var(--ink), .06); }
+#saved li .sv-open { flex: 1; min-width: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; padding: 7px 8px; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#saved li .sv-x { flex: none; width: 26px; height: 26px; border: 0; background: none; color: var(--text-3); border-radius: 999px; cursor: pointer; display: grid; place-items: center; }
+#saved li .sv-x:hover { background: rgba(var(--ink), .08); color: var(--text); }
+#saved li .sv-x .i { width: 14px; height: 14px; }
+body.saved-open #ask { width: min(700px, calc(100% - var(--pw) - 520px)); }
 #madewith { position: absolute; left: calc((100% - var(--pw)) / 2); bottom: 20px; transform: translateX(-50%); z-index: 4; display: inline-flex; align-items: center; gap: 8px; padding: 8px 15px 8px 12px; border-radius: 999px; font-size: 12.5px; color: var(--text-3); text-decoration: none; white-space: nowrap; transition: left .45s var(--ease), color .15s var(--ease); }
 #madewith .mark { height: 13px; }
 #madewith b { color: var(--text); font-weight: 600; }
@@ -442,6 +457,8 @@ body.no-panel #panel-resize { opacity: 0; pointer-events: none; }
 #ask-sheet.min .sb { display: none; }
 #ask-sheet.min .sh { padding-bottom: 12px; }
 #ask-sheet.min .sh .q { cursor: pointer; }
+#ask-sheet .sh [data-act="save"].on { color: var(--on); }
+#ask-sheet .sh [data-act="save"].on .i { fill: currentColor; }
 #ask-sheet .sh { display: flex; align-items: center; gap: 6px; padding: 12px 12px 4px 20px; }
 #ask-sheet .sh .q { flex: 1; min-width: 0; color: var(--text-3); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ask-sheet .sh .btn { height: 32px; }
@@ -521,6 +538,8 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
   #context { max-width: min(520px, calc(100% - var(--pw) - 104px)); } /* stops short of the zoom buttons */
 }
 @media (max-width: 700px) {
+  #saved { display: none; } /* phones: the Ask bar and the details sheet already fill the bottom */
+  body.saved-open #ask { width: auto; }
   :root { --gutter: 20px; }
   body, body.no-panel { --pw: 0px; }
   header { padding: 6px 8px; gap: 0 4px; }
@@ -573,6 +592,7 @@ html.wk svg.dim .node:not(.hl) foreignObject { opacity: .28; }
     <button id="z-fit" title="Fit to screen (F)"><svg class="i" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
     <button id="z-in" title="Zoom in (+)"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
   </div>
+  <div id="saved" class="glass" hidden></div>
   <div id="flowbar" class="glass" hidden></div>
   <div id="ask">
     <div id="ask-sheet" class="glass" hidden></div>
@@ -776,6 +796,7 @@ const P = {
   right: '<path d="m9 18 6-6-6-6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   up: '<path d="m18 15-6-6-6 6"/>',
+  bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
 };
 const icon = (k) => `<svg viewBox="0 0 24 24">${P[k] || P.file}</svg>`;
 const iconI = (k) => `<svg class="i" viewBox="0 0 24 24">${P[k] || P.file}</svg>`;
@@ -2088,11 +2109,12 @@ function md(src) {
   return out.join('');
 }
 
-function sheetShell(question, body) {
+function sheetShell(question, body, answer) {
   sheet.hidden = false;
   sheet.innerHTML = `<div class="sh"><span class="q" title="${h(question)}">${h(question)}</span>
     ${askState.last && state.container !== 'q:answer' ? '<button class="btn soft" data-act="board">Show answer board</button>' : ''}
     ${state.container === 'q:answer' ? '<button class="btn soft" data-act="map">Back to map</button>' : ''}
+    ${answer ? `<button class="btn icon${saved.has(answer.question) ? ' on' : ''}" data-act="save" title="${saved.has(answer.question) ? 'Remove from saved' : 'Save to the list'}">${iconI('bookmark')}</button>` : ''}
     <button class="btn icon" data-act="min" title="${askState.min ? 'Expand' : 'Minimize'}" aria-expanded="${!askState.min}">${iconI(askState.min ? 'up' : 'down')}</button>
     <button class="btn icon" data-act="close" title="Close">${iconI('x')}</button></div><div class="sb">${body}</div>`;
   sheet.classList.toggle('min', askState.min);
@@ -2104,6 +2126,12 @@ function sheetShell(question, body) {
     b.title = on ? 'Expand' : 'Minimize'; b.setAttribute('aria-expanded', String(!on)); b.innerHTML = iconI(on ? 'up' : 'down');
   };
   sheet.querySelector('[data-act="min"]').onclick = () => setMin(!askState.min);
+  sheet.querySelector('[data-act="save"]')?.addEventListener('click', (e) => {
+    const b = e.currentTarget, on = !saved.has(answer.question);
+    if (on) saved.add(answer); else saved.remove(answer.question);
+    b.classList.toggle('on', on); b.title = on ? 'Remove from saved' : 'Save to the list';
+    renderSaved();
+  });
   sheet.querySelector('.q').onclick = () => { if (askState.min) setMin(false); };
   sheet.querySelector('[data-act="close"]').onclick = () => { if (askState.busy) cancelAsk(); sheet.hidden = true; if (state.container === 'q:answer') go('root'); else fit(true); };
   sheet.querySelector('[data-act="map"]')?.addEventListener('click', () => go('root'));
@@ -2126,17 +2154,61 @@ function renderAnswer(a) {
   const steps = a.steps?.length >= 2;
   sheetShell(a.question, `${md(a.answer)}
     <div class="sheet-actions">${steps ? `<button class="btn soft" data-act="steps">${iconI('right')}Walk through ${a.steps.length} steps</button>` : ''}</div>
-    ${a.followups?.length ? `<div class="followups">${a.followups.slice(0, 3).map((f) => `<button data-follow="${hk(f)}">${h(f)}</button>`).join('')}</div>` : ''}`);
+    ${a.followups?.length ? `<div class="followups">${a.followups.slice(0, 3).map((f) => `<button data-follow="${hk(f)}">${h(f)}</button>`).join('')}</div>` : ''}`, a);
+  renderSaved();
 }
 function showAnswer(raw, question) {
   const clean = (arr) => (Array.isArray(arr) ? arr : []).map((x) => typeof x === 'string' ? { id: x, note: '' } : x).filter((x) => x && Q.exists(String(x.id))).map((x) => ({ id: String(x.id), note: String(x.note || '') }));
   const items = clean(raw.items);
   const steps = clean(raw.steps);
   for (const s of steps) if (!items.some((x) => x.id === s.id)) items.push({ id: s.id, note: s.note });
-  const a = { title: String(raw.title || 'Answer'), answer: String(raw.answer || ''), items: items.slice(0, 18), steps, followups: (raw.followups || []).map(String), question };
+  openAnswer({ title: String(raw.title || 'Answer'), answer: String(raw.answer || ''), items: items.slice(0, 18), steps, followups: (raw.followups || []).map(String), question });
+}
+function openAnswer(a) {
   askState.last = a;
   if (a.items.length) { state.answer = a; go('q:answer', { force: true, after: () => renderAnswer(a) }); }
   else renderAnswer(a);
+}
+
+/* saved-answers:start */
+// Saved answers live in this tab only (sessionStorage): they survive the reload a rebuild of the map causes, and are gone when the tab closes.
+function savedAnswers() {
+  const KEY = 'floorplan:saved-answers', MAX = 30;
+  const read = () => { try { const v = JSON.parse(sessionStorage.getItem(KEY) || 'null'); return v && Array.isArray(v.items) ? v : null; } catch { return null; } };
+  let data = read() || { items: [], open: true };
+  const write = () => { try { sessionStorage.setItem(KEY, JSON.stringify(data)); } catch {} }; // a browser that refuses storage keeps the list until the page reloads
+  return {
+    items: () => data.items.slice(),
+    has: (question) => data.items.some((a) => a.question === question),
+    add(a) { data.items = [JSON.parse(JSON.stringify(a)), ...data.items.filter((x) => x.question !== a.question)].slice(0, MAX); write(); },
+    remove(question) { data.items = data.items.filter((x) => x.question !== question); write(); },
+    open: () => data.open !== false,
+    setOpen(on) { data.open = !!on; write(); },
+  };
+}
+/* saved-answers:end */
+const saved = savedAnswers(), savedEl = $('#saved');
+function renderSaved() {
+  const items = saved.items(), open = saved.open();
+  savedEl.hidden = !items.length;
+  document.body.classList.toggle('saved-open', items.length > 0 && open);
+  if (!items.length) return;
+  const cur = !sheet.hidden && askState.last ? askState.last.question : null;
+  savedEl.innerHTML = `<button type="button" class="sv-head" aria-expanded="${open}" title="${open ? 'Hide saved answers' : 'Show saved answers'}">${iconI('bookmark')}Saved <span class="n">${items.length}</span>${iconI(open ? 'down' : 'up')}</button>
+    ${open ? `<ul>${items.map((a, i) => `<li${a.question === cur ? ' class="cur"' : ''}><button type="button" class="sv-open" data-i="${i}" title="${h(a.question)}">${h(a.question)}</button><button type="button" class="sv-x" data-i="${i}" title="Remove" aria-label="Remove">${iconI('x')}</button></li>`).join('')}</ul>` : ''}`;
+  savedEl.querySelector('.sv-head').onclick = () => { saved.setOpen(!open); renderSaved(); };
+  savedEl.querySelectorAll('.sv-open').forEach((b) => b.onclick = () => {
+    const a = items[+b.dataset.i];
+    askState.min = false;
+    openAnswer({ ...a, items: a.items.filter((x) => Q.exists(x.id)), steps: (a.steps || []).filter((x) => Q.exists(x.id)) }); // the map may have changed since it was saved
+  });
+  savedEl.querySelectorAll('.sv-x').forEach((b) => b.onclick = () => {
+    const q = items[+b.dataset.i].question;
+    saved.remove(q);
+    const save = sheet.querySelector('[data-act="save"]');
+    if (save && askState.last?.question === q) { save.classList.remove('on'); save.title = 'Save to the list'; }
+    renderSaved();
+  });
 }
 function showFailure(question, code, message, partial) {
   if (code === 'not_logged_in' || code === 'not_granted') setWarning(code);
@@ -2268,6 +2340,7 @@ async function askViaApp(question, progress, mode = 'ask') {
 }
 
 askState.context = [];
+renderSaved();
 /** Pin a map item to the next question ("Ask about this"). */
 function addAskContext(id) {
   if (!Q.exists(id)) return;

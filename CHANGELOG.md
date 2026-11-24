@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Save answers to a list:** a Save button on the answer card keeps the question and its answer in a small list at the bottom left of the map. Click one to bring back its answer and answer board, or its x to remove it, and hide or show the whole list from its header. The list lasts as long as the browser tab, through the reloads a rebuild causes, and is gone when the tab closes. It is left out of exported maps and phones.
 - **The answer card can be minimized:** an answer covered a large part of the map, and the only way to see what was behind it was to close it, which threw the answer away. A new button beside Close shrinks the card to its question line, and the button or the question line opens it again. A new question always opens the card.
 
 ## 0.11.0 (2026-11-16)
