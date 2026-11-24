@@ -132,16 +132,34 @@ export const MAP_DIR = 'floorplan';
 export const LEGACY_MAP_DIR = 'show-code';
 /** True for a folder holding a map, so a project's own folder that happens to be called "floorplan" isn't taken for one. */
 export const isMapDir = (d) => ['architecture.json', 'plan.json', 'graph.json', '.cache'].some((f) => fs.existsSync(path.join(d, f)));
+/** What architecture.json's "git" can say: "none" keeps the whole map folder out of git, "inputs" commits what people and agents write. */
+export const GIT_MODES = ['none', 'inputs'];
+/** The files every build or the map's server writes again, which a map that commits its inputs still ignores. */
+export const GENERATED_FILES = ['graph.json', 'index.html', '.cache/', 'serve.mjs', 'query.mjs', 'page-safety.mjs', 'artifact.html', '*-map.html'];
+
+/** The "git" setting of the map in `dir`: "none" when architecture.json is missing, unreadable or says something else. */
+export function gitMode(dir) {
+  try {
+    const mode = readJsonFile(path.join(dir, 'architecture.json')).git;
+    return GIT_MODES.includes(mode) ? mode : 'none';
+  } catch { return 'none'; }
+}
+
 /**
  * Keeps the map folder out of git: its own .gitignore ignores everything in it, itself included, so
  * nothing in the project's tracked files changes. Returns a warning when git already tracks files
- * there (ignoring doesn't untrack them), else null.
+ * there (ignoring doesn't untrack them), else null. When architecture.json sets "git": "inputs", the
+ * .gitignore ignores only the generated files, so a team can commit the map's inputs and share the map.
  */
-export function keepOutOfGit(dir) {
+export function keepOutOfGit(dir, mode = gitMode(dir)) {
   const gi = path.join(dir, '.gitignore');
-  const want = '# Floorplan keeps its map out of git: this ignores everything in this folder, this file included.\n*\n';
+  const inputs = mode === 'inputs';
+  const want = inputs
+    ? `# Floorplan: the map's inputs are committed; this ignores the files every build writes again.\n${GENERATED_FILES.map((f) => `/${f}`).join('\n')}\n`
+    : '# Floorplan keeps its map out of git: this ignores everything in this folder, this file included.\n*\n';
   fs.mkdirSync(dir, { recursive: true });
   try { if (!fs.existsSync(gi) || fs.readFileSync(gi, 'utf8') !== want) fs.writeFileSync(gi, want); } catch {}
+  if (inputs) return null;
   const tracked = (git(dir, ['ls-files', '--', '.']) || '').split('\n').filter(Boolean);
   if (!tracked.length) return null;
   const rel = path.basename(dir);

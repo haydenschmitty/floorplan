@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, globProblem, parseArgs, fmtNum, mapDir, keepOutOfGit, toPosix, unattendedMode, printJson, readJsonFile, notMapped } from './lib/common.mjs';
+import { compileGlob, globProblem, parseArgs, fmtNum, mapDir, keepOutOfGit, GIT_MODES, toPosix, unattendedMode, printJson, readJsonFile, notMapped } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey, jargonIn } from './lib/names.mjs';
 import { buildHealth, withDismissed, dismissalFor, maskSecrets } from './lib/health.mjs';
 import { scriptJson, scriptCode, withPolicy, editorTemplate } from '../assets/page-safety.mjs';
@@ -156,6 +156,9 @@ const ignoreGlobs = globsAt(isStrArr(arch.ignore) ? arch.ignore : [], 'ignore');
 const AUDIENCES = ['everyone', 'developers'];
 if (arch.audience !== undefined && !AUDIENCES.includes(arch.audience)) err(`audience "${arch.audience}" must be one of ${AUDIENCES.join(', ')}${didYouMean(String(arch.audience), AUDIENCES)}`);
 const audience = AUDIENCES.includes(arch.audience) ? arch.audience : 'everyone';
+// whether the map folder stays out of git ("none", default) or commits its inputs ("inputs")
+if (arch.git !== undefined && !GIT_MODES.includes(arch.git)) err(`git "${arch.git}" must be one of ${GIT_MODES.join(', ')}${didYouMean(String(arch.git), GIT_MODES)}`);
+const gitSetting = GIT_MODES.includes(arch.git) ? arch.git : 'none';
 // the editor "Open in editor" opens: a preset's name or a link template (assets/page-safety.mjs); VS Code if unset
 const editor = editorTemplate(arch.editor);
 if (editor.error) err(`editor ${editor.error}`);
@@ -614,7 +617,7 @@ if (graph.health?.issues && fs.existsSync(dismissedFile)) {
     for (const w of secretWarnings()) { warn(w); report.push(`! ${w}`); } } catch (e) { warn(`health-dismissed.json is not valid JSON: ${e.message}`); }
 }
 fs.mkdirSync(outDir, { recursive: true });
-const trackedWarning = keepOutOfGit(outDir);
+const trackedWarning = keepOutOfGit(outDir, gitSetting);
 fs.writeFileSync(path.join(outDir, 'graph.json'), JSON.stringify(graph, null, 0));
 
 const template = fs.readFileSync(path.join(SKILL_DIR, 'assets', 'viewer.html'), 'utf8');
@@ -694,7 +697,9 @@ let claudeNote = null;
 if (scan.blueprint) report.push('BLUEPRINT  planned, not built yet: drawn from floorplan/plan.json');
 else if (unattended) report.push(`CLAUDE.LOCAL.MD  ${claudeNote = 'left alone (unattended mode writes only inside the map folder)'}`);
 else if (agent === 'claude' && !args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${claudeNote = writeClaudeMd(root, outDir, { add: !!args['claude-md'] })}`);
-report.push(trackedWarning ? `GIT  ! ${trackedWarning}` : 'GIT  floorplan/ is kept out of git (it ignores itself)');
+report.push(trackedWarning ? `GIT  ! ${trackedWarning}`
+  : gitSetting === 'inputs' ? 'GIT  floorplan/ commits its inputs (it ignores only the files every build writes again)'
+  : 'GIT  floorplan/ is kept out of git (it ignores itself)');
 report.push('');
 report.push(`✓ wrote ${path.relative(root, path.join(outDir, 'index.html'))} (${fmtNum(Math.round(html.length / 1024))} KB) and graph.json`);
 if (pct > 10) report.push(`  Unassigned is ${pct.toFixed(0)}%: add nodes or globs for the directories above (or "ignore" them) and rebuild.`);
