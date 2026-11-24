@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Save answers to a list:** a Save button on the answer card keeps the question and its answer in a small list at the bottom left of the map. Click one to bring back its answer and answer board, or its x to remove it, and hide or show the whole list from its header. The list lasts as long as the browser tab, through the reloads a rebuild causes, and is gone when the tab closes. It is left out of exported maps and phones.
+- **The answer card can be minimized:** an answer covered a large part of the map, and the only way to see what was behind it was to close it, which threw the answer away. A new button beside Close shrinks the card to its question line, and the button or the question line opens it again. A new question always opens the card.
+
 ## 0.11.0 (2026-11-16)
 
 - **Serverless Framework endpoints are on the map:** a backend whose endpoints are declared in `serverless.yml` rather than in code showed none, so the website's requests to it weren't connected and Health skipped its sign-in check. Endpoints now come from each function's `http` and `httpApi` events (`path` and `method`, `any` and `*`, and the short `http: GET /orders` form) in `serverless.yml`, `serverless-*.yml` and `serverless_*.yml`, including function lists split across files included with `${file(./functions.yml)}`. Each endpoint sits in the file its `handler:` names (`src/orders.create` is `create` in `src/orders.ts`), followed through a file that re-exports it, or into another file's function when the handler only passes the request on to it (`(event) => withEvent(event, options, orders.create)`). Health counts an `authorizer`, `private: true` (an API key) or a sign-in check handed to the wrapper as protecting an endpoint, and still reads the handler for a check of its own. CloudFormation tags (`!Ref`, `!GetAtt`, `!Sub`), `${opt:…}` and `${self:…}` variables and anchors are read without trouble, and the scan summary lists schedules, queues, streams and other background functions for a worker node. Sample configs in test folders add no endpoints. Reported and fixed by @ShehanEk in #131 and #132.
