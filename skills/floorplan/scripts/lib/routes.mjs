@@ -77,12 +77,79 @@ function jsMountTarget(f, mount, imports, byPath) {
   return null;
 }
 
+/**
+ * Rust: the module `name` as a sibling of `f` (`name.rs` or `name/mod.rs`), for a module that reached `f`
+ * through the crate rather than its own `mod` line, as a binary's `use my_server::{routes}` does.
+ */
+function rustModuleBeside(f, name, byPath, fn) {
+  const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
+  const file = [`${dir}${name}.rs`, `${dir}${name}/mod.rs`].find((p) => byPath.has(p));
+  return file ? { file, v: fn || '*' } : null;
+}
+
+// ---------- Rust: the handler an actix-web route names ----------
+
+const rustDir = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '');
+/** The folder a Rust file's child modules live in: beside main.rs, lib.rs and mod.rs, in `x/` for x.rs. */
+const rustModDir = (p) => (/(^|\/)(main|lib|mod)\.rs$/.test(p) ? rustDir(p) : p.replace(/\.rs$/, '/'));
+/** The crate's source folder (the nearest one up holding lib.rs or main.rs) and the crate's name, from its folder. */
+function rustCrate(p, byPath) {
+  for (let dir = rustDir(p); ; dir = rustDir(dir.slice(0, -1))) {
+    if (byPath.has(`${dir}lib.rs`) || byPath.has(`${dir}main.rs`)) {
+      const pkg = /(?:^|\/)([^/]+)\/src\/$/.exec(dir)?.[1];
+      return { src: dir, name: pkg ? pkg.replace(/-/g, '_') : null };
+    }
+    if (!dir) return null;
+  }
+}
+
+/**
+ * The function an actix-web route hands its requests to (`.to(voice::transcribe)`), followed from the file
+ * that registers it through `mod`, `use`, `crate::`, `self::` and `super::`. Verified only when the module's
+ * file is in the scan and defines the function: { file, line, fn }. Otherwise { why }, said plainly; a
+ * re-export or another crate is reported, not guessed at.
+ */
+function rustHandler(f, to, byPath) {
+  let segs = to.split('::');
+  const viaUse = f.uses?.[segs[0]];
+  if (viaUse) segs = [...viaUse.split('::'), ...segs.slice(1)];
+  const fn = segs.pop();
+  let file = f.path;
+  if (segs.length) {
+    const crate = rustCrate(f.path, byPath);
+    // the module file a folder stands for, when a path ends there (`crate::f`, `super::f`, `my_crate::f`)
+    const moduleOf = (d, roots) => roots.map((x) => d + x).find((x) => byPath.has(x)) || (d && byPath.has(`${d.slice(0, -1)}.rs`) ? `${d.slice(0, -1)}.rs` : null);
+    let dir;
+    if (segs[0] === 'crate') { dir = crate?.src; file = dir != null ? moduleOf(dir, ['lib.rs', 'main.rs']) : null; segs.shift(); }
+    else if (segs[0] === 'self') { dir = rustModDir(f.path); segs.shift(); }
+    else if (segs[0] === 'super') {
+      dir = rustModDir(f.path);
+      while (segs[0] === 'super') { dir = rustDir(dir.slice(0, -1)); segs.shift(); }
+      file = moduleOf(dir, ['mod.rs', 'lib.rs', 'main.rs']);
+    } else if (!viaUse && (f.imports || []).some((i) => i.kind === 'mod' && i.spec === segs[0])) dir = rustModDir(f.path);
+    else if (crate?.name && segs[0] === crate.name) { dir = crate.src; file = moduleOf(dir, ['lib.rs']); segs.shift(); }
+    else if (viaUse) return { why: `${to}() comes from the crate ${segs[0]}, outside this one` };
+    else return { why: `${to}(): ${segs[0]} is not brought in here with mod or use` };
+    if (dir == null) return { why: `${to}(): no crate root (lib.rs or main.rs) found above ${f.path}` };
+    if (!segs.length && !file) return { why: `${to}(): no module file for ${dir || './'}` };
+    for (const seg of segs) {
+      file = [`${dir}${seg}.rs`, `${dir}${seg}/mod.rs`].find((x) => byPath.has(x));
+      if (!file) return { why: `${to}(): no file for the module ${seg} in ${dir || './'}` };
+      dir = rustModDir(file);
+    }
+  }
+  const def = (byPath.get(file).fns || []).find((d) => d.name === fn);
+  return def ? { file, line: def.line, fn } : { why: `${to}(): ${file} has no fn ${fn} (it may be re-exported from elsewhere)` };
+}
+
 /** The file (and router variable, '*' = all) a mount statement points at, or null. */
 function mountTarget(f, mount, byPath) {
   const imports = (f.imports || []).filter((i) => i.files?.length);
   if (mount.spec) {
     const imp = imports.find((i) => i.spec === mount.spec);
+    if (!imp && f.lang === 'rust') return rustModuleBeside(f, mount.spec, byPath, mount.fn);
     if (!imp) return null;
+    if (f.lang === 'rust') return { file: imp.files[0], v: mount.fn || '*' };
     const t = f.lang !== 'python' && exportOf(byPath, imp.files[0], 'default');
     return { file: imp.files[0], v: t?.kind === 'router' ? t.v : '*' };
   }
@@ -260,10 +327,15 @@ export function resolveRoutes(files) {
       const calls = r.mapper && mappers.get(`${f.repo ?? ''}|${r.mapper}`);
       if (calls) { routes.push(...calls.map((c) => mappedRoute(f, r, c, defPrefix))); continue; }
       const fromMounts = mountMw(f.path, r.var);
+      // actix-web: the endpoint sits in the function that answers it when that is verified; where it was
+      // registered stays beside it (defFile/defLine). Unverified, it stays at the registration, with why.
+      const hd = r.to && f.lang === 'rust' ? rustHandler(f, r.to, byPath) : null;
+      const at = hd?.file ? { file: hd.file, line: hd.line, handler: hd.fn, defFile: f.path, defLine: r.line }
+        : { file: f.path, line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(hd ? { handlerUnresolved: hd.why } : {}) };
       for (const mp of outerPrefixes(f.path, r.var)) {
         const path = joinPath(mp, defPrefix, r.path);
         const mw = scopes.length ? [...new Set([...fromMounts, ...scopedMw(f, r, path)])] : fromMounts;
-        routes.push({ file: f.path, method: r.method, path, line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}), ...(r.caseInsensitive ? { caseInsensitive: true } : {}) });
+        routes.push({ ...at, method: r.method, path, ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}), ...(r.caseInsensitive ? { caseInsensitive: true } : {}) });
       }
     }
   }
@@ -411,7 +483,7 @@ export function matchCalls(files, routes) {
       let best = -Infinity, hits = [];
       const all = [];
       for (const r of rs) {
-        if (r.file === f.path) continue;
+        if (r.file === f.path || r.defFile === f.path) continue; // its own file, or where it is registered: not a call
         // a Firebase callable (CALL) is only ever reached through httpsCallable, and only reaches callables
         if ((call.method === 'CALL') !== (r.method === 'CALL')) continue;
         if (call.method && r.method !== 'ANY' && r.method !== call.method) continue;
