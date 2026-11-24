@@ -909,9 +909,15 @@ function extractRust(src) {
   for (const m of all(/^[ \t]*pub\s+(?:async\s+)?(fn|struct|enum|trait|type|const|static)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1] === 'fn' ? 'function' : m[1], line: at(m.index) });
   const routes = [];
   for (const m of all(/#\[(get|post|put|patch|delete)\(\s*"([^"]+)"/g, code)) routes.push({ method: m[1].toUpperCase(), path: m[2], var: null, line: at(m.index) });
-  for (const m of all(/\.route\(\s*"([^"]+)"\s*,\s*(get|post|put|patch|delete)/g, code)) routes.push({ method: m[2].toUpperCase(), path: m[1], var: null, line: at(m.index) });
+  // axum `.route("/p", get(h))` and actix-web `cfg.route("/p", web::get().to(h))` / `App::new().route(…)`,
+  // the path and method often on lines of their own
+  for (const m of all(/\.route\(\s*"([^"]+)"\s*,\s*(?:web::)?(get|post|put|patch|delete)\b/g, code)) routes.push({ method: m[2].toUpperCase(), path: m[1], var: null, line: at(m.index) });
+  // actix-web `web::scope("/api")…configure(routes::configure_routes)`: every route the configured module
+  // registers sits under the prefix. The module is the path's first segment, as `mod routes;` names it.
+  const mounts = [];
+  for (const m of all(/web::scope\(\s*"([^"]*)"\s*\)((?:(?!web::scope\()[\s\S]){0,800}?)\.configure\(\s*(?:(?:crate|self|super)::)?(\w+)::\w+(?:::\w+)*\s*\)/g, code)) mounts.push({ prefix: m[1], spec: m[3], line: at(m.index) });
   const { calls, hosts } = extractCalls(code, at);
-  return { imports, symbols, routes, mounts: [], calls, hosts };
+  return { imports, symbols, routes, mounts, calls, hosts };
 }
 
 // ---------- JVM ----------
