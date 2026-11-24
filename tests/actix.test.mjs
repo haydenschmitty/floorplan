@@ -112,3 +112,40 @@ test('actix-web: the configured module found beside main.rs when it comes in thr
   const routes = graph.routes.map((r) => `${r.m} ${r.p} <- ${r.f}`).sort();
   assert.ok(routes.includes('POST /api/voice/transcribe <- server/src/routes/mod.rs'), JSON.stringify(routes));
 });
+
+test('actix-web: a scope prefixes only the routes of the function it configures, not the whole module', () => {
+  const main = `mod routes;
+use actix_web::{web, App};
+fn app() {
+    App::new()
+        .configure(routes::configure_public_routes)
+        .service(
+            web::scope("/api/instance")
+                .wrap(Auth)
+                .configure(routes::configure_instance_routes),
+        )
+        .service(web::scope("/api/admin").configure(routes::configure_admin_routes));
+}
+`;
+  const routes = `use actix_web::web;
+pub fn configure_public_routes(cfg: &mut web::ServiceConfig) {
+    cfg.route("/api/checkout", web::post().to(checkout::create))
+        .route("/api/auth/send", web::post().to(auth::send));
+}
+pub fn configure_instance_routes(cfg: &mut web::ServiceConfig) {
+    cfg.route("/status", web::get().to(instances::status))
+        .route("/stop", web::post().to(instances::stop));
+}
+pub fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
+    cfg.route("/stats", web::get().to(admin::stats));
+}
+`;
+  const graph = mapOf({ 'server/Cargo.toml': CARGO, 'server/src/main.rs': main, 'server/src/routes.rs': routes });
+  assert.deepEqual(graph.routes.map((r) => `${r.m} ${r.p}`).sort(), [
+    'GET /api/admin/stats',
+    'GET /api/instance/status',
+    'POST /api/auth/send',
+    'POST /api/checkout',
+    'POST /api/instance/stop',
+  ]);
+});

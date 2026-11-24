@@ -911,11 +911,15 @@ function extractRust(src) {
   for (const m of all(/#\[(get|post|put|patch|delete)\(\s*"([^"]+)"/g, code)) routes.push({ method: m[1].toUpperCase(), path: m[2], var: null, line: at(m.index) });
   // axum `.route("/p", get(h))` and actix-web `cfg.route("/p", web::get().to(h))` / `App::new().route(…)`,
   // the path and method often on lines of their own
-  for (const m of all(/\.route\(\s*"([^"]+)"\s*,\s*(?:web::)?(get|post|put|patch|delete)\b/g, code)) routes.push({ method: m[2].toUpperCase(), path: m[1], var: null, line: at(m.index) });
-  // actix-web `web::scope("/api")…configure(routes::configure_routes)`: every route the configured module
-  // registers sits under the prefix. The module is the path's first segment, as `mod routes;` names it.
+  // An actix-web route registered inside `fn name(cfg: &mut web::ServiceConfig)` belongs to that function
+  // (its `var`), so a scope that configures one function prefixes only that function's routes.
+  const configFns = [...all(/\bfn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)/g, code)].map((m) => ({ at: m.index, name: /\bServiceConfig\b/.test(m[2]) ? m[1] : null }));
+  const configFnAt = (i) => { let name = null; for (const f of configFns) { if (f.at > i) break; name = f.name; } return name; };
+  for (const m of all(/\.route\(\s*"([^"]+)"\s*,\s*(?:web::)?(get|post|put|patch|delete)\b/g, code)) routes.push({ method: m[2].toUpperCase(), path: m[1], var: configFnAt(m.index), line: at(m.index) });
+  // actix-web `web::scope("/api")…configure(routes::configure_routes)`: the routes that function registers
+  // sit under the prefix. The module is the path's first segment, as `mod routes;` names it; the function its last.
   const mounts = [];
-  for (const m of all(/web::scope\(\s*"([^"]*)"\s*\)((?:(?!web::scope\()[\s\S]){0,800}?)\.configure\(\s*(?:(?:crate|self|super)::)?(\w+)::\w+(?:::\w+)*\s*\)/g, code)) mounts.push({ prefix: m[1], spec: m[3], line: at(m.index) });
+  for (const m of all(/web::scope\(\s*"([^"]*)"\s*\)((?:(?!web::scope\()[\s\S]){0,800}?)\.configure\(\s*(?:(?:crate|self|super)::)?(\w+)((?:::\w+)+)\s*\)/g, code)) mounts.push({ prefix: m[1], spec: m[3], fn: m[4].split('::').pop(), line: at(m.index) });
   const { calls, hosts } = extractCalls(code, at);
   return { imports, symbols, routes, mounts, calls, hosts };
 }

@@ -81,10 +81,10 @@ function jsMountTarget(f, mount, imports, byPath) {
  * Rust: the module `name` as a sibling of `f` (`name.rs` or `name/mod.rs`), for a module that reached `f`
  * through the crate rather than its own `mod` line, as a binary's `use my_server::{routes}` does.
  */
-function rustModuleBeside(f, name, byPath) {
+function rustModuleBeside(f, name, byPath, fn) {
   const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
   const file = [`${dir}${name}.rs`, `${dir}${name}/mod.rs`].find((p) => byPath.has(p));
-  return file ? { file, v: '*' } : null;
+  return file ? { file, v: fn || '*' } : null;
 }
 
 /** The file (and router variable, '*' = all) a mount statement points at, or null. */
@@ -92,8 +92,9 @@ function mountTarget(f, mount, byPath) {
   const imports = (f.imports || []).filter((i) => i.files?.length);
   if (mount.spec) {
     const imp = imports.find((i) => i.spec === mount.spec);
-    if (!imp && f.lang === 'rust') return rustModuleBeside(f, mount.spec, byPath);
+    if (!imp && f.lang === 'rust') return rustModuleBeside(f, mount.spec, byPath, mount.fn);
     if (!imp) return null;
+    if (f.lang === 'rust') return { file: imp.files[0], v: mount.fn || '*' };
     const t = f.lang !== 'python' && exportOf(byPath, imp.files[0], 'default');
     return { file: imp.files[0], v: t?.kind === 'router' ? t.v : '*' };
   }
