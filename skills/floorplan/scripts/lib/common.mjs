@@ -50,11 +50,18 @@ export function globToRegExp(glob) {
     if (c === '{') { braces++; re += '(?:'; i++; continue; }
     if (c === '}' && braces) { braces--; re += ')'; i++; continue; }
     if (c === ',' && braces) { re += '|'; i++; continue; }
-    // a whole segment like [id], [...slug] or [[...slug]] is a folder name (Next.js, SvelteKit), not a character class
+    // a bracketed dynamic route segment like [id], [...slug], [[...slug]] — as a folder or route file
+    // (Next.js, Nuxt, SvelteKit, Astro, Expo Router: [id].tsx, [id].get.ts, [[...slug]].vue) — is literal,
+    // not a character class (while single-char ranges like [a-z].ts stay character classes).
     if (c === '[' && (i === 0 || g[i - 1] === '/')) {
       const end = g.indexOf('/', i) < 0 ? g.length : g.indexOf('/', i);
       const seg = g.slice(i, end);
-      if (/^\[\[?(\.\.\.)?[A-Za-z_$][\w$-]*\]\]?$/.test(seg)) { re += seg.replace(/[.[\]$\\]/g, '\\$&'); i = end; continue; }
+      const m = /^(?:\[\[((?:\.\.\.)?[A-Za-z_$][\w$-]*)\]\]|\[((?:\.\.\.)?[A-Za-z_$][\w$-]*)\])((?:\.[A-Za-z0-9]+)*)$/.exec(seg);
+      if (m && !(m[2] && m[3] && /^[A-Za-z]-[A-Za-z]$/.test(m[2]))) {
+        re += seg.replace(/[.[\]$\\]/g, '\\$&');
+        i = end;
+        continue;
+      }
     }
     if (c === '[') {
       const j = g.indexOf(']', i + 1);
