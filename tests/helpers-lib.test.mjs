@@ -26,6 +26,11 @@ test('globs: a bracketed folder name ([id], [...slug]) is a folder, not a charac
   assert.ok(!g('app/orders/[id]/**', 'app/orders/i/page.tsx'));
   assert.ok(g('app/[...slug]', 'app/[...slug]/page.tsx'));
   assert.ok(g('app/[[...slug]]/page.tsx', 'app/[[...slug]]/page.tsx'));
+  assert.ok(g('pages/orders/[id].tsx', 'pages/orders/[id].tsx'), 'dynamic route file matches literally');
+  assert.ok(!g('pages/orders/[id].tsx', 'pages/orders/i.tsx'), 'dynamic route file is not a character class');
+  assert.ok(g('server/api/users/[id].get.ts', 'server/api/users/[id].get.ts'), 'Nuxt multi-extension dynamic route matches literally');
+  assert.ok(g('pages/docs/[[...slug]].tsx', 'pages/docs/[[...slug]].tsx'), 'optional catch-all route file matches literally');
+  assert.ok(g('src/[a-z].ts', 'src/k.ts'), 'single-char range at file start remains a character class');
   assert.ok(g('src/file[12].ts', 'src/file2.ts'), 'inside a name, brackets still match one character');
 });
 
