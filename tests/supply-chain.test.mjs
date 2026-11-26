@@ -61,7 +61,7 @@ test('nothing to install: no dependencies and no install scripts', () => {
 test('the only commands pre-approved are the skill’s own scripts, and that list is fixed', () => {
   const front = /^---\n([\s\S]*?)\n---/.exec(read(path.join(SKILL, 'SKILL.md')).replace(/\r\n/g, '\n'))[1];
   // each script runs without a prompt while the skill is in use, so adding one is a deliberate change
-  const SCRIPTS = ['build.mjs', 'describe.mjs', 'open.mjs', 'plan.mjs', 'recent.mjs', 'refresh.mjs', 'scan.mjs', 'status.mjs'];
+  const SCRIPTS = ['build.mjs', 'describe.mjs', 'home.mjs', 'open.mjs', 'plan.mjs', 'recent.mjs', 'refresh.mjs', 'scan.mjs', 'status.mjs'];
   const granted = /^allowed-tools:\n((?: {2}- .*\n?)+)/m.exec(front + '\n')?.[1].trim().split('\n').map((l) => l.replace(/^\s*- /, '').trim());
   assert.deepEqual(granted, SCRIPTS.map((s) => `Bash(node \${CLAUDE_SKILL_DIR}/scripts/${s} *)`), `SKILL.md allowed-tools: exactly the skill's own scripts. ${UPDATE}`);
   const scripts = fs.readdirSync(path.join(SKILL, 'scripts')).filter((n) => !fs.statSync(path.join(SKILL, 'scripts', n)).isDirectory()).sort();
@@ -71,10 +71,12 @@ test('the only commands pre-approved are the skill’s own scripts, and that lis
 test('it reaches the internet in one place: the waitlist, only when someone signs up', () => {
   // no network modules except the map's own local server
   const netImports = find(/from\s+['"](?:node:)?(https?|http2|net|tls|dgram|dns|undici)['"]|require\(\s*['"](?:node:)?(https?|http2|net|tls|dgram|dns|undici)['"]\s*\)/);
-  assert.deepEqual(netImports.map((x) => `${x.file}: ${x.text}`), [`assets/serve.mjs: from 'node:http'`], `network modules. ${UPDATE}`);
+  assert.deepEqual(netImports.map((x) => `${x.file}: ${x.text}`), [`assets/serve.mjs: from 'node:http'`, `scripts/home.mjs: from 'node:http'`], `network modules. ${UPDATE}`);
   // the server listens on this machine only
   assert.match(read(path.join(SKILL, 'assets', 'serve.mjs')), /server\.listen\(port, '127\.0\.0\.1'\);/);
   assert.doesNotMatch(read(path.join(SKILL, 'assets', 'serve.mjs')), /\.listen\([^)]*(0\.0\.0\.0|::)/);
+  assert.match(read(path.join(SKILL, 'scripts', 'home.mjs')), /server\.listen\(port, '127\.0\.0\.1'\);/);
+  assert.doesNotMatch(read(path.join(SKILL, 'scripts', 'home.mjs')), /\.listen\([^)]*(0\.0\.0\.0|::)/);
 
   // every request: to the map's own server, except the one waitlist call
   const LOCAL = /^(['"`]\/|s\.url \+)/;
@@ -94,10 +96,10 @@ test('it reaches the internet in one place: the waitlist, only when someone sign
 
 test('it runs a fixed list of programs, and never through a shell', () => {
   const importers = find(/from\s+['"](?:node:)?child_process['"]/).map((x) => x.file).sort();
-  assert.deepEqual(importers, ['assets/serve.mjs', 'scripts/lib/common.mjs', 'scripts/open.mjs', 'scripts/refresh.mjs'], `files that start programs. ${UPDATE}`);
-  // only spawn and execFileSync, which take a program and its arguments (regex .exec() is text matching)
+  assert.deepEqual(importers, ['assets/serve.mjs', 'scripts/home.mjs', 'scripts/lib/common.mjs', 'scripts/open.mjs', 'scripts/refresh.mjs'], `files that start programs. ${UPDATE}`);
+  // Each takes a program and its arguments (regex .exec() is text matching).
   const names = find(/import\s*\{([^}]*)\}\s*from\s+['"](?:node:)?child_process['"]/).flatMap((x) => x.m[1].split(',').map((n) => n.trim()));
-  assert.deepEqual([...new Set(names)].sort(), ['execFileSync', 'spawn'], `child_process functions used. ${UPDATE}`);
+  assert.deepEqual([...new Set(names)].sort(), ['execFile', 'execFileSync', 'spawn'], `child_process functions used. ${UPDATE}`);
   assert.deepEqual(find(/(?<![.\w])(exec|execSync|fork|spawnSync|execFile)\(/).map((x) => `${x.file}:${x.line} ${x.text}`), [], `other ways to start programs. ${UPDATE}`);
   assert.deepEqual(find(/shell:\s*true/).map((x) => `${x.file}:${x.line}`), [], 'never through a shell');
   // what each call starts: where/which, the Claude Code or Codex CLI, Node running the skill's own scripts,
@@ -111,7 +113,7 @@ test('it runs a fixed list of programs, and never through a shell', () => {
     'opener[0]',
     'cmd',
   ]);
-  const starts = find(/\b(spawn|execFileSync)\(\s*([^,]+),/).map((x) => ({ ...x, prog: x.m[2].trim() }));
+  const starts = find(/\b(spawn|execFileSync|runNode)\(\s*([^,]+),/).map((x) => ({ ...x, prog: x.m[2].trim() }));
   assert.ok(starts.length >= 8, 'found the calls');
   assert.deepEqual(starts.filter((s) => !ALLOWED.has(s.prog)).map((s) => `${s.file}:${s.line} ${s.prog}`), [], `programs started. ${UPDATE}`);
   assert.match(read(path.join(SKILL, 'scripts', 'refresh.mjs')), /const node = process\.execPath;/);
@@ -119,6 +121,7 @@ test('it runs a fixed list of programs, and never through a shell', () => {
   const openers = /\? \['cmd', \['\/c', 'start', '', u\]\] : process\.platform === 'darwin' \? \['open', \[u\]\] : \['xdg-open', \[u\]\]/;
   assert.match(read(path.join(SKILL, 'assets', 'serve.mjs')), openers);
   assert.match(read(path.join(SKILL, 'scripts', 'open.mjs')), openers);
+  assert.match(read(path.join(SKILL, 'scripts', 'home.mjs')), openers);
 });
 
 test('no code is downloaded, decoded or built from text at run time', () => {

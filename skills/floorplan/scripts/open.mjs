@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { parseArgs, mapDir, unattendedMode, readJsonFile } from './lib/common.mjs';
 import { editorTemplate } from '../assets/page-safety.mjs';
 import { cliLabel } from './lib/agent.mjs';
+import { registerMap } from './lib/map-library.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
@@ -29,6 +30,9 @@ if (!fs.existsSync(path.join(dir, 'index.html')) || !fs.existsSync(serveFile)) {
   console.error('✗ No built map here yet. Run build.mjs first.');
   process.exit(1);
 }
+
+try { registerMap(root); }
+catch { console.warn('This map could not be added to your local map list. Opening it still works.'); }
 
 // --editor: checked here too, so a mistake is named now rather than in the server's log
 const editor = args.editor === undefined ? null : editorTemplate(args.editor === true ? '' : String(args.editor));

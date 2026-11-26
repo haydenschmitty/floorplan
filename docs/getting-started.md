@@ -90,6 +90,26 @@ When the map is opened for you, the server runs in the background and stops by i
 node floorplan/serve.mjs --stop
 ```
 
+## All your maps in one place
+
+Made maps for a few projects? In Claude Code or Codex, ask:
+
+> Open my Floorplan home.
+
+In Codex you can also type `$floorplan home`. The local homepage lists maps you have opened with Floorplan, with their project folders and last update times. Search by name or folder, then choose **Open map**. It reopens the map's server if it has stopped, without rescanning or rebuilding the project.
+
+For a map made before this feature, enter its project folder under **Add map**, or ask to add that map to your home. **Remove** only removes it from this list; the map and project files stay where they are. No folders are searched automatically.
+
+From a working copy of the plugin:
+
+```bash
+node skills/floorplan/scripts/home.mjs
+node skills/floorplan/scripts/home.mjs --add /path/to/project
+node skills/floorplan/scripts/home.mjs --stop
+```
+
+The homepage runs in the background on `127.0.0.1`, normally port 4377. Bookmark the address it prints, and use the same command to reopen it later. Its private list is in `~/.floorplan/maps/`; the homepage server's address and token are in `~/.floorplan/home-server.json`, with a log alongside. `FLOORPLAN_DATA_DIR` selects a different local data folder. Unattended runs neither remember maps nor start the homepage.
+
 ## Update the plugin
 
 For Codex, see [Update or remove it](codex.md#update-or-remove-it).
