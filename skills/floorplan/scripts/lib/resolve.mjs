@@ -529,6 +529,52 @@ export function createResolver(root, files) {
     return { external: imp.spec.split('.').slice(0, 2).join('.'), eco: 'nuget' };
   };
 
+  // ---- ASP.NET Core Razor: /js/a.js is under a project's wwwroot, a view name is looked up like Razor does ----
+  const csProjectOf = csProjects(files.map((f) => f.path));
+  const wwwroot = new Map(); // path under a wwwroot -> [files]
+  const viewsByName = new Map(); // 'name.cshtml' (lower case) -> [files]
+  for (const f of files) {
+    const w = /(?:^|\/)wwwroot\/(.+)$/.exec(f.path);
+    if (w) wwwroot.set(w[1].toLowerCase(), [...(wwwroot.get(w[1].toLowerCase()) || []), f.path]);
+    if (/\.cshtml$/i.test(f.path)) { const b = P.basename(f.path).toLowerCase(); viewsByName.set(b, [...(viewsByName.get(b) || []), f.path]); }
+  }
+  const nearest = (from, paths) => {
+    if (!paths?.length) return null;
+    if (paths.length === 1) return paths[0];
+    const own = csProjectOf(from);
+    return paths.find((p) => own && csProjectOf(p) === own) || null; // several projects ship it: only our own is sure
+  };
+  const resolveRazorAsset = (from, spec) => {
+    if (/^\.\.?\//.test(spec)) return resolveRelative(from, spec, []);
+    const rest = spec.replace(/^~?\//, '').toLowerCase();
+    const own = csProjectOf(from);
+    const mine = own && P.join(own, 'wwwroot', rest);
+    const exact = mine && files.find((f) => f.path.toLowerCase() === mine.toLowerCase());
+    if (exact) return { file: exact.path };
+    const hit = nearest(from, wwwroot.get(rest));
+    return hit ? { file: hit } : { unresolved: true };
+  };
+  const resolveView = (from, imp) => {
+    let name = imp.spec;
+    if (/^~?\//.test(name)) { // a path: ~/Views/Shared/Error.cshtml
+      const p = P.normalize(P.join(csProjectOf(from) || '.', name.replace(/^~?\//, '')));
+      const hit = files.find((f) => f.path.toLowerCase() === p.toLowerCase());
+      return hit ? { file: hit.path } : { unresolved: true };
+    }
+    if (!/\.cshtml$/i.test(name)) name += '.cshtml';
+    const all = viewsByName.get(P.basename(name).toLowerCase()) || [];
+    const own = csProjectOf(from);
+    const ordered = [
+      // next to the view, then the controller's folder, then Shared, in this project, then one by that name anywhere
+      ...(imp.controller ? [] : all.filter((p) => P.dirname(p) === P.dirname(from))),
+      ...all.filter((p) => imp.controller && csProjectOf(p) === own && new RegExp('(^|/)Views/' + imp.controller + '/', 'i').test(p)),
+      ...all.filter((p) => csProjectOf(p) === own && /(^|\/)(Views|Pages)\/Shared\//i.test(p)),
+      ...all.filter((p) => csProjectOf(p) === own),
+    ];
+    const hit = ordered[0] || (all.length === 1 ? all[0] : all.find((p) => /(^|\/)(Views|Pages)\/Shared\//i.test(p)));
+    return hit ? { file: hit } : { unresolved: true };
+  };
+
   // ---- generic relative (C, Ruby, PHP, CSS) ----
   const byBasename = new Map();
   for (const f of files) { const b = P.basename(f.path); byBasename.set(b, byBasename.has(b) ? null : f.path); }
@@ -614,7 +660,8 @@ export function createResolver(root, files) {
       case 'rust': return resolveRust(file.path, imp);
       case 'java': case 'kotlin': case 'scala': case 'groovy': return resolveJvm(file, imp);
       case 'swift': return resolveSwift(file, imp);
-      case 'csharp': return resolveCs(file, imp);
+      case 'csharp': return imp.kind === 'view' ? resolveView(file.path, imp) : resolveCs(file, imp);
+      case 'razor': return imp.kind === 'view' ? resolveView(file.path, imp) : resolveRazorAsset(file.path, imp.spec);
       case 'ruby': return resolveRelative(file.path, imp.spec, ['.rb']);
       case 'php': return resolvePhp(file.path, imp, file.repo);
       case 'liquid': return resolveLiquid(file.path, imp);

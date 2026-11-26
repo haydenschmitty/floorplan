@@ -89,7 +89,7 @@ function keyedRouteTable(code, at) {
 // ---------- HTTP call literals ----------
 
 // withUrl: a SignalR connection to a hub (new HubConnectionBuilder().withUrl('/hubs/chat'))
-const HTTP_CONTEXT = /\b(fetch|axios|ky|got|request|requests|httpx|aiohttp|session|client|http|https|api|Api|API|endpoint|Endpoint|url|Url|URL|BASE|base|withUrl|WithUrl)\b|\.(get|post|put|patch|delete|head)\s*(<[^>]*>)?\s*\(|(?<![.\w$])(get|post|put|patch|delete)\s*\(\s*[rf]?["'`]\/|\b(?:api[A-Z]\w*|(?:http|fetch|request)(?:Get|Post|Put|Patch|Delete|Send|Json|Data|Api)\w*)\s*(?:<[^()]*>)?\s*\(/;
+const HTTP_CONTEXT = /\b(fetch|axios|ky|got|request|requests|httpx|aiohttp|session|client|http|https|api|Api|API|endpoint|Endpoint|url|Url|URL|BASE|base|withUrl|WithUrl)\b|\.(get|post|put|patch|delete|head)\s*(<[^>]*>)?\s*\(|(?<![.\w$])(get|post|put|patch|delete)\s*\(\s*[rf]?["'`]\/|\b(?:api[A-Z]\w*|\w{0,40}[Aa]jax|(?:http|fetch|request)(?:Get|Post|Put|Patch|Delete|Send|Json|Data|Api)\w*)\s*(?:<[^()]*>)?\s*\(/;
 // An app's own API helpers: apiGet('/tasks'), httpPost('/orders', body), apiSend('PATCH', `/tasks/${id}`, body)
 const HELPER_VERB = /\b(?:api|http|fetch|request)(Get|Post|Put|Patch|Delete)\w*\s*(?:<[^()]*>)?\s*\(/;
 // A helper taking the method first is named in camelCase (apiSend, not requestedBy); the method may be either case
@@ -174,8 +174,26 @@ function methodBelow(lines, i) {
   return null;
 }
 
-function extractCalls(src, at, { skip } = {}) {
+// A file's own request helpers: function goi(url, body) { … fetch(url, …) }, const post = (path, data) => jAjax(BASE + path, data).
+// Calls to them are requests like any other. Only the first parameter counts as the address, and only so many definitions
+// are looked at, so a file made of function headers isn't slow.
+const HELPER_DEF = /\bfunction\s+([A-Za-z_$][\w$]{0,60})\s*\(\s*([A-Za-z_$][\w$]{0,60})|\b(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*(?:async\s+)?(?:function\s*\(\s*|\(\s*)([A-Za-z_$][\w$]{0,60})/g;
+const escapeRe = (s) => s.replace(/[$]/g, '\\$');
+function requestHelpers(src) {
+  const names = new Set();
+  let seen = 0;
+  for (const m of src.matchAll(HELPER_DEF)) {
+    if (++seen > 2000) break;
+    const name = m[1] || m[3], param = m[2] || m[4];
+    const sends = new RegExp(String.raw`(?:\bfetch|\$\.(?:ajax|post|get|getJSON)|\baxios(?:\.\w{1,10})?|\w{0,40}[Aa]jax)\s*\(\s*(?:[\w$.]{1,80}\s*\+\s*)?` + escapeRe(param) + String.raw`(?![\w$])`);
+    if (sends.test(src.slice(m.index, m.index + 700))) names.add(name);
+  }
+  return names.size ? new RegExp(String.raw`(?<![\w$.])(?:` + [...names].slice(0, 100).map(escapeRe).join('|') + String.raw`)\s*\(`) : null;
+}
+
+function extractCalls(src, at, { skip, helpers } = {}) {
   const calls = [];
+  const helper = helpers ? requestHelpers(src) : null;
   const hosts = [];
   const lines = src.split('\n');
   let offset = 0;
@@ -190,7 +208,7 @@ function extractCalls(src, at, { skip } = {}) {
     const use = assigned ? variableUse(lines, i, assigned) : null;
     // a call whose URL wraps onto its own line: `this.http.post<Order>(` with the template on the line below
     const wrapped = i > 0 && /^\s*["'`]/.test(line) && lines[i - 1].length <= 500 ? WRAPPED_CALL.exec(lines[i - 1])?.[1] : null;
-    if (!HTTP_CONTEXT.test(line) && !use && !wrapped) continue;
+    if (!HTTP_CONTEXT.test(line) && !use && !wrapped && !helper?.test(line)) continue;
     const method = (METHOD_CALL.exec(line)?.[1] || HELPER_ARG_VERB.exec(line)?.[1] || HELPER_VERB.exec(line)?.[1] || METHOD_OPT.exec(line)?.[1] || use?.method || wrapped || methodBelow(lines, i) || '').toUpperCase() || null;
     for (const m of line.matchAll(STR_LITERAL)) {
       const n = normalizeCallLiteral(m[2]);
@@ -471,7 +489,7 @@ function extractJs(src, filePath) {
   const routeOnVar = routerVars.size && routes.some((r) => r.var && !ROUTER_NAME.test(r.var))
     ? new RegExp(`(?<![\\w$])(?:${[...routerVars].slice(0, 200).map((v) => v.replace(/\$/g, '\\$')).join('|')})\\.(?:get|post|put|patch|delete|all|options|head)\\(\\s*["'\`]\\/`)
     : null;
-  const { calls, hosts } = extractCalls(code, at, { skip: routeOnVar ? { test: (line) => serverLine.test(line) || routeOnVar.test(line) } : serverLine });
+  const { calls, hosts } = extractCalls(code, at, { helpers: true, skip: routeOnVar ? { test: (line) => serverLine.test(line) || routeOnVar.test(line) } : serverLine });
   // a route object's own `url: '/api/x'` reads like a request (because of `url`), and so can a route listed as
   // data (`"/api/carts": {` in Bun.serve, `fetch: …` beside its path), but each is the route
   if (objectRoutes.length) for (let i = calls.length - 1; i >= 0; i--) {
@@ -1385,6 +1403,10 @@ function extractCSharp(src) {
     };
   });
   const symbols = types.filter((t) => !t.nested).map((t) => ({ name: t.name, kind: t.kind, line: at(t.at) }));
+  // the views a controller shows: View("Orders"), PartialView("_Row"), View("~/Views/Shared/Error.cshtml"), under the
+  // controller's name (OrdersController looks in Views/Orders/)
+  const controller = types.find((t) => /Controller$/.test(t.name) && !t.nested)?.name.replace(/Controller$/, '');
+  if (controller) for (const m of all(/\b(?:View|PartialView)\s*\(\s*"([^"\n]{1,200})"/g, code)) imports.push({ spec: m[1], names: [], kind: 'view', controller, line: at(m.index) });
   // type names this file mentions, so a `using` links only the files that declare one of them
   const typeRefs = new Set(code.replace(STR_LITERAL, ' ').match(/\b[A-Z]\w*\b/g) || []);
   const idx = csIndex(code.replace(STR_LITERAL, blank));
@@ -2233,8 +2255,31 @@ function liquidDoc(src) {
   return cleanDoc(head);
 }
 
+// ---------- ASP.NET Core Razor views (.cshtml) ----------
+// A view loads scripts and styles (<script src>, <link href>, or a helper given the address: @Url.Content("~/js/a.js")),
+// renders partials and a layout by name, and its <script> blocks send requests like any other page.
+const RAZOR_COMMENT = /@\*[\s\S]*?\*@|<!--[\s\S]*?-->/g;
+const RAZOR_ASSET = /["']((?:~\/|\/|\.\.?\/)?[\w@./-]{1,300}\.(?:m?js|css))(?:\?[^"'\s]{0,200})?["']/g;
+const RAZOR_PARTIAL = /<partial\s+name\s*=\s*"([^"\n]{1,200})"|\b(?:Html\.(?:Render)?Partial(?:Async)?|RenderSection|Component\.InvokeAsync)\s*\(\s*"([^"\n]{1,200})"|(?:^|[{;\s])Layout\s*=\s*"([^"\n]{1,200})"/gm;
+function extractRazor(src) {
+  const code = src.replace(RAZOR_COMMENT, (m) => m.replace(/[^\n]/g, ' '));
+  const at = lineIndex(code);
+  const imports = [];
+  const seen = new Set();
+  const add = (spec, kind, index) => { const k = kind + '|' + spec; if (!seen.has(k)) { seen.add(k); imports.push({ spec, names: [], kind, line: at(index) }); } };
+  for (const m of all(RAZOR_ASSET, code)) if (!/^\/\/|:\/\//.test(m[1])) add(m[1], 'asset', m.index);
+  for (const m of all(RAZOR_PARTIAL, code)) {
+    const name = m[1] || m[2] || m[3];
+    if (m[2] && /RenderSection|InvokeAsync/.test(m[0])) continue; // a section or view component, not a file by that name
+    add(name, 'view', m.index);
+  }
+  const { calls, hosts } = extractCalls(code, at, { helpers: true });
+  return { imports, symbols: [], routes: [], mounts: [], calls, hosts };
+}
+
 function extractByLang(src, lang, filePath) {
   switch (lang) {
+    case 'razor': return extractRazor(src);
     case 'liquid': return extractLiquid(src, filePath);
     case 'typescript': case 'javascript': case 'vue': case 'svelte': case 'astro': return extractJs(src, filePath);
     case 'python': return extractPy(src);

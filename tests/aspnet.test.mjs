@@ -456,3 +456,96 @@ test('C# files built to make pattern matching slow are read quickly, endpoints a
     assert.ok(read < 2000 && checked < 2000, `${name}: read in ${Math.round(read)} ms, checked in ${Math.round(checked)} ms`);
   }
 });
+
+// #195: a project's own sign-in filter added for every controller, and controllers in class libraries that a web app
+// loads (application parts, plugins loaded at run time), which only run inside it.
+test('Health, ASP.NET Core: a sign-in filter of the project\'s own on every controller covers it and the libraries it serves', () => {
+  const program = (filter) => `var builder = WebApplication.CreateBuilder(args);\nbuilder.Services.AddControllersWithViews(o => ${filter});\nvar app = builder.Build();\napp.MapControllers();\n`;
+  assert.deepEqual(health(program('o.Filters.Add<CheckLoginFilter>()'), 'Site/Program.cs', 'global-guard').map((g) => g.filter), ['CheckLoginFilter']);
+  assert.deepEqual(health(program('o.Filters.Add(new RequireSessionFilter())'), 'Site/Program.cs', 'global-guard').map((g) => g.filter), ['RequireSessionFilter']);
+  assert.deepEqual(health(program('o.Filters.Add(typeof(AuthCheckFilter))'), 'Site/Program.cs', 'global-guard').map((g) => g.filter), ['AuthCheckFilter']);
+  assert.deepEqual(health(program('o.Filters.Add(new AuthorizeFilter())'), 'Site/Program.cs', 'global-guard').map((g) => g.name), ['an AuthorizeFilter on every controller'], 'the standard filter is counted once');
+  assert.deepEqual(health(program('o.Filters.Add<CheckLoginFilter>()'), 'Site/Program.cs', 'cs-host').length, 1);
+  assert.deepEqual(health('public static class ModuleLoader { public static void Load(IMvcBuilder mvc) { } }\n', 'Lib/ModuleLoader.cs', 'cs-host'), []);
+
+  const orders = '[Route("orders")]\npublic class OrdersController : Controller\n{\n    [HttpPost("save")] public IActionResult Save() => Ok();\n}\n';
+  const build = (files, ignore) => {
+    const root = makeProject({
+      'Site/Site.csproj': '<Project Sdk="Microsoft.NET.Sdk.Web" />\n',
+      'Site/HomeController.cs': '[Route("home")]\npublic class HomeController : Controller\n{\n    [HttpPost("layout")] public IActionResult SaveLayout() => Ok();\n}\n',
+      'Modules/Orders/Orders.csproj': '<Project Sdk="Microsoft.NET.Sdk.Razor" />\n',
+      'Modules/Orders/OrdersController.cs': orders,
+      ...files,
+    }, { arch: { project: { name: 'clinic', summary: 'Test.' }, ...(ignore ? { ignore } : {}), nodes: [
+      { id: 'site', label: 'Site', kind: 'service', summary: 'The web app.', paths: ['Site/**'] },
+      { id: 'modules', label: 'Modules', kind: 'service', summary: 'Plugins the web app loads.', paths: ['Modules/**'] },
+      { id: 'admin', label: 'Admin', kind: 'service', summary: 'Another web app.', paths: ['Admin/**'] },
+    ] } });
+    try { scanAndBuild(root); return openEndpoints(readGraph(root)); } finally { cleanup(root); }
+  };
+  assert.deepEqual(build({ 'Site/Program.cs': program('o.Filters.Add<CheckLoginFilter>()') }), []);
+  // a filter whose name says nothing about the caller is not a sign-in check
+  assert.deepEqual(build({ 'Site/Program.cs': program('o.Filters.Add<AuditLogFilter>()') }), ['POST /home/layout', 'POST /orders/save']);
+  // another web app without a check could serve the same library, so the library is open again; the app itself stays covered
+  assert.deepEqual(build({
+    'Site/Program.cs': program('o.Filters.Add<CheckLoginFilter>()'),
+    'Admin/Admin.csproj': '<Project Sdk="Microsoft.NET.Sdk.Web" />\n',
+    'Admin/Program.cs': 'var builder = WebApplication.CreateBuilder(args);\nbuilder.Services.AddControllers();\n',
+  }), ['POST /orders/save']);
+  // a test host the map leaves out (architecture.json ignore) is not one of the web apps
+  assert.deepEqual(build({
+    'Site/Program.cs': program('o.Filters.Add<CheckLoginFilter>()'),
+    'Modules/Orders/Checks/TestHost/TestHost.csproj': '<Project Sdk="Microsoft.NET.Sdk.Web" />\n',
+    'Modules/Orders/Checks/TestHost/Program.cs': 'var builder = WebApplication.CreateBuilder(args);\nbuilder.Services.AddControllers();\n',
+  }, ['Modules/Orders/Checks/**']), []);
+});
+
+// Razor views: a controller's View("Name") reaches its view, the view's scripts and styles under the project's wwwroot
+// (before another project's file of the same name), its partials and layout, and the requests its <script> blocks send
+test('ASP.NET Core Razor views: View("…") links, wwwroot assets, partials, layout, and requests from inline scripts', () => {
+  const r = extract([
+    '@* <script src="/js/old.js"></script> *@',
+    '@{ Layout = "_MainLayout"; }',
+    '<link rel="stylesheet" href="@V("/Css/orders.css")" />',
+    '<script src="~/js/orders.js?v=3"></script>',
+    '<script src="https://cdn.example.com/x.js"></script>',
+    '<partial name="_OrderRow" />',
+    '@await Html.PartialAsync("_Totals")',
+    '<script>',
+    "  jAjax('/Orders/Save', row, done);",
+    "  fetch('/api/orders/list');",
+    '</script>',
+  ].join('\n'), 'razor', 'Orders/Views/Orders/Index.cshtml');
+  assert.deepEqual(r.imports.map((i) => `${i.kind} ${i.spec}`), ['asset /Css/orders.css', 'asset ~/js/orders.js', 'view _MainLayout', 'view _OrderRow', 'view _Totals']);
+  assert.deepEqual(r.calls.map((c) => c.path), ['/Orders/Save', '/api/orders/list']);
+
+  const root = makeProject({
+    'Site/Site.csproj': '<Project Sdk="Microsoft.NET.Sdk.Web" />\n',
+    'Site/Views/Shared/_MainLayout.cshtml': '<html>@RenderBody()</html>\n',
+    'Site/wwwroot/js/orders.js': 'export const x = 1;\n',
+    'Site/wwwroot/js/shell.js': 'export const shell = 1;\n',
+    'Orders/Orders.csproj': '<Project Sdk="Microsoft.NET.Sdk.Razor" />\n',
+    'Orders/OrdersController.cs': '[Route("orders")]\npublic class OrdersController : Controller\n{\n    [HttpGet("")] public IActionResult Index() => View("Index");\n    [HttpPost("save")] public IActionResult Save() => Ok();\n}\n',
+    'Orders/Views/Orders/Index.cshtml': '@{ Layout = "_MainLayout"; }\n<script src="/js/orders.js"></script>\n<script src="/js/shell.js"></script>\n<partial name="_OrderRow" />\n<script>\n  jAjax("/orders/save", row, done);\n</script>\n',
+    'Orders/Views/Orders/_OrderRow.cshtml': '<tr></tr>\n',
+    'Orders/wwwroot/js/orders.js': 'export const orders = 1;\n',
+  }, { arch: { project: { name: 'shop', summary: 'Test.' }, nodes: [
+    { id: 'site', label: 'Site', kind: 'service', summary: 'The web app.', paths: ['Site/**'] },
+    { id: 'orders', label: 'Orders', kind: 'ui', summary: 'A module.', paths: ['Orders/**'] },
+  ] } });
+  try {
+    scanAndBuild(root);
+    const graph = readGraph(root);
+    const links = graph.links.map((l) => `${l.k} ${l.a.slice(2)} -> ${l.b.slice(2)}`).sort();
+    assert.deepEqual(links.filter((l) => /cshtml/.test(l)), [
+      'http Orders/Views/Orders/Index.cshtml -> Orders/OrdersController.cs',
+      'import Orders/OrdersController.cs -> Orders/Views/Orders/Index.cshtml',
+      'import Orders/Views/Orders/Index.cshtml -> Orders/Views/Orders/_OrderRow.cshtml',
+      'import Orders/Views/Orders/Index.cshtml -> Orders/wwwroot/js/orders.js',
+      'import Orders/Views/Orders/Index.cshtml -> Site/Views/Shared/_MainLayout.cshtml',
+      'import Orders/Views/Orders/Index.cshtml -> Site/wwwroot/js/shell.js',
+    ]);
+  } finally {
+    cleanup(root);
+  }
+});
