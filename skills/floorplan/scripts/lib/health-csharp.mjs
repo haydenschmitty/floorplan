@@ -16,6 +16,13 @@ const CS_GLOBAL_GUARDS = [
   [/\bFilters\.Add\s*(?:<\s*AuthorizeFilter\s*>|\(\s*new\s+AuthorizeFilter\b)/, 'an AuthorizeFilter on every controller'],
   [/\bMapControllers\s*\(\s*\)\s*\.\s*RequireAuthorization\s*\(/, 'MapControllers().RequireAuthorization()'],
 ];
+// A project's own filter on every controller: Filters.Add<CheckLoginFilter>(), Filters.Add(new RequireLoginFilter()),
+// Filters.Add(typeof(…)), Filters.AddService<…>(). buildHealth counts it only when its name says it checks the caller
+// (isUseGuard), as it does for an Express app.use() or a Nest global guard
+const CS_CUSTOM_FILTER = /\bFilters\.Add(?:Service)?\s*(?:<\s*([A-Za-z_]\w{0,80})\s*>\s*\(|\(\s*(?:new\s+|typeof\s*\(\s*)([A-Za-z_]\w{0,80})\b)/g;
+// A web app that serves controllers: its project is a host, and a class library's controllers only run inside one
+const CS_HOST = /\b(?:WebApplication\.Create(?:Slim|Empty)?Builder|WebHost\.CreateDefaultBuilder|ConfigureWebHost(?:Defaults)?)\s*\(/;
+const CS_MVC = /\b(?:AddControllers(?:WithViews)?|AddMvc(?:Core)?|AddRazorPages)\s*\(/;
 // Custom attributes that check the caller: class FeatureAttribute : AuthorizeAttribute
 const CS_AUTH_BASE = /^(AuthorizeAttribute|IAuthorizationFilter|IAsyncAuthorizationFilter|IAuthorizeData)$/;
 // Framework base classes: following them further says nothing about the project's own checks
@@ -131,6 +138,12 @@ function globalGuards(code, at, out) {
     const m = re.exec(code);
     if (m) out.push({ k: 'global-guard', framework: 'aspnet', name, line: at(m.index) });
   }
+  for (const m of code.matchAll(CS_CUSTOM_FILTER)) {
+    const filter = m[1] || m[2];
+    if (filter !== 'AuthorizeFilter') out.push({ k: 'global-guard', framework: 'aspnet', name: `the ${filter} filter on every controller`, filter, line: at(m.index) });
+  }
+  const host = CS_HOST.exec(code);
+  if (host && CS_MVC.test(code)) out.push({ k: 'cs-host', line: at(host.index) });
 }
 
 /** Custom auth attributes, base classes that carry [Authorize], and base-class chains the build follows. */

@@ -1788,10 +1788,14 @@ export function buildHealth({ graph, scan, arch, root }) {
   const cs = csBuildContext(scan, findings);
   const globalGuards = new Map(); // repo -> [{framework, name, file}]
   const guardDefs = new Map();    // name -> [{ file, wrapper }]
+  const csHosts = new Map();     // repo -> Set of the ASP.NET Core projects that are web apps serving controllers
+  // app-wide checks count only from the app itself, not from scripts or tests that spin up their own
+  const appFile = (p) => !TEST_FILE.test(p) && !/(^|\/)(scripts?|tools|bin|examples?)\//.test(p) && !(fileByPath.has(p) && kinds(fileByPath.get(p).n).some((k) => NOT_USED_KINDS.has(k)));
   for (const f of scan.files) for (const x of findings(f.path)) {
     if (x.k === 'route') routeFinding.set(`${f.path}|${x.line}|${x.method}`, x);
-    // app-wide checks count only from the app itself, not from scripts or tests that spin up their own
-    if (x.k === 'global-guard' && !TEST_FILE.test(f.path) && !/(^|\/)(scripts?|tools|bin|examples?)\//.test(f.path) && !(fileByPath.has(f.path) && kinds(fileByPath.get(f.path).n).some((k) => NOT_USED_KINDS.has(k)))) { const k = f.repo ?? ''; if (!globalGuards.has(k)) globalGuards.set(k, []); globalGuards.get(k).push({ ...x, file: f.path }); }
+    // a project's own MVC filter counts when its name says it checks the caller (CheckLoginFilter, not AuditFilter)
+    if (x.k === 'global-guard' && appFile(f.path) && (!x.filter || isUseGuard(x.filter.replace(/(Filter|Attribute)$/, '')))) { const k = f.repo ?? ''; if (!globalGuards.has(k)) globalGuards.set(k, []); globalGuards.get(k).push({ ...x, file: f.path }); }
+    if (x.k === 'cs-host' && fileByPath.has(f.path) && appFile(f.path) && cs.projectOf(f.path)) { const k = f.repo ?? ''; if (!csHosts.has(k)) csHosts.set(k, new Set()); csHosts.get(k).add(cs.projectOf(f.path)); }
     if (x.k === 'guard-def' && !TEST_FILE.test(f.path)) { if (!guardDefs.has(x.name)) guardDefs.set(x.name, []); guardDefs.get(x.name).push({ file: f.path, wrapper: !!x.wrapper, ...(x.base ? { base: true } : {}) }); }
   }
   const verifiedHelpers = new Map();
@@ -1960,6 +1964,16 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (PUBLIC_FILE_PATH.test(r.p) || isListed(repo, r.p) || fnd.publicResponse) return true;
     return !!fnd.nextGet && (marksPublic(r.f) || readsNothingPrivate(r.f, /\[/.test(r.p)));
   };
+  // An ASP.NET Core app-wide check guards its own project (the .csproj folder). A class library's controllers run
+  // inside whichever web app loads them (an application part, or a plugin loaded at run time), so they count as
+  // guarded only when every web app in the repo that serves controllers has an app-wide check of its own.
+  const csGuarded = new Set([...globalGuards.values()].flat().filter((g) => g.framework === 'aspnet').map((g) => cs.projectOf(g.file)));
+  const csCovers = (g, file, repo) => {
+    const own = cs.projectOf(file);
+    if (own === cs.projectOf(g.file)) return true;
+    const hosts = csHosts.get(repo);
+    return !!own && !!hosts && hosts.has(cs.projectOf(g.file)) && !hosts.has(own) && [...hosts].every((h) => csGuarded.has(h));
+  };
   const perRepo = new Map(); // repo -> { guarded, open: [], guardCounts }
   const appWide = new Map(); // `${file}|${line}` -> an app-wide check and how many endpoints only it protects
   graph.routes.forEach((r, i) => {
@@ -1979,7 +1993,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     const csRoute = /\.cs$/.test(r.f);
     const global = (globalGuards.get(repo) || []).find((g) => ((g.framework === 'flask' || g.framework === 'fastapi') && /\.py$/.test(r.f))
       || (g.framework === 'express' && !csRoute) || (g.framework === 'next' && !csRoute && fnd.fn === r.m)
-      || (g.framework === 'aspnet' && csRoute && cs.projectOf(g.file) === cs.projectOf(r.f))
+      || (g.framework === 'aspnet' && csRoute && csCovers(g, r.f, repo))
       || (g.framework === 'nest' && fnd.nest && !fnd.nestPublic));
     // an unrecognised decorator that turns out to be an auth wrapper defined elsewhere in the project
     const viaWrapper = !fnd.via && fnd.decos?.find((d) => guardDefs.get(d)?.some((g) => (g.file.split('/')[0] === r.f.split('/')[0])));

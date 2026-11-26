@@ -84,3 +84,41 @@ test("a client's base reaches its other files, but not another client in the sam
     'clients/web/src/pages/comments.ts -> /tasks/:id/comments',
   ]);
 });
+
+// #196: jQuery-era pages often send every request through one helper of their own: jAjax(url, data, done)
+test("requests through a page's own ajax helper reach the endpoint", () => {
+  const root = makeProject({
+    'server/package.json': JSON.stringify({ name: 'server', type: 'module', dependencies: { express: '^4.19.0' } }),
+    'server/app.js': `import express from 'express';\nconst app = express();\napp.post('/api/orders/save', (req, res) => res.json({}));\napp.post('/orders/list', (req, res) => res.json({}));\napp.listen(3000);\n`,
+    'web/common.js': `function jAjax(url, data, done) { $.ajax({ url, type: 'POST', data: JSON.stringify(data), success: done }); }\n`,
+    'web/orders.js': `jAjax('/api/orders/save', row, (r) => { if (r.code == 0) reload(); });\ndoAjax("/orders/list", { from, to }, render);\n`,
+  }, { arch: { project: { name: 'shop', summary: 'Test.' }, nodes: [
+    { id: 'server', label: 'Server', kind: 'service', summary: 'The server.', paths: ['server/**'] },
+    { id: 'web', label: 'Website', kind: 'ui', summary: 'The pages.', paths: ['web/**'] },
+  ] } });
+  try {
+    scanAndBuild(root);
+    const http = readGraph(root).links.filter((l) => l.k === 'http').map((l) => `${l.a.slice(2)} -> ${l.b.slice(2)} ${[...l.labels].sort().join(', ')}`);
+    assert.deepEqual(http, ['web/orders.js -> server/app.js POST /api/orders/save, POST /orders/list']);
+  } finally {
+    cleanup(root);
+  }
+});
+
+// A page's own request helper, found by what it does: its first parameter goes straight into fetch / jAjax / $.ajax
+test("a file's own request helper (goi(url, body) { fetch(url, …) }) makes its calls requests", async () => {
+  const { extract } = await lib('extract.mjs');
+  const src = [
+    'async function goi(url, body) {',
+    '  const r = await fetch(url, { method: "POST", body: JSON.stringify(body) });',
+    '  return r.json();',
+    '}',
+    'const J = (duongDan, data, ok) => jAjax(GOC + duongDan, data, ok);',
+    'function veBang(rows) { return rows.map(String); }',
+    'goi("/SqlStudio/ObjMo", { name });',
+    "J('/Orders/List', {}, render);",
+    'veBang("/bang/tong");',
+    'other.goi("/not/mine");',
+  ].join('\n');
+  assert.deepEqual(extract(src, 'javascript', 'web/page.js').calls.map((c) => c.path), ['/SqlStudio/ObjMo', '/Orders/List']);
+});
