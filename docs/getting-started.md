@@ -100,6 +100,8 @@ In Codex you can also type `$floorplan home`. The local homepage lists maps you 
 
 For a map made before this feature, enter its project folder under **Add map**, or ask to add that map to your home. **Remove** only removes it from this list; the map and project files stay where they are. No folders are searched automatically.
 
+Before starting a map, the homepage checks that its server and lookup helpers match this plugin's bundled programs. If they are from an older version or have been edited, it asks you to update that project's Floorplan first; it does not run or overwrite the changed helpers. Project names and summaries use the same secret masking as the map.
+
 From a working copy of the plugin:
 
 ```bash

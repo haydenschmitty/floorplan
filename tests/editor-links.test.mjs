@@ -197,7 +197,9 @@ test('the map\'s server can set the editor for every map it shows, over architec
 
 test('open.mjs names a bad --editor before starting anything', () => {
   const root = built(undefined);
-  const out = fails(() => execFileSync(process.execPath, [path.join(SKILL, 'scripts', 'open.mjs'), root, '--no-open', '--editor=file:///{path}'], { encoding: 'utf8', stdio: 'pipe' }));
+  const dataDir = path.join(root, '.home-data');
+  const out = fails(() => execFileSync(process.execPath, [path.join(SKILL, 'scripts', 'open.mjs'), root, '--no-open', '--editor=file:///{path}'], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, FLOORPLAN_DATA_DIR: dataDir } }));
   assert.match(out, /--editor "file:\/\/\/\{path\}" starts with "file:"/);
   assert.ok(!fs.existsSync(path.join(root, 'floorplan', '.cache', 'server.json')), 'no server was started');
+  assert.ok(!fs.existsSync(dataDir), 'a failed open did not register the map');
 });

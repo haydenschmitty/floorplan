@@ -2,6 +2,8 @@
 // usage: node home.mjs [--add PROJECT] [--register-only] [--no-open] [--port 4377] [--stop]
 import { parseArgs, unattendedMode } from './lib/common.mjs';
 import { registerMap, listMaps, removeMap, libraryDir } from './lib/map-library.mjs';
+import { matchesMapRuntime } from './lib/map-runtime.mjs';
+import { readRegularFile } from './lib/local-files.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
@@ -21,13 +23,13 @@ const stateFile = path.join(dataDir, 'home-server.json');
 const template = fs.readFileSync(new URL('../assets/home.html', import.meta.url), 'utf8');
 const hash = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url))).update(template).update(fs.readFileSync(new URL('./lib/map-library.mjs', import.meta.url))).digest('hex').slice(0, 16);
 const localURL = (url) => typeof url === 'string' && /^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(url);
-const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return null; } };
+const readState = () => { try { const bytes = readRegularFile(stateFile, 16384); return bytes ? JSON.parse(bytes.toString('utf8')) : null; } catch { return null; } };
 
 async function runningHome() {
   const s = readState();
   if (!s || !localURL(s.url) || typeof s.token !== 'string' || !/^[a-f0-9]{32}$/.test(s.token)) return null;
   try {
-    const response = await fetch(s.url + '/api/status', { headers: { 'x-floorplan-token': s.token }, signal: AbortSignal.timeout(1000) });
+    const response = await fetch(s.url + '/api/status', { headers: { 'x-floorplan-token': s.token }, redirect: 'error', signal: AbortSignal.timeout(1000) });
     const status = response.ok ? await response.json() : null;
     return status?.home === 'floorplan' ? { ...s, hash: status.hash } : null;
   } catch { return null; }
@@ -74,7 +76,7 @@ async function main() {
   if (args.stop) {
     if (previous) {
       const s = previous;
-      await fetch(s.url + '/api/stop', { method: 'POST', headers: { 'x-floorplan-token': s.token }, signal: AbortSignal.timeout(2000) });
+      await fetch(s.url + '/api/stop', { method: 'POST', headers: { 'x-floorplan-token': s.token }, redirect: 'error', signal: AbortSignal.timeout(2000) });
     }
     console.log(previous ? 'Stopped the map home.' : 'The map home was not running.');
     return;
@@ -82,7 +84,7 @@ async function main() {
   if (previous?.hash === hash) { show(previous.url); return; }
   if (previous) {
     const s = previous;
-    await fetch(s.url + '/api/stop', { method: 'POST', headers: { 'x-floorplan-token': s.token }, signal: AbortSignal.timeout(2000) });
+    await fetch(s.url + '/api/stop', { method: 'POST', headers: { 'x-floorplan-token': s.token }, redirect: 'error', signal: AbortSignal.timeout(2000) });
   }
   const wanted = args.port === undefined ? 4377 : Number(args.port);
   if (!Number.isInteger(wanted) || wanted < 0 || wanted > 65535) throw new Error('Choose a port between 0 and 65535.');
@@ -144,8 +146,9 @@ async function main() {
         const map = listMaps().find((entry) => entry.id === match[1]);
         if (!map) return send(response, 404, { error: 'That map is not in your list.' });
         if (!map.available) return send(response, 400, { error: 'That map folder is missing. Add its new location or remove it from the list.' });
+        if (!matchesMapRuntime(map.root)) return send(response, 409, { error: 'This map has older or changed helper programs. Ask Claude Code or Codex to update this Floorplan with the current plugin, then open it again.' });
         if (!openings.has(map.id)) {
-          const opening = runNode(process.execPath, [fileURLToPath(new URL('./open.mjs', import.meta.url)), map.root, '--no-open'], { timeout: 45000, maxBuffer: 256 * 1024, windowsHide: true })
+          const opening = runNode(process.execPath, [fileURLToPath(new URL('./open.mjs', import.meta.url)), map.root, '--no-open', '--from-home'], { timeout: 45000, maxBuffer: 256 * 1024, windowsHide: true })
             .then(({ stdout }) => {
               const target = /^FLOORPLAN  (http:\/\/127\.0\.0\.1:\d+) /m.exec(stdout)?.[1];
               if (!localURL(target)) throw new Error('The map did not provide a local address.');

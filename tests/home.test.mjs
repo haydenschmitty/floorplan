@@ -6,7 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { SKILL, shopApp, makeProject, scanAndBuild, writeJson, readJson, cleanup } from './helpers.mjs';
-import { registerMap, listMaps } from '../skills/floorplan/scripts/lib/map-library.mjs';
+import { registerMap, listMaps, removeMap } from '../skills/floorplan/scripts/lib/map-library.mjs';
 
 let root, other, dataDir, server, base, token, map;
 const cli = path.join(SKILL, 'scripts/home.mjs');
@@ -23,7 +23,7 @@ const start = (env, ...args) => {
   return { child, ready };
 };
 const stopChild = async (child) => {
-  if (child && child.exitCode === null) await new Promise((resolve) => { child.once('exit', resolve); child.kill(); });
+  if (child && child.exitCode === null && child.signalCode === null) await new Promise((resolve) => { child.once('exit', resolve); child.kill(); });
 };
 const stopPid = async (pid) => {
   try { process.kill(pid); } catch { return; }
@@ -156,4 +156,70 @@ test('the normal homepage command returns while its background server stays usab
   assert.match(url || '', /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.equal((await fetch(url)).status, 200);
   assert.match(execFileSync(process.execPath, [cli, '--stop'], { encoding: 'utf8', env, timeout: 3000 }), /Stopped/);
+});
+
+test('failed interactive opens leave no permanent map registration', () => {
+  const dir = path.join(dataDir, 'failed-open');
+  assert.throws(() => execFileSync(process.execPath, [path.join(SKILL, 'scripts/open.mjs'), root, '--no-open', '--editor=file:///{path}'], { env: { ...process.env, FLOORPLAN_DATA_DIR: dir }, stdio: 'pipe' }));
+  assert.deepEqual(listMaps({ dataDir: dir }), []);
+});
+
+test('home refuses changed map helper programs without executing them', async (t) => {
+  for (const file of ['serve.mjs', 'page-safety.mjs', 'query.mjs']) {
+    const project = shopApp(); scanAndBuild(project);
+    const runtime = path.join(project, 'floorplan', file);
+    const marker = path.join(project, 'unexpected-program');
+    const prefix = file === 'query.mjs' ? 'globalThis.untrustedMapCode = true;\n' : `import runtimeMarkerFs from 'node:fs'; runtimeMarkerFs.writeFileSync(${JSON.stringify(marker)}, 'executed');\n`;
+    fs.writeFileSync(runtime, prefix + fs.readFileSync(runtime, 'utf8').replace(/^#![^\n]*\n/, ''));
+    const entry = registerMap(project, { dataDir });
+    t.after(async () => { try { await stopPid(readJson(path.join(project, 'floorplan/.cache/server.json')).pid); } catch {} cleanup(project); });
+    const response = await api('/api/maps/' + entry.id + '/open', { method: 'POST' });
+    assert.equal(response.status, 409, file);
+    assert.match((await response.json()).error, /update/i);
+    assert.equal(fs.existsSync(marker), false, file);
+  }
+});
+
+test('a map removed while it is opening is not registered again', async () => {
+  const entry = registerMap(root, { dataDir });
+  const opening = api('/api/maps/' + entry.id + '/open', { method: 'POST' });
+  assert.equal((await api('/api/maps/' + entry.id, { method: 'DELETE' })).status, 200);
+  await opening;
+  removeMap(entry.id, { dataDir });
+  execFileSync(process.execPath, [path.join(SKILL, 'scripts/open.mjs'), root, '--no-open', '--from-home'], { encoding: 'utf8', env: { ...process.env, FLOORPLAN_DATA_DIR: dataDir }, timeout: 30000 });
+  assert.equal(listMaps({ dataDir }).some((item) => item.id === entry.id), false);
+});
+
+test('homepage probes do not follow a cached address redirect', async (t) => {
+  let reached = 0;
+  const target = http.createServer((request, response) => { reached++; response.end('{}'); });
+  const redirect = http.createServer((request, response) => { response.writeHead(302, { location: `http://127.0.0.1:${target.address().port}/outside` }); response.end(); });
+  await new Promise((resolve) => target.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => redirect.listen(0, '127.0.0.1', resolve));
+  t.after(() => { redirect.close(); target.close(); });
+  const dir = path.join(dataDir, 'redirect');
+  writeJson(path.join(dir, 'home-server.json'), { url: `http://127.0.0.1:${redirect.address().port}`, token: 'a'.repeat(32) });
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, '--stop'], { env: { ...process.env, FLOORPLAN_DATA_DIR: dir }, stdio: 'pipe' });
+    child.on('error', reject);
+    child.on('exit', (code) => code === 0 ? resolve() : reject(new Error('stop exited ' + code)));
+  });
+  assert.equal(reached, 0);
+});
+
+test('home opens never stop a process named only by an untrusted map cache', async (t) => {
+  const project = shopApp(); scanAndBuild(project);
+  const sentinel = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const probe = http.createServer((request, response) => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ root: project, hash: 'old', tabs: 0 })); });
+  await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  writeJson(path.join(project, 'floorplan/.cache/server.json'), { pid: sentinel.pid, token: 'b'.repeat(32), url: `http://127.0.0.1:${probe.address().port}` });
+  t.after(async () => { probe.close(); await stopChild(sentinel); try { await stopPid(readJson(path.join(project, 'floorplan/.cache/server.json')).pid); } catch {} cleanup(project); });
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(SKILL, 'scripts/open.mjs'), project, '--no-open', '--from-home'], { env: { ...process.env, FLOORPLAN_DATA_DIR: dataDir }, stdio: 'pipe' });
+    let error = ''; child.stderr.on('data', (data) => { error += data; });
+    child.once('error', reject);
+    child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(error)));
+  });
+  assert.equal(sentinel.exitCode, null);
+  assert.equal(sentinel.signalCode, null);
 });

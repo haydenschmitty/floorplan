@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { SKILL, makeProject, writeJson, cleanup } from './helpers.mjs';
+import { FAKE_PASSWORD } from './helpers.mjs';
 
 const library = () => import('../skills/floorplan/scripts/lib/map-library.mjs');
 function fixture(t, name = 'A sample app') {
@@ -95,4 +96,27 @@ test('the homepage CLI can add an older map without starting a server', (t) => {
   assert.match(output, /Added/);
   assert.equal(fs.readdirSync(path.join(dataDir, 'maps')).filter((f) => f.endsWith('.json')).length, 1);
   assert.equal(fs.existsSync(path.join(dataDir, 'home-server.json')), false);
+});
+
+test('map names and summaries mask secrets before shortening the text', async (t) => {
+  const { registerMap, listMaps } = await library();
+  const { root, dataDir } = fixture(t);
+  writeJson(path.join(root, 'floorplan/architecture.json'), { project: { name: `DB_PASSWORD="${FAKE_PASSWORD}"`, summary: 'x'.repeat(1980) + ` DB_PASSWORD="${FAKE_PASSWORD}"` } });
+  registerMap(root, { dataDir });
+  const [map] = listMaps({ dataDir });
+  assert.equal(JSON.stringify(map).includes(FAKE_PASSWORD), false);
+  assert.equal(map.summary.includes(FAKE_PASSWORD.slice(0, 5)), false);
+});
+
+test('a metadata pipe cannot block the whole map list', async (t) => {
+  if (process.platform === 'win32') { t.skip('named pipe fixture uses mkfifo'); return; }
+  const { registerMap } = await library();
+  const { root, dataDir } = fixture(t);
+  registerMap(root, { dataDir });
+  const metadata = path.join(root, 'floorplan/architecture.json');
+  fs.unlinkSync(metadata);
+  execFileSync('mkfifo', [metadata]);
+  const source = `import {listMaps} from ${JSON.stringify(new URL('../skills/floorplan/scripts/lib/map-library.mjs', import.meta.url).href)}; console.log(listMaps({dataDir:process.argv[1]}).length);`;
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', source, dataDir], { encoding: 'utf8', timeout: 2000 });
+  assert.equal(output.trim(), '1');
 });

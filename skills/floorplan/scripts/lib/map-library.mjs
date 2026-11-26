@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { maskSecrets } from './health.mjs';
+import { readRegularFile } from './local-files.mjs';
 
 export const libraryDir = () => path.resolve(process.env.FLOORPLAN_DATA_DIR || path.join(os.homedir(), '.floorplan'));
 const mapId = (root) => crypto.createHash('sha256').update(root).digest('hex').slice(0, 24);
@@ -11,8 +13,8 @@ const validId = (id) => typeof id === 'string' && /^[a-f0-9]{24}$/.test(id);
 const isFile = (file) => { try { return fs.statSync(file).isFile(); } catch { return false; } };
 function readJson(file, limit) {
   try {
-    if (fs.statSync(file).size > limit) return null;
-    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    const bytes = readRegularFile(file, limit);
+    return bytes ? JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')) : null;
   } catch { return null; }
 }
 
@@ -52,8 +54,8 @@ export function listMaps(options = {}) {
     if (available) { try { updatedAt = fs.statSync(path.join(folder, 'index.html')).mtime.toISOString(); } catch {} }
     maps.push({
       id: entry.id, root: entry.root,
-      name: typeof project?.name === 'string' && project.name.trim() ? project.name.slice(0, 300) : path.basename(entry.root),
-      summary: typeof project?.summary === 'string' ? project.summary.slice(0, 2000) : '',
+      name: typeof project?.name === 'string' && project.name.trim() ? maskSecrets(project.name).slice(0, 300) : path.basename(entry.root),
+      summary: typeof project?.summary === 'string' ? maskSecrets(project.summary).slice(0, 2000) : '',
       openedAt: typeof entry.openedAt === 'string' ? entry.openedAt : null,
       updatedAt, available,
     });
