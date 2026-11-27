@@ -37,6 +37,10 @@ A blueprint is edited the same way, through `plan.json` and `architecture.json`,
 
 The full format is in [`skills/floorplan/references/schema.md`](../skills/floorplan/references/schema.md), and the style guide for names and descriptions is in [`writing-descriptions.md`](../skills/floorplan/references/writing-descriptions.md).
 
+## The local map home
+
+Outside your projects, `~/.floorplan/maps/` contains one private file per map you have opened, holding its project folder and open time. `home-server.json` and `home-server.log` alongside it belong to the local homepage. `FLOORPLAN_DATA_DIR` selects another data folder. Removing a map from the homepage deletes only its list entry, not anything in the project. See [All your maps in one place](getting-started.md#all-your-maps-in-one-place).
+
 ## `CLAUDE.local.md`
 
 In Claude Code, after the first map, Claude asks whether future sessions in your project should use it. Only if you say yes, Floorplan adds a short marked section here, telling future Claude Code sessions that the map exists and how to look things up in it. `CLAUDE.local.md` is Claude Code's file for personal project notes, loaded at the start of every session like `CLAUDE.md`. Floorplan:

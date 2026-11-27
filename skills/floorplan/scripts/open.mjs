@@ -11,6 +11,9 @@ import { spawn } from 'node:child_process';
 import { parseArgs, mapDir, unattendedMode, readJsonFile } from './lib/common.mjs';
 import { editorTemplate } from '../assets/page-safety.mjs';
 import { cliLabel } from './lib/agent.mjs';
+import { registerMap } from './lib/map-library.mjs';
+import { matchesMapRuntime } from './lib/map-runtime.mjs';
+import { readRegularFile } from './lib/local-files.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
@@ -33,13 +36,18 @@ if (!fs.existsSync(path.join(dir, 'index.html')) || !fs.existsSync(serveFile)) {
 // --editor: checked here too, so a mistake is named now rather than in the server's log
 const editor = args.editor === undefined ? null : editorTemplate(args.editor === true ? '' : String(args.editor));
 if (editor?.error) { console.error(`✗ --editor ${editor.error}`); process.exit(1); }
+if (args['from-home'] && !matchesMapRuntime(root)) {
+  console.error('Update this Floorplan with the current plugin before opening it from your map home.');
+  process.exit(1);
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const readState = () => { try { return readJsonFile(stateFile); } catch { return null; } };
+const readState = () => { try { if (!args['from-home']) return readJsonFile(stateFile); const bytes = readRegularFile(stateFile, 16384); return bytes ? JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')) : null; } catch { return null; } };
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 async function api(s, p) {
   try {
-    const r = await fetch(s.url + p, { headers: { 'x-floorplan-token': s.token }, signal: AbortSignal.timeout(3000) });
+    if (!s || typeof s.url !== 'string' || !/^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(s.url)) return null;
+    const r = await fetch(s.url + p, { headers: { 'x-floorplan-token': s.token }, redirect: 'error', signal: AbortSignal.timeout(3000) });
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
@@ -51,6 +59,8 @@ const hash = crypto.createHash('sha1').update(fs.readFileSync(serveFile)).digest
 
 let s = readState();
 let status = s?.pid && alive(s.pid) ? await api(s, '/api/status') : null;
+// Home entries and project caches are data, not proof that a PID belongs to this map. Never stop such a PID.
+if (args['from-home'] && status && (status.root !== root || status.hash !== hash || (editor?.template && status.editor !== editor.template))) status = null;
 let restarted = false;
 const hadTabs = status?.tabs > 0;
 
@@ -69,14 +79,15 @@ if (!status) {
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   const log = fs.openSync(path.join(dir, '.cache', 'server.log'), 'w');
   const prev = s?.pid;
-  spawn(process.execPath, [serveFile, '--no-open', '--idle-exit', String(IDLE_MINUTES), ...pass], {
+  const child = spawn(process.execPath, [serveFile, '--no-open', '--idle-exit', String(IDLE_MINUTES), ...pass], {
     cwd: root, detached: true, stdio: ['ignore', log, log], windowsHide: true,
-  }).unref();
+  });
+  child.unref();
   // finding the Claude Code or Codex CLI takes a few seconds before the server listens
   for (let i = 0; i < 100; i++) {
     await sleep(200);
     const n = readState();
-    if (n?.pid && n.pid !== prev && alive(n.pid)) { s = n; status = await api(s, '/api/status'); if (status) break; }
+    if (n?.pid && (args['from-home'] ? n.pid === child.pid : n.pid !== prev) && alive(n.pid)) { s = n; status = await api(s, '/api/status'); if (status) break; }
   }
   if (!status) {
     console.error(`✗ The map server didn't start. Its log is in ${rel}/.cache/server.log. The map still opens as a file: ${rel}/index.html`);
@@ -87,6 +98,10 @@ if (!status) {
 }
 
 const health = await api(s, '/api/health');
+if (!args['from-home']) {
+  try { registerMap(root); }
+  catch { console.warn('This map could not be added to your local map list. Opening it still works.'); }
+}
 let shown;
 if (status.tabs > 0) shown = `already open in ${status.tabs === 1 ? 'a browser tab' : status.tabs + ' browser tabs'}, which reloaded with the latest map`;
 else if (args['no-open']) shown = 'not opened in a browser (--no-open): open the URL yourself';

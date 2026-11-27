@@ -5,7 +5,8 @@
     "This file describes, as data, the steps SKILL.md describes in prose: which scripts to run, which jobs need a model, what each job is given, what it must answer and when it's done.",
     "It's for running Floorplan without an agent session: in CI, in scripts, or from your own tooling, with any model that can read files and return JSON. A small program (a driver) reads this file and follows it.",
     "The scripts do everything mechanical and never call a model. A model only ever writes JSON files: floorplan/architecture.json, floorplan/descriptions/<key>.json and floorplan/recent-work.json.",
-    "docs/unattended.md explains the format with a worked example. tests/unattended.test.mjs contains a small driver that follows this file."
+    "docs/unattended.md explains the format with a worked example. tests/unattended.test.mjs contains a small driver that follows this file.",
+    "The interactive map home (scripts/home.mjs) is separate from this unattended pipeline. Opening maps interactively remembers their folders locally; unattended runs neither register maps nor start the homepage."
   ],
 
   "conventions": {

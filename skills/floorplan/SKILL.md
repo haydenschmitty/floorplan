@@ -1,10 +1,11 @@
 ---
 name: floorplan
-description: "Draw a floorplan of an app's codebase (one repo or several side by side), an interactive node-graph map where every subsystem, module, file and HTTP route has a human-readable name and a one-line description, connected by the imports and HTTP calls between them, at several zoom levels. It is saved as a self-contained floorplan/index.html in the codebase. Use whenever the user wants to visualize, map, diagram, document or get an architectural overview of a codebase, repo or monorepo, understand how their app works or is connected under the hood, onboard onto unfamiliar code, see how the frontend talks to the backend, or update an existing floorplan, even if they don't say \"visualize\". Also use it before any code exists: when the user shares a PRD, a spec or a description of something they want to build and asks what pieces it needs or how they'd fit together, it draws a blueprint, the same map planned from the document."
-argument-hint: "[path-to-codebase-root] [--refresh]"
+description: "Use when the user wants to visualize, map, diagram, document or get an architectural overview of a codebase, repository or monorepo; understand how an app works or how its frontend and backend connect; onboard onto unfamiliar code; update an existing Floorplan; open the local map home; or find maps made for different projects. Also use when the user shares a PRD, specification or description of an app that is not built yet and wants a blueprint of its parts and connections."
+argument-hint: "[path-to-codebase-root] [--refresh] | home"
 allowed-tools:
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/build.mjs *)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/describe.mjs *)
+  - Bash(node ${CLAUDE_SKILL_DIR}/scripts/home.mjs *)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/open.mjs *)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/plan.mjs *)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/recent.mjs *)
@@ -25,7 +26,17 @@ The scripts do the mechanical work: finding repos, parsing imports and routes, m
 Existing map: !`node ${CLAUDE_SKILL_DIR}/scripts/status.mjs || true`
 Arguments: $ARGUMENTS
 
-**In Codex** (or any agent that left the two lines above unfilled): `${CLAUDE_SKILL_DIR}` in every command here means this skill's folder, the one holding this SKILL.md, so use its path. Run `node <that folder>/scripts/status.mjs` from the codebase root yourself to see whether a map exists, and take the path and `--refresh` from the user's request. The scripts notice they're running under Codex, so the map's Ask bar and "Fix with" prompts use Codex.
+**In Codex** (or any agent that left the two lines above unfilled): `${CLAUDE_SKILL_DIR}` in every command here means this skill's folder, the one holding this SKILL.md, so use its path. For a code-map request, run `node <that folder>/scripts/status.mjs` from the codebase root yourself to see whether a map exists, and take the path and `--refresh` from the user's request. The scripts notice they're running under Codex, so the map's Ask bar and "Fix with" prompts use Codex.
+
+## Open your maps in one place
+
+If the user asks for the map home, their map library, all their projects' maps, or passes `home`, run:
+
+`node ${CLAUDE_SKILL_DIR}/scripts/home.mjs`
+
+This opens a local homepage of maps they have opened, with search, folder locations and update times. Each card can open its map, restarting that map's server if needed. A homepage request does not scan, refresh or rebuild any project. If an in-app browser is available, pass `--no-open` and open the printed URL there. In Codex, run outside the sandbox, as for open.mjs, so the local server keeps running after the command ends. Report the homepage URL.
+
+Opening a map with open.mjs remembers it in this computer's private list. To include an older map, use `home.mjs --add <project-root>` or the homepage's Add map field. Remove only forgets the entry; it does not delete files. The list lives under `~/.floorplan/maps/`; no other folders are searched. Stop the homepage with `home.mjs --stop`. Unattended runs neither register maps nor start the homepage.
 
 ## Nothing built yet? Draw a blueprint
 

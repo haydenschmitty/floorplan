@@ -8,7 +8,7 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 - **No MCP servers.** Floorplan has none, so it never starts a server that downloads its newest version with `npx`.
 - **No dependencies, no install scripts.** Nothing comes from npm, at install time or ever. Its `package.json` exists only to run the tests.
 - **Never downloads anything, and never runs code from the internet.** No `eval`, no loading code at run time, no encoded payloads.
-- **Never changes your code.** It writes only its own `floorplan/` folder and, in Claude Code and only if you say yes, a marked section of `CLAUDE.local.md`. See [What's in your project](project-files.md).
+- **Never changes your code.** In a project, it writes only its own `floorplan/` folder and, in Claude Code and only if you say yes, a marked section of `CLAUDE.local.md`. The local map home remembers project folders under `~/.floorplan/maps/`, and keeps its server address, token and log alongside. See [What's in your project](project-files.md).
 - **No analytics or tracking.**
 
 ## Everything it does
@@ -16,6 +16,7 @@ Plugins for Claude Code and Codex can run code on your computer, so it's worth a
 ### The network
 
 - **The map's server** (`floorplan/serve.mjs`) listens on `127.0.0.1` only, so other machines can't reach it. It answers only to `127.0.0.1` and `localhost` at its own port, and its API needs a token that only the map page receives.
+- **The map home** (`scripts/home.mjs`) also listens only on `127.0.0.1`, validates its host and request origin, and requires its page's per-start token for every API call. It lists only remembered maps; it never searches other folders. Opening a card runs the existing map opener for that registered project, after comparing its `serve.mjs`, `page-safety.mjs` and complete `query.mjs` bytes with this plugin's bundled programs. Changed or older helpers are not run: update that map with the current plugin first. Removing a card only forgets its entry. Metadata reads are limited to ordinary files and bounded in size, names and summaries are secret-masked before display, and internal local-server requests refuse redirects. The homepage does not stop a process on the authority of a project cache's PID. It makes no outside requests, uses the same Content Security Policy helper, and does not allow arbitrary files to be served or commands to be supplied by the page.
 - **One outbound request: the Floorplan Cloud waitlist,** sent only if you type your email into the card on the map and click to join. It goes to `floorplan-waitlist-690500262396.us-central1.run.app` and carries your email and "just me" or "with my team". Details in [Privacy and security](privacy-and-security.md#floorplan-cloud-waitlist).
 - **The map page loads nothing from the internet.** Its layout engine and fonts are built into the file. It only links to documentation, which opens when you click.
 - **The page enforces that itself.** Every map carries a Content-Security-Policy: only the page's own scripts run (each is allowed by its SHA-256 hash, computed when the page is written), and images and fonts can only come from inside the file. An **exported copy** may contact nothing at all (`connect-src 'none'`); `floorplan/index.html` and the page the map's server serves may contact only that local server (`connect-src 'self'`), for asking questions, live reload, flows and Export. So even if text from a repository ever slipped past the map's escaping and became script, it couldn't send the map anywhere. The copy made for the Claude app (`--artifact`) has no policy of its own, because the Claude app runs its own code in that page and applies its own rules.
@@ -30,14 +31,14 @@ Asking questions on the map runs Claude Code or Codex, which talk to Anthropic o
 | `git` | scan | Read-only: which files are tracked, the current branch and commit, what changed since the last map |
 | `where` (Windows) or `which` | starting the map's server | Finding the Claude Code or Codex CLI |
 | `claude` or `codex` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, or `codex exec --sandbox read-only` |
-| `node` | throughout | Running Floorplan's own scripts |
-| `cmd /c start`, `open` or `xdg-open` | opening the map | Opening the map's local address in your browser |
+| `node` | throughout | Running Floorplan's own scripts, including the local map home and the existing opener for a registered map |
+| `cmd /c start`, `open` or `xdg-open` | opening the map or its home | Opening its local address in your browser |
 
 Each is started directly with its arguments, never as a command line for a shell to interpret. The one shell is Windows' `cmd /c start`, given only the map's own local address.
 
 ### What runs without asking
 
-In Claude Code, while the skill is in use, it pre-approves one kind of command: `node` running one of its own scripts, each named exactly (`scripts/build.mjs`, `describe.mjs`, `open.mjs`, `plan.mjs`, `recent.mjs`, `refresh.mjs`, `scan.mjs` and `status.mjs`). That list is fixed by the tests below. Anything else Claude does asks according to your permission settings, as usual. Codex asks according to your approval settings.
+In Claude Code, while the skill is in use, it pre-approves one kind of command: `node` running one of its own scripts, each named exactly (`scripts/build.mjs`, `describe.mjs`, `home.mjs`, `open.mjs`, `plan.mjs`, `recent.mjs`, `refresh.mjs`, `scan.mjs` and `status.mjs`). That list is fixed by the tests below. Anything else Claude does asks according to your permission settings, as usual. Codex asks according to your approval settings.
 
 ### The workflow file
 

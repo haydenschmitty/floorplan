@@ -10,6 +10,7 @@ For what the plugin itself can and can't do on your computer (no hooks, MCP serv
 | Writing names and descriptions | Claude or Codex, through your session | the files it reads, the same as any other task you give it |
 | The map | your browser | nothing. Its layout engine and fonts are bundled into the file, so it works offline |
 | The map's server (`serve.mjs`) | your computer, listening on `127.0.0.1` only | nothing on its own |
+| The map home (`home.mjs`) | your computer, listening on `127.0.0.1` only | project names, folders and update times to its own browser page; nothing outside your computer |
 | Asking questions (Claude Code CLI) | a `claude -p` session on your computer, with your account | your question, and the files Claude chooses to read |
 | Asking questions (Codex) | a `codex exec` run on your computer, with your ChatGPT sign-in, not saved to your Codex history | your question, and the files Codex chooses to read |
 | Changing a blueprint from the map | the same as asking questions, with Claude Code or Codex; the map's server then writes only the plan's files in `floorplan/` | your request, and the files the AI chooses to read |
@@ -30,6 +31,12 @@ The layout engine ([elkjs](https://github.com/kieler/elkjs) 0.9.3, EPL-2.0) and 
 - With Codex, questions run in Codex's **read-only** sandbox: it can read and search, but not write files.
 - On a blueprint (a map planned from a PRD), **Change** requests run the same read-only way. The agent replies with the updated plan, and the server itself writes only `floorplan/plan.json`, `floorplan/architecture.json` and `floorplan/recent-work.json`, after checking them, keeping the old copies for Undo.
 - It stops by itself two hours after the last tab closes, and `node floorplan/serve.mjs --stop` stops it immediately.
+
+## Your local map list
+
+Opening a map with Floorplan remembers its canonical project folder and open time in a private file under `~/.floorplan/maps/`. The homepage reads the map's current name, summary and last update from that folder. It stores no source code, graph data or question history in the list, and never searches other folders. Add an older map by entering its project folder; Remove only forgets that entry.
+
+The homepage keeps its local address and per-start access token in `~/.floorplan/home-server.json`, and startup messages in `home-server.log`. These files are created with owner-only permissions on systems that support them. `FLOORPLAN_DATA_DIR` changes the data folder. The homepage uses the same host, origin, token and page-script restrictions as the map server, and opening a card invokes Floorplan's existing map opener for a registered folder only. It verifies the map's helper programs against the bundled copies before starting them, refuses local-server redirects and does not use project cache PIDs as permission to stop a process. Names and summaries receive the map's usual secret masking. Stop it with `home.mjs --stop`. Unattended runs do not write this list or start the homepage.
 
 ## Floorplan Cloud waitlist
 
